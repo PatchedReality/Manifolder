@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RP1 Map Browser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <div class="toolbar-section">
+      <label class="toolbar-label">URL:</label>
+      <select id="url-history" title="Recent URLs">
+        <option value="">Recent URLs...</option>
+      </select>
+      <input type="text" id="url-input" value="https://cdn2.rp1.com/config/earth.msf" placeholder="Enter MSF URL...">
+      <button id="load-btn">Load</button>
+    </div>
+    <div class="toolbar-section toolbar-right">
+      <button id="login-btn">Login</button>
+    </div>
+  </div>
+
+  <!-- Main panels container -->
+  <div id="main-container">
+    <!-- Hierarchy Panel -->
+    <div id="hierarchy-panel" class="panel">
+      <div class="panel-header">Hierarchy</div>
+      <div class="panel-content">
+        <input type="text" id="hierarchy-search" class="search-input" placeholder="Search...">
+        <div id="hierarchy-tree"></div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" data-resize="hierarchy"></div>
+
+    <!-- Viewport Panel -->
+    <div id="viewport-panel" class="panel">
+      <div class="panel-header">
+        <span>Viewport</span>
+        <div class="view-tabs">
+          <button class="view-tab active" data-view="3d">3D</button>
+          <button class="view-tab" data-view="2d">2D</button>
+          <button class="view-tab" data-view="split">Split</button>
+        </div>
+      </div>
+      <div class="panel-content viewport-content">
+        <div id="viewport-3d" class="viewport"></div>
+        <div id="viewport-2d" class="viewport" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" data-resize="inspector"></div>
+
+    <!-- Inspector Panel -->
+    <div id="inspector-panel" class="panel">
+      <div class="panel-header">Inspector</div>
+      <div class="panel-content">
+        <div id="inspector-content">
+          <div class="inspector-empty">Select an object to inspect</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-message">Disconnected</span>
+    <span id="status-memory">Memory: 0 MB</span>
+  </div>
+
+  <!-- Login modal -->
+  <div id="login-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>RP1 Login</h3>
+      <input type="email" id="login-email" placeholder="Email">
+      <input type="password" id="login-password" placeholder="Password">
+      <div class="modal-buttons">
+        <button id="login-submit" class="btn-primary">Login</button>
+        <button id="login-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

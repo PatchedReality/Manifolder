@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RP1 Earth Map Viewer (Native API)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #console {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 200px;
+            background: rgba(0, 0, 0, 0.9);
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            border-top: 2px solid #4CAF50;
+        }
+
+        #console .log {
+            margin: 2px 0;
+            padding: 2px 5px;
+        }
+
+        #console .info { color: #4CAF50; }
+        #console .warn { color: #FFC107; }
+        #console .error { color: #f44336; }
+        #console .debug { color: #999; }
+
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+        }
+
+        #controls h2 {
+            margin-bottom: 15px;
+            font-size: 18px;
+            color: #4CAF50;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px 5px 5px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .status-connected { color: #4CAF50; }
+        .status-error { color: #f44336; }
+        .status-loading { color: #FFC107; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="controls">
+        <h2>RP1 Earth Map (Native API)</h2>
+        <button onclick="loadEarthMap()">Load Earth Map</button>
+        <button onclick="clearConsole()">Clear Console</button>
+        <div id="status">Ready</div>
+    </div>
+
+    <div id="console"></div>
+
+    <!-- Load RP1 JavaScript libraries from their CDN -->
+    <script type="text/javascript" src="https://cdn2.rp1.com/js/vendor/jquery-3.3.1.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/cdn.socket.io_4.8.1_socket.io.min.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVMF.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVSB.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVRest.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVXP.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVIO.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVRP.js"></script>
+    <script type="text/javascript" src="https://cdn2.rp1.com/v0.0.137/js/mv/MVRP_Map.js" onerror="console.error('Failed to load MVRP_Map.js')" onload="console.log('MVRP_Map.js loaded')"></script>
+
+    <script>
+        let consoleEl = document.getElementById('console');
+        let statusEl = document.getElementById('status');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            div.textContent = `[${timestamp}] ${message}`;
+            consoleEl.appendChild(div);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function clearConsole() {
+            consoleEl.innerHTML = '';
+        }
+
+        function setStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `status-${type}`;
+        }
+
+        // Check if MV libraries loaded
+        window.addEventListener('load', () => {
+            if (typeof MV !== 'undefined') {
+                log('✓ RP1 libraries loaded successfully', 'info');
+                log(`MV namespace available: ${Object.keys(MV).join(', ')}`, 'debug');
+
+                // Deep inspection
+                log('=== Deep MV Inspection ===', 'debug');
+                log(`window.MVRP_Map: ${typeof window.MVRP_Map}`, 'debug');
+                log(`MV.MVRP.Map: ${typeof MV.MVRP?.Map}`, 'debug');
+
+                // Check MVRP properties
+                if (MV.MVRP) {
+                    log(`MVRP properties: ${Object.keys(MV.MVRP).join(', ')}`, 'debug');
+                }
+
+                // Check MVMF namespace system
+                if (MV.MVMF && MV.MVMF.Namespace) {
+                    log('MVMF.Namespace exists:', 'debug');
+                    log(`  Type: ${typeof MV.MVMF.Namespace}`, 'debug');
+                    if (typeof MV.MVMF.Namespace === 'object') {
+                        log(`  Keys: ${Object.keys(MV.MVMF.Namespace).join(', ')}`, 'debug');
+                    }
+                }
+
+                // Check if there's a registry
+                if (MV.MVMF && MV.MVMF.SERVICE && MV.MVMF.SERVICE.FACTORY) {
+                    log('MVMF.SERVICE.FACTORY exists', 'debug');
+                    const factoryKeys = Object.keys(MV.MVMF.SERVICE.FACTORY);
+                    log(`  Registered: ${factoryKeys.length > 0 ? factoryKeys.join(', ') : '(empty)'}`, 'debug');
+                }
+            } else {
+                log('✗ Failed to load RP1 libraries', 'error');
+            }
+        });
+
+        async function loadEarthMap() {
+            log('Starting Earth map load...', 'info');
+            setStatus('Loading...', 'loading');
+
+            try {
+                // Fetch earth.msf config
+                log('Fetching earth.msf config...', 'debug');
+                const configResponse = await fetch('https://cdn2.rp1.com/config/earth.msf');
+                const config = await configResponse.json();
+
+                log(`Config loaded: ${JSON.stringify(config)}`, 'debug');
+                log(`Namespace: ${config.map.namespace}`, 'info');
+                log(`Service: ${config.map.service}`, 'info');
+                log(`Server: ${config.map.connect}`, 'info');
+
+                // Check if we have the MV libraries
+                if (typeof MV === 'undefined') {
+                    throw new Error('MV libraries not loaded');
+                }
+
+                // Try different initialization approaches
+                log('=== Approach 1: Check for existing service instances ===', 'info');
+
+                // Check if there's a service registry
+                if (MV.MVMF && MV.MVMF.SERVICE) {
+                    log('MVMF.SERVICE exists:', 'debug');
+                    log(`  Properties: ${Object.keys(MV.MVMF.SERVICE).join(', ')}`, 'debug');
+
+                    if (MV.MVMF.SERVICE.FACTORY) {
+                        log('  FACTORY exists:', 'debug');
+                        const factoryKeys = Object.keys(MV.MVMF.SERVICE.FACTORY);
+                        log(`    Registered services: ${factoryKeys.length > 0 ? factoryKeys.join(', ') : '(none)'}`, 'debug');
+                    }
+
+                    if (MV.MVMF.SERVICE.CLIENT) {
+                        log('  CLIENT exists:', 'debug');
+                        const clientKeys = Object.keys(MV.MVMF.SERVICE.CLIENT);
+                        log(`    Active clients: ${clientKeys.length > 0 ? clientKeys.join(', ') : '(none)'}`, 'debug');
+                    }
+                }
+
+                log('=== Approach 2: Install MVIO module ===', 'info');
+
+                // Parse connection string
+                const connectParams = {};
+                config.map.connect.split(';').forEach(part => {
+                    const [key, value] = part.split('=');
+                    if (key && value) {
+                        connectParams[key.trim()] = value.trim();
+                    }
+                });
+
+                log(`Parsed connection: ${JSON.stringify(connectParams)}`, 'debug');
+
+                // Call MVIO.Install() to initialize the module
+                if (MV.MVIO && MV.MVIO.Install) {
+                    try {
+                        log('Calling MVIO.Install()...', 'info');
+                        MV.MVIO.Install();
+                        log('✓ MVIO.Install() completed', 'info');
+
+                        // Check if services are now registered
+                        if (MV.MVMF.SERVICE.FACTORY) {
+                            const factoryKeys = Object.keys(MV.MVMF.SERVICE.FACTORY);
+                            log(`  Services after Install: ${factoryKeys.length > 0 ? factoryKeys.join(', ') : '(none)'}`, 'debug');
+                        }
+
+                    } catch (e) {
+                        log(`Error calling MVIO.Install(): ${e.message}`, 'warn');
+                    }
+                }
+
+                // Call MVRP.Map.Install() to initialize the map module
+                const MapAPI = MV.MVRP?.Map;
+                if (MapAPI && MapAPI.Install) {
+                    try {
+                        log('Calling MVRP.Map.Install()...', 'info');
+                        MapAPI.Install();
+                        log('✓ MVRP.Map.Install() completed', 'info');
+
+                        // Check services again
+                        if (MV.MVMF.SERVICE.FACTORY) {
+                            const factoryKeys = Object.keys(MV.MVMF.SERVICE.FACTORY);
+                            log(`  Services after Map.Install: ${factoryKeys.length > 0 ? factoryKeys.join(', ') : '(none)'}`, 'debug');
+                        }
+
+                    } catch (e) {
+                        log(`Error calling Map.Install(): ${e.message}`, 'warn');
+                    }
+                }
+
+                log('=== Approach 3: Create IO_SESSION ===', 'info');
+
+                // Try to create an IO_SESSION
+                if (MV.MVIO && MV.MVIO.IO_SESSION) {
+                    try {
+                        log('Attempting to create IO_SESSION...', 'info');
+
+                        // Parse server host and port
+                        const [host, port] = connectParams.server.split(':');
+
+                        // Try creating session
+                        const session = new MV.MVIO.IO_SESSION();
+                        log('✓ IO_SESSION created!', 'info');
+                        log(`  Methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(session)).join(', ')}`, 'debug');
+
+                        // Check if it has a Connect method
+                        if (session.Connect) {
+                            log('Calling session.Connect()...', 'info');
+                            session.Connect(host, parseInt(port), connectParams.secure === 'true');
+                        }
+
+                        // Check if it has an Open method
+                        if (session.Open) {
+                            log('Session has Open() method', 'debug');
+                        }
+
+                        // Try creating IO_RMROOT with session
+                        if (MapAPI && MapAPI.IO_RMROOT) {
+                            log('Attempting IO_RMROOT with session...', 'info');
+                            try {
+                                const rmroot = new MapAPI.IO_RMROOT(session);
+                                log('✓ IO_RMROOT created with session!', 'info');
+
+                                // Try to read data
+                                if (rmroot.Read) {
+                                    log('Calling rmroot.Read()...', 'info');
+                                    rmroot.Read((result) => {
+                                        log(`RMROOT Read result: ${JSON.stringify(result)}`, 'info');
+                                    });
+                                }
+                            } catch (e) {
+                                log(`Error creating IO_RMROOT: ${e.message}`, 'error');
+                                log(`Stack: ${e.stack}`, 'debug');
+                            }
+                        }
+
+                    } catch (e) {
+                        log(`Error creating IO_SESSION: ${e.message}`, 'error');
+                        log(`Stack: ${e.stack}`, 'debug');
+                    }
+                }
+
+                log('=== Approach 4: Explore SERVICE objects ===', 'info');
+
+                // Explore MVIO.Service object
+                if (MV.MVIO && MV.MVIO.Service) {
+                    log('MVIO.Service object:', 'debug');
+                    log(`  Type: ${typeof MV.MVIO.Service}`, 'debug');
+                    if (typeof MV.MVIO.Service === 'object') {
+                        log(`  Properties: ${Object.keys(MV.MVIO.Service).join(', ')}`, 'debug');
+                        log(`  Content: ${JSON.stringify(MV.MVIO.Service)}`, 'debug');
+                    }
+                }
+
+                // Try calling MVIO.SERVICE as a function
+                if (MV.MVIO && typeof MV.MVIO.SERVICE === 'function') {
+                    try {
+                        log('Calling MVIO.SERVICE() function...', 'info');
+
+                        // Try with no parameters
+                        log('  Trying MVIO.SERVICE() with no params...', 'debug');
+                        const service1 = MV.MVIO.SERVICE();
+                        log(`  Result: ${JSON.stringify(service1)}`, 'debug');
+
+                        // Try with namespace
+                        log(`  Trying MVIO.SERVICE("${config.map.namespace}")...`, 'debug');
+                        const service2 = MV.MVIO.SERVICE(config.map.namespace);
+                        log(`  Result: ${JSON.stringify(service2)}`, 'debug');
+
+                        // Try with namespace and service name
+                        log(`  Trying MVIO.SERVICE("${config.map.namespace}", "${config.map.service}")...`, 'debug');
+                        const service3 = MV.MVIO.SERVICE(config.map.namespace, config.map.service);
+                        log(`  Result: ${JSON.stringify(service3)}`, 'debug');
+
+                        // If we got a service, try creating IO_SESSION with it
+                        if (service3 && service3.sID_Service) {
+                            log('Got service descriptor! Trying IO_SESSION with it...', 'info');
+                            try {
+                                const session = new MV.MVIO.IO_SESSION(service3);
+                                log('✓ IO_SESSION created with service descriptor!', 'info');
+
+                                // Parse server and connect
+                                const [host, port] = connectParams.server.split(':');
+                                if (session.Connect) {
+                                    session.Connect(host, parseInt(port), connectParams.secure === 'true');
+                                }
+
+                                // Try creating IO_RMROOT
+                                if (MapAPI && MapAPI.IO_RMROOT) {
+                                    const rmroot = new MapAPI.IO_RMROOT(service3);
+                                    log('✓ IO_RMROOT created!', 'info');
+
+                                    if (rmroot.Read) {
+                                        rmroot.Read((result) => {
+                                            log(`RMROOT Read result: ${JSON.stringify(result)}`, 'info');
+                                        });
+                                    }
+                                }
+                            } catch (e) {
+                                log(`Error with session/rmroot: ${e.message}`, 'error');
+                            }
+                        }
+
+                    } catch (e) {
+                        log(`Error calling MVIO.SERVICE: ${e.message}`, 'error');
+                        log(`Stack: ${e.stack}`, 'debug');
+                    }
+                }
+
+                // Same for MVSB
+                log('=== Approach 5: Explore MVSB.SERVICE ===', 'info');
+
+                if (MV.MVSB && MV.MVSB.Service) {
+                    log('MVSB.Service object:', 'debug');
+                    log(`  Type: ${typeof MV.MVSB.Service}`, 'debug');
+                    if (typeof MV.MVSB.Service === 'object') {
+                        log(`  Properties: ${Object.keys(MV.MVSB.Service).join(', ')}`, 'debug');
+                    }
+                }
+
+                if (MV.MVSB && typeof MV.MVSB.SERVICE === 'function') {
+                    try {
+                        log('Calling MVSB.SERVICE() function...', 'info');
+                        const service = MV.MVSB.SERVICE(config.map.namespace, config.map.service);
+                        log(`  Result: ${JSON.stringify(service)}`, 'debug');
+                    } catch (e) {
+                        log(`Error calling MVSB.SERVICE: ${e.message}`, 'error');
+                    }
+                }
+
+                log('=== Approach 3: Explore MVIO/MVSB namespaces ===', 'info');
+
+                if (MV.MVIO) {
+                    log('MVIO properties:', 'debug');
+                    log(`  ${Object.keys(MV.MVIO).join(', ')}`, 'debug');
+                }
+
+                if (MV.MVSB) {
+                    log('MVSB properties:', 'debug');
+                    log(`  ${Object.keys(MV.MVSB).join(', ')}`, 'debug');
+                }
+
+                setStatus('Explored MV API - check console', 'connected');
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                log(`Stack: ${error.stack}`, 'debug');
+                setStatus('Error - check console', 'error');
+            }
+        }
+
+        // Expose MV to window for debugging
+        window.exploreM = function() {
+            if (typeof MV !== 'undefined') {
+                console.log('MV object:', MV);
+                console.log('MV.MVMF:', MV.MVMF);
+                console.log('MV.MVSB:', MV.MVSB);
+                console.log('MV.MVIO:', MV.MVIO);
+                console.log('MV.MVRP:', MV.MVRP);
+                console.log('MV.MVRP_Map:', MV.MVRP_Map);
+
+                log('MV object dumped to browser console (F12)', 'info');
+            } else {
+                log('MV not defined', 'error');
+            }
+        };
+
+        log('Page loaded. Click "Load Earth Map" to start, or run exploreM() in console to explore MV API', 'info');
+    </script>
+</body>
+</html>
