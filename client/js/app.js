@@ -30,9 +30,24 @@ class App {
 
   setupHierarchyEvents() {
     this.hierarchy.onSelect(node => {
-      this.view3d.selectNode(node.id);
+      this.view3d.selectNode(node);
       this.view2d.selectNode(node.id);
       this.inspector.showNode(node);
+    });
+
+    this.hierarchy.onZoom(node => {
+      this.view3d.zoomToNode(node);
+    });
+
+    this.hierarchy.onToggle((node, expanded) => {
+      if (expanded) {
+        const children = this.hierarchy.getChildren(node);
+        if (children && children.length > 0) {
+          this.view3d.addChildren(node, children);
+        }
+      } else {
+        this.view3d.removeDescendants(node);
+      }
     });
 
     this.hierarchy.onExpand(node => {
@@ -110,6 +125,7 @@ class App {
       const nodeData = await this.client.getNode(node.id, node.type);
       if (nodeData && nodeData.children) {
         this.hierarchy.setChildren(node, nodeData.children);
+        this.view3d.addChildren(node, nodeData.children);
       }
       this.hierarchy.markNodeLoaded(node);
     } catch (error) {

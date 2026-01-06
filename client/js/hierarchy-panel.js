@@ -13,6 +13,8 @@ export class HierarchyPanel {
 
     this.selectCallbacks = [];
     this.expandCallbacks = [];
+    this.zoomCallbacks = [];
+    this.toggleCallbacks = [];
     this._nextId = 1;
 
     this.init();
@@ -156,6 +158,13 @@ export class HierarchyPanel {
       this.selectNode(nodeKey);
     });
 
+    content.addEventListener('dblclick', () => {
+      const nodeData = this.nodeData.get(nodeKey);
+      if (nodeData) {
+        this.zoomCallbacks.forEach(callback => callback(nodeData));
+      }
+    });
+
     const children = document.createElement('div');
     children.className = 'tree-children';
     children.style.display = 'none';
@@ -212,6 +221,12 @@ export class HierarchyPanel {
 
     childrenContainer.innerHTML = '';
     this.loadedNodes.add(parentKey);
+    
+    // Update internal data cache
+    const parentNodeData = this.nodeData.get(parentKey);
+    if (parentNodeData) {
+      parentNodeData.children = children;
+    }
 
     children.forEach(child => {
       const childElement = this.createNodeElement(child);
@@ -288,6 +303,11 @@ export class HierarchyPanel {
       toggle.textContent = '▼';
     }
     children.style.display = 'block';
+    
+    const nodeData = this.nodeData.get(nodeKey);
+    if (nodeData) {
+      this.toggleCallbacks.forEach(callback => callback(nodeData, true));
+    }
 
     if (!this.loadedNodes.has(nodeKey)) {
       const loading = document.createElement('div');
@@ -323,6 +343,11 @@ export class HierarchyPanel {
       toggle.textContent = '▶';
     }
     children.style.display = 'none';
+    
+    const nodeData = this.nodeData.get(nodeKey);
+    if (nodeData) {
+      this.toggleCallbacks.forEach(callback => callback(nodeData, false));
+    }
   }
 
   expandToNode(nodeOrKey) {
@@ -354,6 +379,20 @@ export class HierarchyPanel {
 
   onExpand(callback) {
     this.expandCallbacks.push(callback);
+  }
+
+  onZoom(callback) {
+    this.zoomCallbacks.push(callback);
+  }
+
+  onToggle(callback) {
+    this.toggleCallbacks.push(callback);
+  }
+  
+  getChildren(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const nodeData = this.nodeData.get(nodeKey);
+    return nodeData ? nodeData.children : null;
   }
 
   markNodeLoaded(nodeOrKey) {
