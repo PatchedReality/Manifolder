@@ -342,14 +342,6 @@ export class LayoutManager {
     }
   }
 
-  setMemory(bytes) {
-    const memoryEl = document.getElementById('status-memory');
-    if (memoryEl) {
-      const mb = (bytes / (1024 * 1024)).toFixed(1);
-      memoryEl.textContent = `Memory: ${mb} MB`;
-    }
-  }
-
   dispatchEvent(name, detail) {
     window.dispatchEvent(new CustomEvent(`rp1:${name}`, { detail }));
   }

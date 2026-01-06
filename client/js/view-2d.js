@@ -450,27 +450,4 @@ export class View2D {
   onSelect(callback) {
     this.selectCallbacks.push(callback);
   }
-
-  getSelectedNode() {
-    if (this.selectedId === null) {
-      return null;
-    }
-    return this.nodeData.get(this.selectedId);
-  }
-
-  dispose() {
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-    }
-
-    window.removeEventListener('resize', this.onResize);
-
-    if (this.canvas && this.canvas.parentNode) {
-      this.canvas.parentNode.removeChild(this.canvas);
-    }
-
-    this.nodes.clear();
-    this.nodeData.clear();
-    this.selectCallbacks = [];
-  }
 }

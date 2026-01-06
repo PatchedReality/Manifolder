@@ -356,14 +356,6 @@ export class HierarchyPanel {
     this.expandCallbacks.push(callback);
   }
 
-  getSelectedNode() {
-    if (!this.selectedNode) {
-      return null;
-    }
-    const nodeKey = `node-${this.selectedNode.dataset.uid}`;
-    return this.nodeData.get(nodeKey);
-  }
-
   markNodeLoaded(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
     this.loadedNodes.add(nodeKey);

@@ -3,14 +3,6 @@
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
-// Node type colors for reference (used by client)
-const NODE_COLORS = {
-  RMRoot: '#ffd700',    // gold
-  RMCObject: '#4a9eff', // blue
-  RMTObject: '#50c878', // green
-  RMPObject: '#ff8c42'  // orange
-};
-
 export class RP1Proxy {
   constructor(browserWs) {
     this.browserWs = browserWs;

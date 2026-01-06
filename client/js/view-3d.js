@@ -391,30 +391,4 @@ export class View3D {
   onSelect(callback) {
     this.selectCallbacks.push(callback);
   }
-
-  getSelectedNode() {
-    if (this.selectedId === null) {
-      return null;
-    }
-    return this.nodeData.get(this.selectedId);
-  }
-
-  dispose() {
-    if (this.animationId) {
-      cancelAnimationFrame(this.animationId);
-    }
-
-    this.clearNodes();
-
-    if (this.renderer) {
-      this.renderer.dispose();
-      this.container.removeChild(this.renderer.domElement);
-    }
-
-    if (this.controls) {
-      this.controls.dispose();
-    }
-
-    window.removeEventListener('resize', this.onWindowResize);
-  }
 }
