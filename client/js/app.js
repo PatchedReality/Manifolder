@@ -57,10 +57,6 @@ class App {
   }
 
   setupLayoutEvents() {
-    this.layout.onLogin(async ({ email, password }) => {
-      await this.handleLogin(email, password);
-    });
-
     this.layout.onLoad(async ({ url }) => {
       await this.handleLoadMap(url);
     });
@@ -73,7 +69,6 @@ class App {
 
     this.client.on('disconnected', () => {
       this.layout.setStatus('Disconnected', 'disconnected');
-      this.updateLoginButton(false);
     });
 
     this.client.on('error', (error) => {
@@ -84,25 +79,6 @@ class App {
     this.client.on('status', (msg) => {
       this.layout.setStatus(msg, 'loading');
     });
-  }
-
-  async handleLogin(email, password) {
-    try {
-      this.layout.setStatus('Connecting...', 'loading');
-      await this.client.connect();
-
-      this.layout.setStatus('Logging in...', 'loading');
-      const result = await this.client.login(email, password);
-
-      if (result.success) {
-        this.layout.setStatus('Logged in', 'connected');
-        this.updateLoginButton(true);
-      } else {
-        this.layout.setStatus('Login failed: ' + result.error, 'disconnected');
-      }
-    } catch (error) {
-      this.layout.setStatus('Login error: ' + error.message, 'disconnected');
-    }
   }
 
   async handleLoadMap(url) {
@@ -139,19 +115,6 @@ class App {
     } catch (error) {
       console.error('Failed to load children:', error);
       this.hierarchy.markNodeLoaded(node);
-    }
-  }
-
-  updateLoginButton(loggedIn) {
-    const loginBtn = document.getElementById('login-btn');
-    if (loginBtn) {
-      if (loggedIn) {
-        loginBtn.textContent = 'Logged In';
-        loginBtn.classList.add('logged-in');
-      } else {
-        loginBtn.textContent = 'Login';
-        loginBtn.classList.remove('logged-in');
-      }
     }
   }
 }

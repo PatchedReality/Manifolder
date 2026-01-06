@@ -6,16 +6,9 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "ws-analyzer": "node tools/ws-analyzer.js",
-    "api-explorer": "node tools/api-explorer.js",
-    "simple-client": "node client/simple-client.js",
-    "serve-viewer": "npx http-server viewer -p 8000 -o /earth-viewer-native.html",
-    "test-puppeteer": "node tools/test-puppeteer.js",
-    "test-puppeteer-auth": "node tools/test-puppeteer-auth.js",
-    "test-c2a-login": "node tools/test-c2a-login.js",
-    "test-rp1-login": "node tools/test-rp1-login.js",
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js"
+    "dev": "nodemon server/index.js",
+    "stop": "kill $(lsof -t -i:3000) 2>/dev/null || echo 'No process found on port 3000'"
   },
   "dependencies": {
     "axios": "^1.6.7",

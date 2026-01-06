@@ -8,8 +8,6 @@ export class RP1Proxy {
     this.browserWs = browserWs;
     this.socket = null;
     this.isConnected = false;
-    this.isLoggedIn = false;
-    this.userId = null;
     this.pendingCallbacks = new Map();
     this.callbackId = 0;
     this.msfConfig = null;
@@ -51,7 +49,6 @@ export class RP1Proxy {
       this.socket.on('disconnect', (reason) => {
         console.log('[RP1] Disconnected:', reason);
         this.isConnected = false;
-        this.isLoggedIn = false;
         this.sendToBrowser({ type: 'status', message: `Disconnected: ${reason}` });
       });
 
@@ -79,61 +76,6 @@ export class RP1Proxy {
       this.socket = null;
     }
     this.isConnected = false;
-    this.isLoggedIn = false;
-  }
-
-  async login(email, password) {
-    if (!this.isConnected) {
-      return { success: false, error: 'Not connected to RP1 server' };
-    }
-
-    console.log(`[RP1] Login attempt for: ${email}`);
-    this.sendToBrowser({ type: 'status', message: 'Authenticating...' });
-
-    try {
-      // Step 1: Request authentication token
-      console.log('[RP1] Requesting TOKEN...');
-      const tokenResponse = await this.emitWithCallback('TOKEN', {
-        sRDCompanyId: email,
-        sRDServiceId: password
-      });
-
-      console.log('[RP1] TOKEN response:', JSON.stringify(tokenResponse).substring(0, 200));
-
-      if (!tokenResponse || tokenResponse.dwResult !== 0) {
-        const error = tokenResponse?.sError || 'TOKEN request failed';
-        console.error('[RP1] TOKEN failed:', error);
-        return { success: false, error };
-      }
-
-      const token = tokenResponse.sToken;
-      if (!token) {
-        return { success: false, error: 'No token received' };
-      }
-
-      // Step 2: Encode token and call Login
-      console.log('[RP1] Calling Login with encoded token...');
-      const encodedToken = Buffer.from('token=' + token).toString('base64');
-
-      const loginResponse = await this.emitWithCallback('Login', encodedToken);
-      console.log('[RP1] Login response:', JSON.stringify(loginResponse).substring(0, 200));
-
-      if (!loginResponse || loginResponse.nResult !== 0) {
-        const error = loginResponse?.sError || 'Login failed';
-        console.error('[RP1] Login failed:', error);
-        return { success: false, error };
-      }
-
-      this.isLoggedIn = true;
-      this.userId = loginResponse.twUserIx || loginResponse.userId;
-
-      console.log(`[RP1] Login successful, userId: ${this.userId}`);
-      return { success: true, userId: this.userId };
-
-    } catch (err) {
-      console.error('[RP1] Login error:', err.message);
-      return { success: false, error: err.message };
-    }
   }
 
   async getMapTree() {
@@ -472,16 +414,12 @@ export class RP1Proxy {
     const { type } = message;
 
     switch (type) {
-      case 'login':
-        this.handleLogin(message);
-        break;
-
       case 'loadMap':
         this.handleLoadMap(message);
         break;
 
       case 'getMapTree':
-        this.handleGetMapTree();
+        this.handleGetMapTree(message);
         break;
 
       case 'getNode':
@@ -570,32 +508,14 @@ export class RP1Proxy {
     return `${protocol}://${host}`;
   }
 
-  async handleLogin(message) {
-    const { email, password } = message;
-
-    if (!email || !password) {
-      this.sendToBrowser({
-        type: 'loginResult',
-        success: false,
-        error: 'Missing email or password'
-      });
-      return;
-    }
-
-    const result = await this.login(email, password);
-    this.sendToBrowser({
-      type: 'loginResult',
-      ...result
-    });
-  }
-
-  async handleGetMapTree() {
+  async handleGetMapTree(message) {
+    const { requestId } = message || {};
     const result = await this.getMapTree();
 
     if (result.error) {
-      this.sendToBrowser({ type: 'error', message: result.error });
+      this.sendToBrowser({ type: 'error', message: result.error, requestId });
     } else {
-      this.sendToBrowser({ type: 'mapData', tree: result.tree });
+      this.sendToBrowser({ type: 'mapData', tree: result.tree, requestId });
     }
   }
 

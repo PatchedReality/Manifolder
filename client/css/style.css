@@ -612,6 +612,12 @@ button:disabled {
   margin-top: var(--spacing-md);
 }
 
+.modal-content input:disabled,
+.modal-buttons button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ============================================
    UTILITY CLASSES
    ============================================ */

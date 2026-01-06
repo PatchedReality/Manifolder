@@ -7,13 +7,11 @@ export class RP1Client {
     this.url = url;
     this.ws = null;
     this.connected = false;
-    this.loggedIn = false;
 
     this.callbacks = {
       connected: [],
       disconnected: [],
       error: [],
-      loginResult: [],
       mapData: [],
       nodeData: [],
       status: []
@@ -41,7 +39,6 @@ export class RP1Client {
 
         this.ws.onclose = () => {
           this.connected = false;
-          this.loggedIn = false;
           this._emit('disconnected');
         };
 
@@ -67,40 +64,7 @@ export class RP1Client {
       this.ws.close();
       this.ws = null;
       this.connected = false;
-      this.loggedIn = false;
     }
-  }
-
-  login(email, password) {
-    return new Promise((resolve, reject) => {
-      if (!this.connected) {
-        reject(new Error('Not connected'));
-        return;
-      }
-
-      const requestId = this._nextRequestId();
-
-      this.pendingRequests.set(requestId, {
-        type: 'login',
-        resolve,
-        reject,
-        timestamp: Date.now()
-      });
-
-      this._send({
-        type: 'login',
-        requestId,
-        email,
-        password
-      });
-
-      setTimeout(() => {
-        if (this.pendingRequests.has(requestId)) {
-          this.pendingRequests.delete(requestId);
-          reject(new Error('Login timeout'));
-        }
-      }, 30000);
-    });
   }
 
   loadMap(url) {
@@ -138,11 +102,6 @@ export class RP1Client {
     return new Promise((resolve, reject) => {
       if (!this.connected) {
         reject(new Error('Not connected'));
-        return;
-      }
-
-      if (!this.loggedIn) {
-        reject(new Error('Not logged in'));
         return;
       }
 
@@ -250,10 +209,6 @@ export class RP1Client {
     const { type, requestId } = message;
 
     switch (type) {
-      case 'loginResult':
-        this._handleLoginResult(message, requestId);
-        break;
-
       case 'mapData':
         this._handleMapData(message, requestId);
         break;
@@ -273,25 +228,6 @@ export class RP1Client {
       default:
         console.warn('Unknown message type:', type);
     }
-  }
-
-  _handleLoginResult(message, requestId) {
-    const pending = this.pendingRequests.get(requestId);
-    if (pending) {
-      this.pendingRequests.delete(requestId);
-
-      if (message.success) {
-        this.loggedIn = true;
-      }
-
-      pending.resolve({
-        success: message.success,
-        userId: message.userId,
-        error: message.error
-      });
-    }
-
-    this._emit('loginResult', message);
   }
 
   _handleMapData(message, requestId) {

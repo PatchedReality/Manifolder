@@ -1,5 +1,4 @@
 const URL_HISTORY_KEY = 'rp1-url-history';
-const EMAIL_KEY = 'rp1-email';
 const MAX_URL_HISTORY = 10;
 
 export class LayoutManager {
@@ -19,7 +18,6 @@ export class LayoutManager {
   init() {
     this.setupResizers();
     this.setupViewTabs();
-    this.setupModal();
     this.setupUrlHistory();
     this.setupKeyboardShortcuts();
   }
@@ -139,59 +137,12 @@ export class LayoutManager {
     return this.viewMode;
   }
 
-  setupModal() {
-    const modal = document.getElementById('login-modal');
-    const loginBtn = document.getElementById('login-btn');
-    const cancelBtn = document.getElementById('login-cancel');
-    const submitBtn = document.getElementById('login-submit');
-
-    loginBtn?.addEventListener('click', () => this.showModal('login-modal'));
-    cancelBtn?.addEventListener('click', () => this.hideModal('login-modal'));
-
-    submitBtn?.addEventListener('click', () => {
-      const email = document.getElementById('login-email').value;
-      const password = document.getElementById('login-password').value;
-
-      if (email && password) {
-        this.saveEmail(email);
-        this.dispatchEvent('login', { email, password });
-        this.hideModal('login-modal');
-      }
-    });
-
-    modal?.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        this.hideModal('login-modal');
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
-        this.hideModal('login-modal');
-      }
-    });
-  }
-
   showModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
       modal.classList.remove('hidden');
-
-      if (modalId === 'login-modal') {
-        const emailInput = document.getElementById('login-email');
-        const passwordInput = document.getElementById('login-password');
-        const savedEmail = this.getSavedEmail();
-
-        if (emailInput && savedEmail) {
-          emailInput.value = savedEmail;
-          passwordInput?.focus();
-        } else {
-          emailInput?.focus();
-        }
-      } else {
-        const firstInput = modal.querySelector('input');
-        firstInput?.focus();
-      }
+      const firstInput = modal.querySelector('input');
+      firstInput?.focus();
     }
   }
 
@@ -199,31 +150,7 @@ export class LayoutManager {
     const modal = document.getElementById(modalId);
     if (modal) {
       modal.classList.add('hidden');
-
-      if (modalId === 'login-modal') {
-        const passwordInput = document.getElementById('login-password');
-        if (passwordInput) {
-          passwordInput.value = '';
-        }
-      } else {
-        modal.querySelectorAll('input').forEach(input => input.value = '');
-      }
-    }
-  }
-
-  saveEmail(email) {
-    try {
-      localStorage.setItem(EMAIL_KEY, email);
-    } catch {
-      // localStorage unavailable
-    }
-  }
-
-  getSavedEmail() {
-    try {
-      return localStorage.getItem(EMAIL_KEY) || '';
-    } catch {
-      return '';
+      modal.querySelectorAll('input').forEach(input => input.value = '');
     }
   }
 
@@ -344,10 +271,6 @@ export class LayoutManager {
 
   dispatchEvent(name, detail) {
     window.dispatchEvent(new CustomEvent(`rp1:${name}`, { detail }));
-  }
-
-  onLogin(callback) {
-    window.addEventListener('rp1:login', (e) => callback(e.detail));
   }
 
   onLoad(callback) {
