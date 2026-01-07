@@ -209,10 +209,21 @@ export class LayoutManager {
 
     this.loadUrlHistory();
 
+    // Default to most recent URL
+    const history = this.getUrlHistory();
+    if (history.length > 0 && input) {
+      input.value = history[0];
+      // Auto-load after a short delay to ensure app is initialized
+      setTimeout(() => {
+        loadBtn?.click();
+      }, 100);
+    }
+
     select?.addEventListener('change', () => {
       if (select.value) {
         input.value = select.value;
         select.value = '';
+        loadBtn?.click();
       }
     });
 

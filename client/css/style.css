@@ -370,9 +370,14 @@ body {
 /* ============================================
    HIERARCHY PANEL
    ============================================ */
+.hierarchy-search-bar {
+  padding: var(--spacing-sm);
+  padding-bottom: 0;
+  flex-shrink: 0;
+}
+
 .search-input {
   width: 100%;
-  margin-bottom: var(--spacing-sm);
 }
 
 #hierarchy-tree {

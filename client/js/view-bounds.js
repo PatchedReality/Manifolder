@@ -51,6 +51,10 @@ export class ViewBounds {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
+    // Dynamic scale (calculated from scene bounds)
+    this.scale = 1;
+    this.scaleCalculated = false;
+
     // Type filter - all types enabled by default
     this.typeFilter = new Set(NODE_TYPES.map(t => t.name));
 
@@ -72,7 +76,7 @@ export class ViewBounds {
     this.scene.background = new THREE.Color(0x111111);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 10000);
+    this.camera = new THREE.PerspectiveCamera(50, width / height, 0.01, 10000);
     this.camera.position.set(0, 0, 300);
 
     // Renderer
@@ -87,6 +91,7 @@ export class ViewBounds {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
+    this.controls.minDistance = 0.1;
 
     // Lights
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
@@ -290,10 +295,51 @@ export class ViewBounds {
 
     if (tree) {
       this.buildNodeData(tree);
+      this.calculateDynamicScale();
       this.expandedNodes.add(this._getKey(tree.id, tree.type));
       this.rebuildVisibleNodes();
       this.fitToView();
     }
+  }
+
+  calculateDynamicScale() {
+    // Find the extent of all node positions and bounds
+    let maxExtent = 0;
+    let nodeCount = 0;
+
+    this.nodeData.forEach(node => {
+      if (node._worldPos) {
+        const pos = node._worldPos;
+        const bound = node._bound || { x: 0, y: 0, z: 0 };
+
+        // Skip nodes at exact origin
+        const dist = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+        if (dist < 0.1) return;
+
+        nodeCount++;
+
+        // Check position + half bounds for max extent
+        const extentX = Math.abs(pos.x) + (bound.x || 0) / 2;
+        const extentY = Math.abs(pos.y) + (bound.y || 0) / 2;
+        const extentZ = Math.abs(pos.z) + (bound.z || 0) / 2;
+
+        maxExtent = Math.max(maxExtent, extentX, extentY, extentZ);
+      }
+    });
+
+    // Target scene size of ~100 units for good camera handling
+    const targetSize = 100;
+
+    if (maxExtent > 0 && nodeCount > 0) {
+      this.scale = targetSize / maxExtent;
+      this.scaleCalculated = true;
+    } else {
+      // Fallback: assume Earth-scale if no positioned nodes found yet
+      this.scale = 1 / 100000;
+      // Don't mark as calculated - we'll try again when children are added
+    }
+
+    console.log(`[ViewBounds] Dynamic scale: ${this.scale} (max extent: ${maxExtent}, nodes: ${nodeCount}, final: ${this.scaleCalculated})`);
   }
 
   _getKey(id, type) {
@@ -392,7 +438,7 @@ export class ViewBounds {
   updateGridPosition() {
     if (!this.gridHelper) return;
 
-    const SCALE = 1 / 100000;
+    const SCALE = this.scale;
     let minY = Infinity;
 
     this.nodeMeshes.forEach(({ mesh }) => {
@@ -418,9 +464,9 @@ export class ViewBounds {
     const worldRot = node._worldRot;
     const bound = node._bound;
 
-    // Skip nodes at origin (root containers)
+    // Skip nodes exactly at origin (root containers)
     const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (radius < 1000) return;
+    if (radius < 0.1) return;
 
     const key = this._getKey(node.id, node.type);
     const isSelected = node.id === this.selectedId && node.type === this.selectedType;
@@ -437,10 +483,10 @@ export class ViewBounds {
   createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded) {
     // Skip nodes at origin
     const nodeRadius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (nodeRadius < 1000) return null;
+    if (nodeRadius < 0.1) return null;
 
     // Use raw positions - scale to fit in view
-    const SCALE = 1 / 100000;
+    const SCALE = this.scale;
 
     const center = new THREE.Vector3(
       worldPos.x * SCALE,
@@ -628,6 +674,8 @@ export class ViewBounds {
       }
     });
 
+    // Recalculate scale as scene extent may have changed
+    this.calculateDynamicScale();
     this.rebuildVisibleNodes();
   }
 
@@ -644,9 +692,9 @@ export class ViewBounds {
 
     const worldPos = targetNode._worldPos;
     const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (radius < 1000) return;
+    if (radius < 0.1) return;
 
-    const SCALE = 1 / 100000;
+    const SCALE = this.scale;
     const targetPos = new THREE.Vector3(
       worldPos.x * SCALE,
       worldPos.y * SCALE,
@@ -671,11 +719,12 @@ export class ViewBounds {
     // Also consider depth
     const distForDepth = (boxDepth / 0.8) / (2 * Math.tan(fovRad / 2));
 
-    // Use the largest distance so everything fits
-    const cameraDistance = Math.max(distForHeight, distForWidth, distForDepth);
+    // Use the largest distance so everything fits, with minimum for visibility
+    const minDist = 0.5;
+    const cameraDistance = Math.max(distForHeight, distForWidth, distForDepth, minDist);
 
-    // Position camera looking at target from outside
-    const dir = targetPos.clone().normalize();
+    // Position camera looking at target from current viewing direction
+    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     if (dir.length() < 0.001) dir.set(0, 0, 1);
     const cameraPos = targetPos.clone().add(dir.multiplyScalar(cameraDistance));
 
@@ -697,7 +746,7 @@ export class ViewBounds {
   }
 
   fitToView() {
-    const SCALE = 1 / 100000;
+    const SCALE = this.scale;
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     let count = 0;

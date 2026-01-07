@@ -118,20 +118,45 @@ export class RP1Proxy {
     this.sendToBrowser({ type: 'status', message: 'Loading map tree...' });
 
     try {
-      // Step 1: Request RMRoot update (case sensitive!)
-      console.log('[RP1] Requesting RMRoot:update...');
-      const rootResponse = await this.emitWithCallback('RMRoot:update', { twRMRootIx: 1 });
-      console.log('[RP1] RMROOT response:', JSON.stringify(rootResponse).substring(0, 500));
+      // Load all roots (maps can have multiple roots)
+      const allRoots = [];
 
-      if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-        const error = rootResponse?.sError || 'Failed to get RMROOT';
-        return { error };
+      for (let rootIx = 1; rootIx <= 10; rootIx++) {
+        console.log(`[RP1] Requesting RMRoot:update for root ${rootIx}...`);
+        const rootResponse = await this.emitWithCallback('RMRoot:update', { twRMRootIx: rootIx });
+
+        if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
+          console.log(`[RP1] No more roots after ${rootIx - 1}`);
+          break;
+        }
+
+        console.log(`[RP1] RMROOT ${rootIx} response:`, JSON.stringify(rootResponse).substring(0, 300));
+        const rootTree = await this.buildTreeFromRoot(rootResponse, rootIx);
+        allRoots.push(rootTree);
       }
 
-      // Build tree structure from response
-      const tree = await this.buildTreeFromRoot(rootResponse);
+      if (allRoots.length === 0) {
+        return { error: 'No roots found in map' };
+      }
 
-      console.log('[RP1] Map tree built successfully');
+      // If single root, return it directly; otherwise wrap in a virtual root
+      let tree;
+      if (allRoots.length === 1) {
+        tree = allRoots[0];
+      } else {
+        tree = {
+          name: 'Map',
+          type: 'RMRoot',
+          nodeType: 'Root',
+          id: 0,
+          transform: null,
+          bound: null,
+          children: allRoots,
+          hasChildren: true
+        };
+      }
+
+      console.log(`[RP1] Map tree built successfully with ${allRoots.length} root(s)`);
       return { tree };
 
     } catch (err) {
@@ -140,16 +165,16 @@ export class RP1Proxy {
     }
   }
 
-  async buildTreeFromRoot(rootData) {
+  async buildTreeFromRoot(rootData, rootIx = 1) {
     // Parse the RMRoot:update response format
     const parent = rootData.Parent || rootData;
     const aChild = rootData.aChild || [];
 
     const root = {
-      name: parent.pName?.wsRMRootId || 'Root',
+      name: parent.pName?.wsRMRootId || `Root ${rootIx}`,
       type: 'RMRoot',
       nodeType: 'Root',
-      id: parent.twRMRootIx || 1,
+      id: parent.twRMRootIx || rootIx,
       transform: null,
       bound: null,
       children: [],
@@ -368,6 +393,48 @@ export class RP1Proxy {
     return node;
   }
 
+  buildPlaceableNode(data, id) {
+    // Handle :update response format with Parent and aChild
+    const parent = data.Parent || data;
+    const aChild = data.aChild || [];
+
+    const nodeType = this.resolveNodeType(parent, 'RMPObject');
+
+    const node = {
+      name: parent.pName?.wsRMPObjectId || parent.sName || `Placeable ${id}`,
+      type: 'RMPObject',
+      nodeType: nodeType,
+      class: parent.sClass,
+      id: parent.twRMPObjectIx || id,
+      transform: this.parseTransformFromData(parent),
+      bound: this.parseBoundFromData(parent),
+      assetUrl: parent.sAssetUrl,
+      properties: this.extractProperties(parent),
+      children: [],
+      hasChildren: false
+    };
+
+    // Parse children - detect type from each child's properties
+    const allChildren = aChild.flat();
+
+    console.log(`[RP1] Placeable ${node.name} has ${allChildren.length} total children`);
+
+    for (const child of allChildren) {
+      // Detect type from index property
+      if (child.twRMCObjectIx !== undefined) {
+        node.children.push(this.parseContainerNode(child));
+      } else if (child.twRMTObjectIx !== undefined) {
+        node.children.push(this.parseTerrainNode(child));
+      } else if (child.twRMPObjectIx !== undefined) {
+        node.children.push(this.parsePlaceableNode(child));
+      }
+    }
+
+    node.hasChildren = node.children.length > 0 || parent.nChildren > 0;
+
+    return node;
+  }
+
   parseTransform(data) {
     if (!data) return null;
 
@@ -429,19 +496,7 @@ export class RP1Proxy {
           response = await this.emitWithCallback('RMPObject:update', { twRMPObjectIx: nodeId });
           console.log(`[RP1] RMPObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
-            const nodeType = this.resolveNodeType(response, 'RMPObject');
-            node = {
-              name: response.sName || `Placeable ${nodeId}`,
-              type: 'RMPObject',
-              nodeType: nodeType,
-              class: response.sClass,
-              id: response.twRMPObjectIx || nodeId,
-              transform: this.parseTransform(response),
-              assetUrl: response.sAssetUrl,
-              properties: this.extractProperties(response),
-              children: [],
-              hasChildren: false
-            };
+            node = this.buildPlaceableNode(response, nodeId);
           }
           break;
 
