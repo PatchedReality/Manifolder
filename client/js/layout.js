@@ -98,43 +98,91 @@ export class LayoutManager {
   }
 
   setupViewTabs() {
-    const tabs = document.querySelectorAll('.view-tab');
+    const toggles = document.querySelectorAll('.view-toggle');
 
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        this.setViewMode(tab.dataset.view);
+    this.graphEnabled = true;
+    this.boundsEnabled = true;
+
+    toggles.forEach(toggle => {
+      toggle.addEventListener('click', () => {
+        const view = toggle.dataset.view;
+
+        if (view === 'graph') {
+          this.graphEnabled = !this.graphEnabled;
+        } else if (view === 'bounds') {
+          this.boundsEnabled = !this.boundsEnabled;
+        }
+
+        // Ensure at least one view is enabled
+        if (!this.graphEnabled && !this.boundsEnabled) {
+          if (view === 'graph') {
+            this.boundsEnabled = true;
+          } else {
+            this.graphEnabled = true;
+          }
+        }
+
+        this.updateViewToggles();
+        this.updateViewDisplay();
       });
+    });
+
+    this.updateViewDisplay();
+  }
+
+  updateViewToggles() {
+    const toggles = document.querySelectorAll('.view-toggle');
+    toggles.forEach(toggle => {
+      const view = toggle.dataset.view;
+      if (view === 'graph') {
+        toggle.classList.toggle('active', this.graphEnabled);
+      } else if (view === 'bounds') {
+        toggle.classList.toggle('active', this.boundsEnabled);
+      }
     });
   }
 
-  setViewMode(mode) {
-    this.viewMode = mode;
-
+  updateViewDisplay() {
     const content = document.querySelector('.viewport-content');
-    const v3d = document.getElementById('viewport-3d');
-    const v2d = document.getElementById('viewport-2d');
+    const vGraph = document.getElementById('viewport-graph');
+    const vBounds = document.getElementById('viewport-bounds');
 
     content.classList.remove('split-view');
 
-    if (mode === '3d') {
-      v3d.style.display = 'block';
-      v2d.style.display = 'none';
-    } else if (mode === '2d') {
-      v3d.style.display = 'none';
-      v2d.style.display = 'block';
-    } else if (mode === 'split') {
+    if (this.graphEnabled && this.boundsEnabled) {
       content.classList.add('split-view');
-      v3d.style.display = 'block';
-      v2d.style.display = 'block';
+      vGraph.style.display = 'block';
+      vBounds.style.display = 'block';
+    } else if (this.graphEnabled) {
+      vGraph.style.display = 'block';
+      vBounds.style.display = 'none';
+    } else if (this.boundsEnabled) {
+      vGraph.style.display = 'none';
+      vBounds.style.display = 'block';
     }
 
     window.dispatchEvent(new Event('resize'));
   }
 
+  setViewMode(mode) {
+    if (mode === 'graph') {
+      this.graphEnabled = true;
+      this.boundsEnabled = false;
+    } else if (mode === 'bounds') {
+      this.graphEnabled = false;
+      this.boundsEnabled = true;
+    } else if (mode === 'both') {
+      this.graphEnabled = true;
+      this.boundsEnabled = true;
+    }
+    this.updateViewToggles();
+    this.updateViewDisplay();
+  }
+
   getViewMode() {
-    return this.viewMode;
+    if (this.graphEnabled && this.boundsEnabled) return 'both';
+    if (this.graphEnabled) return 'graph';
+    return 'bounds';
   }
 
   showModal(modalId) {
@@ -238,27 +286,35 @@ export class LayoutManager {
         switch (e.key) {
           case '1':
             e.preventDefault();
-            this.setViewModeByKey('3d');
+            this.toggleView('graph');
             break;
           case '2':
             e.preventDefault();
-            this.setViewModeByKey('2d');
-            break;
-          case '3':
-            e.preventDefault();
-            this.setViewModeByKey('split');
+            this.toggleView('bounds');
             break;
         }
       }
     });
   }
 
-  setViewModeByKey(mode) {
-    const tabs = document.querySelectorAll('.view-tab');
-    tabs.forEach(tab => {
-      tab.classList.toggle('active', tab.dataset.view === mode);
-    });
-    this.setViewMode(mode);
+  toggleView(view) {
+    if (view === 'graph') {
+      this.graphEnabled = !this.graphEnabled;
+    } else if (view === 'bounds') {
+      this.boundsEnabled = !this.boundsEnabled;
+    }
+
+    // Ensure at least one view is enabled
+    if (!this.graphEnabled && !this.boundsEnabled) {
+      if (view === 'graph') {
+        this.boundsEnabled = true;
+      } else {
+        this.graphEnabled = true;
+      }
+    }
+
+    this.updateViewToggles();
+    this.updateViewDisplay();
   }
 
   setStatus(message, state = 'disconnected') {

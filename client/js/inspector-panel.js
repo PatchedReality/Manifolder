@@ -8,15 +8,17 @@ const TYPE_COLORS = {
   RMCObject: 'var(--node-rmcobject)',
   RMTObject: 'var(--node-rmtobject)',
   RMPObject: 'var(--node-rmpobject)',
-  
+
   // Specific Node Types
   Root: 'var(--node-root)',
   Land: 'var(--node-land)',
   Territory: 'var(--node-territory)',
   Country: 'var(--node-country)',
+  County: 'var(--node-county)',
   State: 'var(--node-state)',
   City: 'var(--node-city)',
-  Sector: 'var(--node-sector)'
+  Sector: 'var(--node-sector)',
+  Community: 'var(--node-community)'
 };
 
 export class InspectorPanel {
@@ -59,8 +61,8 @@ export class InspectorPanel {
       this._addRow(section, 'Class', node.class);
     }
 
+    // Use nodeType (set by server from bType), fall back to type
     const displayType = node.nodeType || node.type || 'Unknown';
-    // Prefer color for specific nodeType, fallback to generic type
     const typeColor = TYPE_COLORS[displayType] || TYPE_COLORS[node.type] || 'var(--text-muted)';
 
     const typeValue = document.createElement('span');
@@ -135,25 +137,62 @@ export class InspectorPanel {
   _renderRawJson(node) {
     const rawDiv = document.createElement('div');
     rawDiv.className = 'inspector-raw';
+    if (this.showRawJson) {
+      rawDiv.classList.add('expanded');
+    }
 
-    const toggle = document.createElement('button');
-    toggle.className = 'inspector-raw-toggle';
-    toggle.textContent = this.showRawJson ? '\u25BC Raw JSON' : '\u25B6 Raw JSON';
+    const header = document.createElement('div');
+    header.className = 'inspector-raw-header';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'inspector-toggle-btn';
+    toggleBtn.innerHTML = this.showRawJson ? '▼' : '▶';
+    toggleBtn.title = this.showRawJson ? 'Hide JSON' : 'Show JSON';
+
+    const title = document.createElement('span');
+    title.textContent = 'Raw JSON';
+    title.className = 'inspector-raw-title';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'inspector-copy-btn';
+    copyBtn.title = 'Copy to clipboard';
+    copyBtn.innerHTML = '&#128203;';
+
+    const jsonText = JSON.stringify(node, null, 2);
 
     const content = document.createElement('pre');
     content.className = 'inspector-raw-content';
-    if (this.showRawJson) {
-      content.classList.add('expanded');
-    }
-    content.textContent = JSON.stringify(node, null, 2);
+    content.textContent = jsonText;
+    content.style.display = this.showRawJson ? 'block' : 'none';
 
-    toggle.addEventListener('click', () => {
+    const toggleJson = () => {
       this.showRawJson = !this.showRawJson;
-      toggle.textContent = this.showRawJson ? '\u25BC Raw JSON' : '\u25B6 Raw JSON';
-      content.classList.toggle('expanded', this.showRawJson);
+      content.style.display = this.showRawJson ? 'block' : 'none';
+      toggleBtn.innerHTML = this.showRawJson ? '▼' : '▶';
+      toggleBtn.title = this.showRawJson ? 'Hide JSON' : 'Show JSON';
+      rawDiv.classList.toggle('expanded', this.showRawJson);
+    };
+
+    toggleBtn.addEventListener('click', toggleJson);
+    title.addEventListener('click', toggleJson);
+    title.style.cursor = 'pointer';
+
+    copyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(jsonText);
+        copyBtn.innerHTML = '&#10003;';
+        setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
     });
 
-    rawDiv.appendChild(toggle);
+    header.appendChild(toggleBtn);
+    header.appendChild(title);
+    header.appendChild(copyBtn);
+
+    rawDiv.appendChild(header);
     rawDiv.appendChild(content);
     this.container.appendChild(rawDiv);
   }

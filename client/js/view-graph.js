@@ -1,20 +1,23 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createStarfield, createGroundGrid } from './scene-helpers.js';
 
 const NODE_COLORS = {
   RMRoot: 0xffd700,
   RMCObject: 0x4a9eff,
   RMTObject: 0x50c878,
   RMPObject: 0xff8c42,
-  
+
   // Specific types
   Root: 0xffd700,
   Land: 0x4a9eff,
   Territory: 0xff7f50,
   Country: 0x9370db,
+  County: 0x87ceeb,
   State: 0x20b2aa,
   City: 0xf08080,
-  Sector: 0x98fb98
+  Sector: 0x98fb98,
+  Community: 0xdda0dd
 };
 
 const HIGHLIGHT_INTENSITY = 1.5;
@@ -28,7 +31,7 @@ const SPRING_K = 0.02;
 const DAMPING = 0.92;
 const MAX_VELOCITY = 5;
 
-export class View3D {
+export class ViewGraph {
   constructor(containerSelector) {
     this.container = document.querySelector(containerSelector);
     this.scene = null;
@@ -67,8 +70,8 @@ export class View3D {
     // Scene setup
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x111111);
-    // Fog for depth cue
-    this.scene.fog = new THREE.FogExp2(0x111111, 0.002);
+    // Fog for depth cue (low density to keep nodes visible from far away)
+    this.scene.fog = new THREE.FogExp2(0x111111, 0.0005);
 
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
@@ -106,44 +109,11 @@ export class View3D {
     this.camera.add(pointLight); 
     this.scene.add(this.camera);
 
-    // Ground Grid - finer scale (400 divisions = 5 units per cell)
-    this.gridHelper = new THREE.GridHelper(2000, 400, 0x666666, 0x222222);
-    this.scene.add(this.gridHelper);
-
-    this.createStarfield();
+    // Ground Grid and Starfield
+    this.gridHelper = createGroundGrid(this.scene);
+    createStarfield(this.scene);
 
     this.setupEventListeners();
-  }
-
-  createStarfield() {
-    const geometry = new THREE.BufferGeometry();
-    const count = 3000;
-    const positions = new Float32Array(count * 3);
-    
-    for (let i = 0; i < count; i++) {
-      const r = 4000;
-      const theta = 2 * Math.PI * Math.random();
-      const phi = Math.acos(2 * Math.random() - 1);
-      const x = r * Math.sin(phi) * Math.cos(theta);
-      const y = r * Math.sin(phi) * Math.sin(theta);
-      const z = r * Math.cos(phi);
-      
-      positions[i * 3] = x;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = z;
-    }
-    
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    
-    const material = new THREE.PointsMaterial({
-      color: 0x888888,
-      size: 2,
-      sizeAttenuation: false,
-      fog: false
-    });
-    
-    const stars = new THREE.Points(geometry, material);
-    this.scene.add(stars);
   }
 
   setupEventListeners() {

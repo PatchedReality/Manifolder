@@ -9,7 +9,9 @@ const NODE_TYPE_MAP = {
   4: 'Country',
   5: 'Territory',
   6: 'State',
+  7: 'County',
   8: 'City',
+  9: 'Community',
   10: 'Sector'
 };
 

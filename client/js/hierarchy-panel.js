@@ -20,6 +20,16 @@ export class HierarchyPanel {
     this.init();
   }
 
+  // Sort children alphabetically by name
+  _sortChildren(children) {
+    if (!children || !Array.isArray(children)) return children;
+    return [...children].sort((a, b) => {
+      const nameA = (a.name || '').toLowerCase();
+      const nameB = (b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  }
+
   // Generate globally unique key for each node
   _nodeKey(node) {
     if (typeof node === 'object') {
@@ -180,7 +190,7 @@ export class HierarchyPanel {
 
     if (nodeData.children && nodeData.children.length > 0) {
       this.loadedNodes.add(nodeKey);
-      nodeData.children.forEach(child => {
+      this._sortChildren(nodeData.children).forEach(child => {
         const childElement = this.createNodeElement(child);
         children.appendChild(childElement);
       });
@@ -231,7 +241,7 @@ export class HierarchyPanel {
       parentNodeData.children = children;
     }
 
-    children.forEach(child => {
+    this._sortChildren(children).forEach(child => {
       const childElement = this.createNodeElement(child);
       childrenContainer.appendChild(childElement);
     });

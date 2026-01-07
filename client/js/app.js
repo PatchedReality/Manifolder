@@ -1,7 +1,7 @@
 import { LayoutManager } from './layout.js';
 import { HierarchyPanel } from './hierarchy-panel.js';
-import { View3D } from './view-3d.js';
-import { View2D } from './view-2d.js';
+import { ViewGraph } from './view-graph.js';
+import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { RP1Client } from './rp1-client.js';
 
@@ -9,8 +9,8 @@ class App {
   constructor() {
     this.layout = new LayoutManager();
     this.hierarchy = new HierarchyPanel('#hierarchy-tree');
-    this.view3d = new View3D('#viewport-3d');
-    this.view2d = new View2D('#viewport-2d');
+    this.viewGraph = new ViewGraph('#viewport-graph');
+    this.viewBounds = new ViewBounds('#viewport-bounds');
     this.inspector = new InspectorPanel('#inspector-content');
     this.client = new RP1Client();
 
@@ -23,35 +23,81 @@ class App {
     this.setupViewEvents();
     this.setupLayoutEvents();
     this.setupClientEvents();
+    this.setupTypeFilter();
 
     this.inspector.clear();
     this.layout.setStatus('Disconnected', 'disconnected');
   }
 
+  setupTypeFilter() {
+    const filterBtn = document.getElementById('type-filter-btn');
+    const dropdown = document.getElementById('type-filter-dropdown');
+
+    if (!filterBtn || !dropdown) return;
+
+    // Build filter checkboxes from NODE_TYPES
+    NODE_TYPES.forEach(type => {
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="type-dot" style="background: var(${type.cssVar})"></span> ${type.name}`;
+      dropdown.appendChild(label);
+    });
+
+    // Toggle dropdown
+    filterBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown.classList.toggle('hidden');
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', () => {
+      dropdown.classList.add('hidden');
+    });
+
+    // Prevent dropdown from closing when clicking inside it
+    dropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    // Handle checkbox changes
+    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        const enabledTypes = Array.from(dropdown.querySelectorAll('input[type="checkbox"]'))
+          .filter(cb => cb.checked)
+          .map(cb => cb.value);
+        this.viewBounds.setTypeFilter(enabledTypes);
+      });
+    });
+  }
+
   setupHierarchyEvents() {
     this.hierarchy.onSelect(node => {
-      this.view3d.selectNode(node);
-      this.view2d.selectNode(node.id);
+      this.viewGraph.selectNode(node);
+      this.viewBounds.selectNode(node.id, node.type);
       this.inspector.showNode(node);
     });
 
     this.hierarchy.onZoom(node => {
-      this.view3d.zoomToNode(node);
+      this.viewGraph.zoomToNode(node);
+      this.viewBounds.zoomToNode(node);
     });
 
     this.hierarchy.onToggle((node, expanded) => {
       if (expanded) {
         const children = this.hierarchy.getChildren(node);
         if (children && children.length > 0) {
-          this.view3d.addChildren(node, children);
+          this.viewGraph.addChildren(node, children);
+          this.viewBounds.addChildren(node, children);
         }
+        this.viewBounds.expandNode(node);
       } else {
-        this.view3d.removeDescendants(node);
+        this.viewGraph.removeDescendants(node);
+        this.viewBounds.collapseNode(node);
       }
 
-      // Auto-select and zoom to the toggled node
-      this.view3d.selectNode(node);
-      this.view3d.zoomToNode(node);
+      this.viewGraph.selectNode(node);
+      this.viewGraph.zoomToNode(node);
+      this.viewBounds.zoomToNode(node);
     });
 
     this.hierarchy.onExpand(node => {
@@ -60,22 +106,37 @@ class App {
   }
 
   setupViewEvents() {
-    this.view3d.onSelect(node => {
+    this.viewGraph.onSelect(node => {
       this.hierarchy.selectNode(node);
       this.hierarchy.expandToNode(node);
-      this.view2d.selectNode(node.id);
+      this.viewBounds.selectNode(node.id, node.type);
       this.inspector.showNode(node);
     });
 
-    this.view3d.onToggle(node => {
+    this.viewGraph.onToggle(node => {
       this.hierarchy.toggleNode(node);
+      this.viewBounds.zoomToNode(node);
     });
 
-    this.view2d.onSelect(node => {
+    this.viewBounds.onSelect(node => {
       this.hierarchy.selectNode(node);
       this.hierarchy.expandToNode(node);
-      this.view3d.selectNode(node.id);
+      this.viewGraph.selectNode(node);
       this.inspector.showNode(node);
+    });
+
+    this.viewBounds.onToggle((node, expanded) => {
+      if (expanded) {
+        this.hierarchy.expandNode(node);
+        const children = this.hierarchy.getChildren(node);
+        if (children && children.length > 0) {
+          this.viewBounds.addChildren(node, children);
+        }
+      } else {
+        this.hierarchy.collapseNode(node);
+      }
+      this.viewBounds.zoomToNode(node);
+      this.viewGraph.zoomToNode(node);
     });
   }
 
@@ -118,8 +179,8 @@ class App {
       this.tree = tree;
 
       this.hierarchy.setData(tree);
-      this.view3d.setData(tree);
-      this.view2d.setData(tree);
+      this.viewGraph.setData(tree);
+      this.viewBounds.setData(tree);
       this.inspector.clear();
 
       this.layout.setStatus('Map loaded', 'connected');
@@ -153,7 +214,7 @@ class App {
         
         // Force a slight delay to ensure the renderer has had a frame to update positions if needed
         setTimeout(() => {
-          this.view3d.zoomToNode(targetNode);
+          this.viewGraph.zoomToNode(targetNode);
         }, 100);
       }
     } catch (error) {
@@ -166,7 +227,8 @@ class App {
       const nodeData = await this.client.getNode(node.id, node.type);
       if (nodeData && nodeData.children) {
         this.hierarchy.setChildren(node, nodeData.children);
-        this.view3d.addChildren(node, nodeData.children);
+        this.viewGraph.addChildren(node, nodeData.children);
+        this.viewBounds.addChildren(node, nodeData.children);
       }
       this.hierarchy.markNodeLoaded(node);
     } catch (error) {
