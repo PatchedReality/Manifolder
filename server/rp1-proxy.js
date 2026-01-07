@@ -3,6 +3,16 @@
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
+const NODE_TYPE_MAP = {
+  1: 'Root',
+  3: 'Land',
+  4: 'Country',
+  5: 'Territory',
+  6: 'State',
+  8: 'City',
+  10: 'Sector'
+};
+
 export class RP1Proxy {
   constructor(browserWs) {
     this.browserWs = browserWs;
@@ -12,6 +22,25 @@ export class RP1Proxy {
     this.callbackId = 0;
     this.msfConfig = null;
     this.endpoint = null;
+  }
+
+  resolveNodeType(data, defaultType) {
+    // Check various locations for bType
+    let bType = data.bType;
+    if (bType === undefined && data.pType) {
+      bType = data.pType.bType;
+    }
+    
+    // Check if it's explicitly named in properties
+    if (bType === undefined && data.properties) {
+        bType = data.properties.bType;
+    }
+
+    if (bType !== undefined && NODE_TYPE_MAP[bType]) {
+      return NODE_TYPE_MAP[bType];
+    }
+    
+    return defaultType;
   }
 
   sendToBrowser(message) {
@@ -117,6 +146,7 @@ export class RP1Proxy {
     const root = {
       name: parent.pName?.wsRMRootId || 'Root',
       type: 'RMRoot',
+      nodeType: 'Root',
       id: parent.twRMRootIx || 1,
       transform: null,
       bound: null,
@@ -155,37 +185,63 @@ export class RP1Proxy {
     return root;
   }
 
+  extractProperties(data) {
+    const props = { ...data };
+    // Remove fields we already explicitly handle or are internal
+    const ignored = [
+      'twRMRootIx', 'twRMCObjectIx', 'twRMTObjectIx', 'twRMPObjectIx',
+      'pName', 'pTransform', 'pBound', 'vPosition', 'qRotation', 'vScale',
+      'aChild', 'children', 'aRMTObjectIx', 'Parent', 'nChildren',
+      'sName', 'sAssetUrl'
+    ];
+    
+    ignored.forEach(key => delete props[key]);
+    return props;
+  }
+
   parseContainerNode(data) {
+    const nodeType = this.resolveNodeType(data, 'RMCObject');
     return {
       name: data.pName?.wsRMCObjectId || `Container ${data.twRMCObjectIx}`,
       type: 'RMCObject',
+      nodeType: nodeType,
+      class: data.sClass,
       id: data.twRMCObjectIx,
       transform: this.parseTransformFromData(data),
       bound: this.parseBoundFromData(data),
+      properties: this.extractProperties(data),
       children: [],
       hasChildren: data.nChildren > 0
     };
   }
 
   parseTerrainNode(data) {
+    const nodeType = this.resolveNodeType(data, 'RMTObject');
     return {
       name: data.pName?.wsRMTObjectId || `Terrain ${data.twRMTObjectIx}`,
       type: 'RMTObject',
+      nodeType: nodeType,
+      class: data.sClass,
       id: data.twRMTObjectIx,
       transform: this.parseTransformFromData(data),
       bound: this.parseBoundFromData(data),
+      properties: this.extractProperties(data),
       children: [],
       hasChildren: data.nChildren > 0
     };
   }
 
   parsePlaceableNode(data) {
+    const nodeType = this.resolveNodeType(data, 'RMPObject');
     return {
       name: data.pName?.wsRMPObjectId || `Placeable ${data.twRMPObjectIx}`,
       type: 'RMPObject',
+      nodeType: nodeType,
+      class: data.sClass,
       id: data.twRMPObjectIx,
       transform: this.parseTransformFromData(data),
       bound: this.parseBoundFromData(data),
+      properties: this.extractProperties(data),
       children: [],
       hasChildren: data.nChildren > 0
     };
@@ -227,12 +283,16 @@ export class RP1Proxy {
   }
 
   async buildContainerNode(data, id) {
+    const nodeType = this.resolveNodeType(data, 'RMCObject');
     const node = {
       name: data.sName || `Container ${id}`,
       type: 'RMCObject',
+      nodeType: nodeType,
+      class: data.sClass,
       id: data.twRMCObjectIx || id,
       transform: this.parseTransform(data),
       bound: this.parseBound(data),
+      properties: this.extractProperties(data),
       children: [],
       hasChildren: false
     };
@@ -269,12 +329,17 @@ export class RP1Proxy {
     const parent = data.Parent || data;
     const aChild = data.aChild || [];
 
+    const nodeType = this.resolveNodeType(parent, 'RMTObject');
+
     const node = {
       name: parent.pName?.wsRMTObjectId || parent.sName || `Terrain ${id}`,
       type: 'RMTObject',
+      nodeType: nodeType,
+      class: parent.sClass,
       id: parent.twRMTObjectIx || id,
       transform: this.parseTransformFromData(parent),
       bound: this.parseBoundFromData(parent),
+      properties: this.extractProperties(parent),
       children: [],
       hasChildren: false
     };
@@ -362,12 +427,16 @@ export class RP1Proxy {
           response = await this.emitWithCallback('RMPObject:update', { twRMPObjectIx: nodeId });
           console.log(`[RP1] RMPObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
+            const nodeType = this.resolveNodeType(response, 'RMPObject');
             node = {
               name: response.sName || `Placeable ${nodeId}`,
               type: 'RMPObject',
+              nodeType: nodeType,
+              class: response.sClass,
               id: response.twRMPObjectIx || nodeId,
               transform: this.parseTransform(response),
               assetUrl: response.sAssetUrl,
+              properties: this.extractProperties(response),
               children: [],
               hasChildren: false
             };

@@ -126,6 +126,9 @@ export class HierarchyPanel {
     node.className = 'tree-node';
     node.dataset.id = nodeData.id;
     node.dataset.type = nodeData.type;
+    if (nodeData.nodeType) {
+      node.dataset.nodetype = nodeData.nodeType;
+    }
     node.dataset.uid = nodeData._uid;
 
     const content = document.createElement('div');

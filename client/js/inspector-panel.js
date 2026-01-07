@@ -7,7 +7,16 @@ const TYPE_COLORS = {
   RMRoot: 'var(--node-rmroot)',
   RMCObject: 'var(--node-rmcobject)',
   RMTObject: 'var(--node-rmtobject)',
-  RMPObject: 'var(--node-rmpobject)'
+  RMPObject: 'var(--node-rmpobject)',
+  
+  // Specific Node Types
+  Root: 'var(--node-root)',
+  Land: 'var(--node-land)',
+  Territory: 'var(--node-territory)',
+  Country: 'var(--node-country)',
+  State: 'var(--node-state)',
+  City: 'var(--node-city)',
+  Sector: 'var(--node-sector)'
 };
 
 export class InspectorPanel {
@@ -46,10 +55,17 @@ export class InspectorPanel {
 
     this._addRow(section, 'Name', node.name || '(unnamed)');
 
+    if (node.class) {
+      this._addRow(section, 'Class', node.class);
+    }
+
+    const displayType = node.nodeType || node.type || 'Unknown';
+    // Prefer color for specific nodeType, fallback to generic type
+    const typeColor = TYPE_COLORS[displayType] || TYPE_COLORS[node.type] || 'var(--text-muted)';
+
     const typeValue = document.createElement('span');
     typeValue.className = 'inspector-value';
-    const typeColor = TYPE_COLORS[node.type] || 'var(--text-muted)';
-    typeValue.innerHTML = `<span style="color: ${typeColor}">&#9679;</span> ${node.type || 'Unknown'}`;
+    typeValue.innerHTML = `<span style="color: ${typeColor}">&#9679;</span> ${displayType}`;
     this._addRowWithElement(section, 'Type', typeValue);
 
     this._addRow(section, 'ID', node.id !== undefined ? String(node.id) : '(none)');
@@ -91,6 +107,27 @@ export class InspectorPanel {
     const section = this._createSection('Bounds');
     const sizeVector = this._createVector3(node.bound);
     this._addRowWithElement(section, 'Size', sizeVector);
+
+    this.container.appendChild(section);
+  }
+
+  _renderProperties(node) {
+    if (!node.properties || Object.keys(node.properties).length === 0) {
+      return;
+    }
+
+    const section = this._createSection('Properties');
+    
+    // Sort keys for consistent display
+    Object.entries(node.properties)
+      .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+      .forEach(([key, value]) => {
+        let displayValue = value;
+        if (typeof value === 'object' && value !== null) {
+          displayValue = JSON.stringify(value);
+        }
+        this._addRow(section, key, String(displayValue));
+      });
 
     this.container.appendChild(section);
   }

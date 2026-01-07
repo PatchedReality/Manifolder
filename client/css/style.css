@@ -27,6 +27,15 @@
   --node-rmtobject: #50c878;
   --node-rmpobject: #ff8c42;
 
+  /* Specific Node Types */
+  --node-root: #ffd700;
+  --node-land: #4a9eff;
+  --node-territory: #ff7f50;
+  --node-country: #9370db;
+  --node-state: #20b2aa;
+  --node-city: #f08080;
+  --node-sector: #98fb98;
+
   /* Status colors */
   --status-connected: #50c878;
   --status-disconnected: #ff6b6b;
@@ -352,6 +361,15 @@ body {
 .tree-node[data-type="RMCObject"] .tree-icon { color: var(--node-rmcobject); }
 .tree-node[data-type="RMTObject"] .tree-icon { color: var(--node-rmtobject); }
 .tree-node[data-type="RMPObject"] .tree-icon { color: var(--node-rmpobject); }
+
+/* Specific Node Types mapped to dataset-nodetype if added */
+.tree-node[data-nodetype="Root"] .tree-icon { color: var(--node-root); }
+.tree-node[data-nodetype="Land"] .tree-icon { color: var(--node-land); }
+.tree-node[data-nodetype="Territory"] .tree-icon { color: var(--node-territory); }
+.tree-node[data-nodetype="Country"] .tree-icon { color: var(--node-country); }
+.tree-node[data-nodetype="State"] .tree-icon { color: var(--node-state); }
+.tree-node[data-nodetype="City"] .tree-icon { color: var(--node-city); }
+.tree-node[data-nodetype="Sector"] .tree-icon { color: var(--node-sector); }
 
 /* ============================================
    INSPECTOR PANEL

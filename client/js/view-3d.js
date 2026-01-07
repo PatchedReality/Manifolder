@@ -5,19 +5,28 @@ const NODE_COLORS = {
   RMRoot: 0xffd700,
   RMCObject: 0x4a9eff,
   RMTObject: 0x50c878,
-  RMPObject: 0xff8c42
+  RMPObject: 0xff8c42,
+  
+  // Specific types
+  Root: 0xffd700,
+  Land: 0x4a9eff,
+  Territory: 0xff7f50,
+  Country: 0x9370db,
+  State: 0x20b2aa,
+  City: 0xf08080,
+  Sector: 0x98fb98
 };
 
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
-const SELECTION_COLOR = 0xff0000;
+const SELECTION_COLOR = 0xffffff;
 
 // Force Layout Parameters
-const REPULSION = 1000;
+const REPULSION = 600;
 const SPRING_LENGTH = 50;
-const SPRING_K = 0.05;
-const DAMPING = 0.85;
-const MAX_VELOCITY = 10;
+const SPRING_K = 0.02;
+const DAMPING = 0.92;
+const MAX_VELOCITY = 5;
 
 export class View3D {
   constructor(containerSelector) {
@@ -37,8 +46,10 @@ export class View3D {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
     this.selectCallbacks = [];
+    this.toggleCallbacks = [];
     this.selectedId = null;
-    
+    this.highlightMesh = null;
+
     this.init();
     this.animate();
   }
@@ -169,7 +180,10 @@ export class View3D {
 
     if (nodeIntersect) {
       const { id, type } = nodeIntersect.object.userData;
-      this.zoomToNode({ id, type });
+      const node = this.graphNodes.find(n => n.id === id && n.type === type);
+      if (node) {
+        this.toggleCallbacks.forEach(cb => cb(node.data));
+      }
     }
   }
 
@@ -177,30 +191,29 @@ export class View3D {
     const mesh = this.nodeMeshes.get(this._getKey(node.id, node.type));
     if (!mesh) return;
 
-    // Target position is the node's current position
-    const targetPosition = mesh.position.clone();
-    
-    // Calculate new camera position
-    // Keep current direction but move closer
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    offset.setLength(50); // Fixed distance zoom
-    const newCameraPosition = targetPosition.clone().add(offset);
+    // Calculate camera offset direction (keep current viewing angle)
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+    const distance = 120;
 
-    this.animateCamera(newCameraPosition, targetPosition);
+    this.animateCamera(mesh, direction, distance);
   }
 
-  animateCamera(targetCameraPos, targetLookAt) {
+  animateCamera(targetMesh, direction, distance) {
     const startPos = this.camera.position.clone();
     const startLookAt = this.controls.target.clone();
-    const duration = 800;
+    const duration = 1500;
     const startTime = performance.now();
 
     const animate = (currentTime) => {
       const elapsed = currentTime - startTime;
       const progress = Math.min(elapsed / duration, 1);
-      const eased = this.easeOutCubic(progress);
+      const eased = this.easeInOutQuart(progress);
 
-      this.camera.position.lerpVectors(startPos, targetCameraPos, eased);
+      // Track mesh's current position
+      const targetLookAt = targetMesh.position.clone();
+      const targetCamPos = targetLookAt.clone().add(direction.clone().multiplyScalar(distance));
+
+      this.camera.position.lerpVectors(startPos, targetCamPos, eased);
       this.controls.target.lerpVectors(startLookAt, targetLookAt, eased);
       this.controls.update();
 
@@ -212,8 +225,8 @@ export class View3D {
     requestAnimationFrame(animate);
   }
 
-  easeOutCubic(t) {
-    return 1 - Math.pow(1 - t, 3);
+  easeInOutQuart(t) {
+    return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
   }
 
   onWindowResize() {
@@ -242,6 +255,7 @@ export class View3D {
   buildGraph(tree) {
     this.graphNodes = [];
     this.graphLinks = [];
+
     const traverse = (node, parentIndex = -1) => {
       const nodeIndex = this.graphNodes.length;
       
@@ -249,6 +263,7 @@ export class View3D {
       this.graphNodes.push({
         id: node.id,
         type: node.type,
+        nodeType: node.nodeType,
         data: node,
         x: (Math.random() - 0.5) * 100,
         y: (Math.random() - 0.5) * 100,
@@ -276,7 +291,7 @@ export class View3D {
     const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
 
     this.graphNodes.forEach((node, index) => {
-      const color = NODE_COLORS[node.type] || 0x888888;
+      const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
       const material = new THREE.MeshStandardMaterial({ 
         color: color,
         roughness: 0.3,
@@ -291,7 +306,7 @@ export class View3D {
         originalColor: color 
       };
 
-      const label = this.createLabel(node.data.name || node.type);
+      const label = this.createLabel(node.data);
       mesh.add(label);
 
       this.scene.add(mesh);
@@ -318,9 +333,11 @@ export class View3D {
   addChildren(parentNode, children) {
     if (!children || children.length === 0) return;
 
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === this._getKey(parentNode.id, parentNode.type));
+    const parentKey = this._getKey(parentNode.id, parentNode.type);
+    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+
     if (parentIndex === -1) {
-      console.warn(`View3D: Parent node ${parentNode.id} not found`);
+      console.warn(`View3D: Parent node ${parentNode.name} not found in graph`);
       return;
     }
 
@@ -336,6 +353,7 @@ export class View3D {
       this.graphNodes.push({
         id: child.id,
         type: child.type,
+        nodeType: child.nodeType,
         data: child,
         x: parentGraphNode.x + (Math.random() - 0.5) * 10,
         y: parentGraphNode.y + (Math.random() - 0.5) * 10,
@@ -350,7 +368,7 @@ export class View3D {
 
       // Create mesh
       const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
-      const color = NODE_COLORS[child.type] || 0x888888;
+      const color = NODE_COLORS[child.nodeType] || NODE_COLORS[child.type] || 0x888888;
       const material = new THREE.MeshStandardMaterial({ 
         color: color,
         roughness: 0.3,
@@ -365,7 +383,7 @@ export class View3D {
         originalColor: color 
       };
 
-      const label = this.createLabel(child.name || child.type);
+      const label = this.createLabel(child);
       mesh.add(label);
 
       // Set initial position
@@ -384,19 +402,15 @@ export class View3D {
 
   removeDescendants(parentNode) {
     const parentKey = this._getKey(parentNode.id, parentNode.type);
-    
+    const indicesToRemove = new Set();
+
     // Build adjacency list for fast lookup
     const childrenMap = new Map();
     this.graphLinks.forEach(link => {
        if (!childrenMap.has(link.source)) childrenMap.set(link.source, []);
        childrenMap.get(link.source).push(link.target);
     });
-    
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
-    if (parentIndex === -1) return;
 
-    const indicesToRemove = new Set();
-    
     const collect = (pIndex) => {
        const kids = childrenMap.get(pIndex);
        if (kids) {
@@ -408,9 +422,11 @@ export class View3D {
           });
        }
     };
-    
+
+    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+
     collect(parentIndex);
-    
+
     if (indicesToRemove.size === 0) return;
 
     // 1. Remove Meshes
@@ -483,6 +499,15 @@ export class View3D {
   }
 
   clearScene() {
+    if (this.highlightMesh) {
+      if (this.highlightMesh.parent) {
+        this.highlightMesh.parent.remove(this.highlightMesh);
+      }
+      this.highlightMesh.geometry.dispose();
+      this.highlightMesh.material.dispose();
+      this.highlightMesh = null;
+    }
+
     this.nodeMeshes.forEach(mesh => {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -527,25 +552,34 @@ export class View3D {
       }
     }
 
-    // Spring forces (Links)
+    // Spring forces (Links) + hierarchical Y constraint
     for (const link of this.graphLinks) {
-      const n1 = this.graphNodes[link.source];
-      const n2 = this.graphNodes[link.target];
+      const parent = this.graphNodes[link.source];
+      const child = this.graphNodes[link.target];
 
-      const dx = n2.x - n1.x;
-      const dy = n2.y - n1.y;
-      const dz = n2.z - n1.z;
+      const dx = child.x - parent.x;
+      const dy = child.y - parent.y;
+      const dz = child.z - parent.z;
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      
-      // F = k * (current_length - target_length)
+
+      // Spring force
       const force = (dist - SPRING_LENGTH) * SPRING_K;
-      
+
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
       const fz = (dz / dist) * force;
 
-      n1.vx += fx; n1.vy += fy; n1.vz += fz;
-      n2.vx -= fx; n2.vy -= fy; n2.vz -= fz;
+      parent.vx += fx; parent.vy += fy; parent.vz += fz;
+      child.vx -= fx; child.vy -= fy; child.vz -= fz;
+
+      // Hierarchical force: push child below parent (soft constraint)
+      const minGap = 30;
+      const yDiff = parent.y - child.y;
+      if (yDiff < minGap) {
+        const correction = (minGap - yDiff) * 0.02;
+        child.vy -= correction;
+        parent.vy += correction * 0.2;
+      }
     }
 
     // Center gravity (pull to 0,0,0)
@@ -652,13 +686,14 @@ export class View3D {
   selectNode(node) {
     const key = this._getKey(node.id, node.type);
     
-    // Reset previous
-    if (this.selectedId !== null) {
-      const prevMesh = this.nodeMeshes.get(this.selectedId);
-      if (prevMesh) {
-        prevMesh.material.color.setHex(prevMesh.userData.originalColor);
-        prevMesh.scale.set(1, 1, 1);
+    // Remove previous highlight
+    if (this.highlightMesh) {
+      if (this.highlightMesh.parent) {
+        this.highlightMesh.parent.remove(this.highlightMesh);
       }
+      this.highlightMesh.geometry.dispose();
+      this.highlightMesh.material.dispose();
+      this.highlightMesh = null;
     }
 
     this.selectedId = key;
@@ -666,8 +701,17 @@ export class View3D {
     // Highlight new
     const mesh = this.nodeMeshes.get(key);
     if (mesh) {
-      mesh.material.color.setHex(SELECTION_COLOR);
-      mesh.scale.set(1.5, 1.5, 1.5);
+      // Create a slightly larger wireframe sphere
+      const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS * 1.2, 16, 12);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: SELECTION_COLOR,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.5
+      });
+      
+      this.highlightMesh = new THREE.Mesh(geometry, material);
+      mesh.add(this.highlightMesh);
     }
   }
 
@@ -675,7 +719,13 @@ export class View3D {
     this.selectCallbacks.push(callback);
   }
 
-  createLabel(text) {
+  onToggle(callback) {
+    this.toggleCallbacks.push(callback);
+  }
+
+  createLabel(node) {
+    const text = node.name || node.type || 'Unknown';
+
     // High-resolution for sharp text
     const fontSize = 64; 
     const font = `bold ${fontSize}px Arial`;

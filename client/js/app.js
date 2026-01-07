@@ -48,6 +48,10 @@ class App {
       } else {
         this.view3d.removeDescendants(node);
       }
+
+      // Auto-select and zoom to the toggled node
+      this.view3d.selectNode(node);
+      this.view3d.zoomToNode(node);
     });
 
     this.hierarchy.onExpand(node => {
@@ -61,6 +65,10 @@ class App {
       this.hierarchy.expandToNode(node);
       this.view2d.selectNode(node.id);
       this.inspector.showNode(node);
+    });
+
+    this.view3d.onToggle(node => {
+      this.hierarchy.toggleNode(node);
     });
 
     this.view2d.onSelect(node => {
@@ -115,6 +123,39 @@ class App {
       this.inspector.clear();
 
       this.layout.setStatus('Map loaded', 'connected');
+
+      if (tree) {
+        // Auto-drill down to the lowest child of type 'Root'
+        let targetNode = tree;
+        
+        // Keep drilling down as long as we have children and the current node is a 'Root'
+        // We want to stop AT the last Root node (e.g. Earth), so we check the children.
+        while (
+          targetNode && 
+          targetNode.children && 
+          targetNode.children.length > 0
+        ) {
+          // Check if the first child is also a Root. 
+          // If so, we assume it's a wrapper and go down.
+          // Note: This assumes a linear chain of Roots or that we follow the first one.
+          // Adjust if we need to handle multiple Root children differently.
+          const firstChild = targetNode.children[0];
+          if ((firstChild.nodeType === 'Root' || firstChild.type === 'RMRoot')) {
+             targetNode = firstChild;
+          } else {
+             break;
+          }
+        }
+
+        this.hierarchy.selectNode(targetNode);
+        this.hierarchy.expandToNode(targetNode);
+        this.hierarchy.expandNode(targetNode);
+        
+        // Force a slight delay to ensure the renderer has had a frame to update positions if needed
+        setTimeout(() => {
+          this.view3d.zoomToNode(targetNode);
+        }, 100);
+      }
     } catch (error) {
       this.layout.setStatus('Load error: ' + error.message, 'disconnected');
     }
