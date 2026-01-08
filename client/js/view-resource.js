@@ -41,8 +41,7 @@ export class ViewResource {
     }
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x111111);
-    this.scene.fog = new THREE.FogExp2(0x111111, 0.0001);
+    this.scene.background = new THREE.Color(0x0c0c14);
 
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
@@ -54,23 +53,27 @@ export class ViewResource {
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 1.2;
     this.container.appendChild(this.renderer.domElement);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
 
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    const hemiLight = new THREE.HemisphereLight(0x4466aa, 0x1a1a2e, 0.8);
     hemiLight.position.set(0, 200, 0);
     this.scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(100, 200, 100);
-    this.scene.add(dirLight);
+    const keyLight = new THREE.DirectionalLight(0xfff5e6, 2.0);
+    keyLight.position.set(50, 100, 50);
+    this.scene.add(keyLight);
 
-    const pointLight = new THREE.PointLight(0xffffff, 0.5);
-    this.camera.add(pointLight);
+    const rimLight = new THREE.DirectionalLight(0x6699ff, 0.8);
+    rimLight.position.set(-50, 30, -50);
+    this.scene.add(rimLight);
+
+    const cameraLight = new THREE.PointLight(0xffffff, 0.3);
+    this.camera.add(cameraLight);
     this.scene.add(this.camera);
 
     this.gridHelper = createInfiniteGrid(this.scene);
@@ -289,10 +292,15 @@ export class ViewResource {
     const rot = transform.Rotation || transform.rotation || [0, 0, 0, 1];
     const scale = transform.Scale || transform.scale || [1, 1, 1];
 
+    if (!isFinite(pos[0]) || !isFinite(pos[1]) || !isFinite(pos[2])) {
+      console.warn('Invalid position in transform, skipping', pos);
+      return;
+    }
+
     const offsetMatrix = new THREE.Matrix4();
     const position = new THREE.Vector3(pos[0], pos[1], pos[2]);
-    const quaternion = new THREE.Quaternion(rot[0], rot[1], rot[2], rot[3]);
-    const scaleVec = new THREE.Vector3(scale[0], scale[1], scale[2]);
+    const quaternion = new THREE.Quaternion(rot[0] || 0, rot[1] || 0, rot[2] || 0, rot[3] || 1);
+    const scaleVec = new THREE.Vector3(scale[0] || 1, scale[1] || 1, scale[2] || 1);
 
     offsetMatrix.compose(position, quaternion, scaleVec);
     model.applyMatrix4(offsetMatrix);
@@ -416,7 +424,24 @@ export class ViewResource {
   centerContentAtOrigin() {
     if (!this.contentGroup || this.loadedModels.length === 0) return;
 
-    const boundingBox = new THREE.Box3().setFromObject(this.contentGroup);
+    const boundingBox = new THREE.Box3();
+    let validCount = 0;
+
+    for (const model of this.loadedModels) {
+      const modelBox = new THREE.Box3().setFromObject(model);
+      if (!modelBox.isEmpty() && isFinite(modelBox.min.x) && isFinite(modelBox.max.x)) {
+        boundingBox.union(modelBox);
+        validCount++;
+      }
+    }
+
+    if (boundingBox.isEmpty() || !isFinite(boundingBox.min.x) || validCount === 0) {
+      console.warn('No valid bounding boxes found', {
+        validCount,
+        totalModels: this.loadedModels.length
+      });
+      return;
+    }
 
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
@@ -425,48 +450,111 @@ export class ViewResource {
 
     const maxDim = Math.max(size.x, size.y, size.z);
     const targetSize = 500;
-    const scale = maxDim > 0 ? targetSize / maxDim : 1;
+    const minScale = 0.0001;
+    const maxScale = 10000;
+    let scale = maxDim > 0 ? targetSize / maxDim : 1;
+    scale = Math.max(minScale, Math.min(maxScale, scale));
+
+    if (!isFinite(scale) || !isFinite(center.x)) {
+      console.warn('Invalid scale or center, skipping centering');
+      return;
+    }
 
     this.contentGroup.scale.setScalar(scale);
     this.contentGroup.position.copy(center).multiplyScalar(-scale);
+
+    console.log('centerContent:', {
+      originalCenter: center.toArray(),
+      originalMin: boundingBox.min.toArray(),
+      scale,
+      expectedWorldMinY: (boundingBox.min.y - center.y) * scale,
+      groupPosition: this.contentGroup.position.toArray()
+    });
   }
 
   fitCameraToContent() {
     if (!this.contentGroup || this.loadedModels.length === 0) {
-      this.controls.target.set(0, 0, 0);
-      this.camera.position.set(5, 5, 10);
-      this.controls.update();
+      this.resetCamera();
       return;
     }
 
-    const boundingBox = new THREE.Box3().setFromObject(this.contentGroup);
+    // Force update world matrices after centering transform was applied
+    this.contentGroup.updateMatrixWorld(true);
+
+    // Compute bounds by iterating valid models (setFromObject can return NaN if any child is invalid)
+    const boundingBox = new THREE.Box3();
+    let validCount = 0;
+
+    for (const model of this.loadedModels) {
+      const modelBox = new THREE.Box3().setFromObject(model);
+      if (!modelBox.isEmpty() && isFinite(modelBox.min.x) && isFinite(modelBox.max.x) &&
+          isFinite(modelBox.min.y) && isFinite(modelBox.max.y) &&
+          isFinite(modelBox.min.z) && isFinite(modelBox.max.z)) {
+        boundingBox.union(modelBox);
+        validCount++;
+      }
+    }
+
+    if (boundingBox.isEmpty() || validCount === 0) {
+      console.warn('No valid bounding boxes in fitCamera', {
+        validCount,
+        totalModels: this.loadedModels.length
+      });
+      this.resetCamera();
+      return;
+    }
 
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
     boundingBox.getCenter(center);
     boundingBox.getSize(size);
 
+    console.log('fitCamera bounds:', {
+      center: center.toArray(),
+      size: size.toArray(),
+      min: boundingBox.min.toArray(),
+      max: boundingBox.max.toArray()
+    });
+
     const maxDim = Math.max(size.x, size.y, size.z);
     const fov = this.camera.fov * (Math.PI / 180);
     const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
 
     const minDistance = 5;
-    const finalDistance = Math.max(distance, minDistance);
+    const maxDistance = 5000;
+    const finalDistance = Math.max(minDistance, Math.min(maxDistance, distance));
+
+    if (!isFinite(finalDistance) || !isFinite(center.x)) {
+      console.warn('Invalid camera position, resetting');
+      this.resetCamera();
+      return;
+    }
 
     const direction = new THREE.Vector3(1, 0.5, 1).normalize();
     this.camera.position.copy(center).add(direction.multiplyScalar(finalDistance));
     this.controls.target.copy(center);
     this.controls.update();
 
+    if (this.gridHelper && isFinite(boundingBox.min.y)) {
+      this.gridHelper.position.y = boundingBox.min.y - 0.1;
+    }
+  }
+
+  resetCamera() {
+    this.controls.target.set(0, 0, 0);
+    this.camera.position.set(50, 30, 50);
+    this.controls.update();
     if (this.gridHelper) {
-      const minY = boundingBox.min.y;
-      this.gridHelper.position.y = minY - 0.1;
+      this.gridHelper.position.y = 0;
     }
   }
 
   clearScene() {
     if (this.contentGroup) {
       this.scene.remove(this.contentGroup);
+    }
+    if (this.gridHelper) {
+      this.gridHelper.position.y = 0;
     }
     this.loadedModels.forEach(model => {
       model.traverse((child) => {

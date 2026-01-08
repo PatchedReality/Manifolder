@@ -270,6 +270,54 @@ body {
   border-right: 1px solid var(--border-default);
 }
 
+.viewport-content.split-view #viewport-bounds:not(:last-child) {
+  border-right: 1px solid var(--border-default);
+}
+
+/* Triple view layout */
+.viewport-content.triple-view {
+  flex-direction: row;
+}
+
+.viewport-content.triple-view .viewport {
+  flex: 1;
+  min-width: 150px;
+}
+
+.viewport-content.triple-view #viewport-graph {
+  border-right: 1px solid var(--border-default);
+}
+
+.viewport-content.triple-view #viewport-bounds {
+  border-right: 1px solid var(--border-default);
+}
+
+/* Resource view status indicator */
+.resource-status {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 4px 8px;
+  background: var(--bg-panel);
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.resource-status:empty {
+  display: none;
+}
+
+.resource-status.loading {
+  color: var(--status-loading);
+}
+
+.resource-status.error {
+  color: var(--status-disconnected);
+}
+
 /* View tabs */
 .viewport-controls {
   display: flex;

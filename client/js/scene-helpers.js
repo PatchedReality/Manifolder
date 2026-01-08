@@ -49,11 +49,15 @@ export function createInfiniteGrid(scene, options = {}) {
       float minorLine = max(gridLine(minorCoord.x, lineWidth), gridLine(minorCoord.y, lineWidth));
       float majorLine = max(gridLine(majorCoord.x, lineWidth * 0.25), gridLine(majorCoord.y, lineWidth * 0.25));
 
-      vec3 minorColor = vec3(0.15);
-      vec3 majorColor = vec3(0.3);
+      vec3 baseColor = vec3(0.06, 0.08, 0.12);
+      vec3 minorColor = vec3(0.16, 0.31, 0.39);
+      vec3 majorColor = vec3(0.24, 0.55, 0.63);
 
-      vec3 color = mix(minorColor, majorColor, majorLine);
-      float alpha = max(minorLine * 0.4, majorLine * 0.7) * fadeAlpha;
+      float lineAlpha = max(minorLine * 0.3, majorLine * 0.5);
+      float baseAlpha = .8;
+
+      vec3 color = mix(baseColor, mix(minorColor, majorColor, majorLine), lineAlpha > 0.0 ? 1.0 : 0.0);
+      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;
 
       if (alpha < 0.01) discard;
       gl_FragColor = vec4(color, alpha);

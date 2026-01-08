@@ -134,6 +134,15 @@ class App {
       const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
       this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
+
+      localStorage.setItem('selectedNodeId', node.id);
+      localStorage.setItem('selectedNodeType', node.type);
+
+      // Save path from root to this node for restoration
+      const path = this.hierarchy.getPathToNode(node);
+      if (path) {
+        localStorage.setItem('selectedNodePath', JSON.stringify(path));
+      }
     });
 
     this.hierarchy.onZoom(node => {
@@ -275,16 +284,83 @@ class App {
           expandLevel(tree.children, 2);
         }
 
-        this.hierarchy.selectNode(tree);
-
-        // Force a slight delay to ensure the renderer has had a frame to update positions if needed
-        setTimeout(() => {
-          this.viewGraph.zoomToNode(tree);
-        }, 100);
+        // Try to restore previously selected node via path
+        const savedPath = localStorage.getItem('selectedNodePath');
+        if (savedPath) {
+          this.restoreNodePath(JSON.parse(savedPath));
+        } else {
+          this.hierarchy.selectNode(tree);
+          setTimeout(() => {
+            this.viewGraph.zoomToNode(tree);
+          }, 100);
+        }
       }
     } catch (error) {
       this.layout.setStatus('Load error: ' + error.message, 'disconnected');
     }
+  }
+
+  findNodeById(tree, id) {
+    if (tree.id === id) return tree;
+    if (tree.children) {
+      for (const child of tree.children) {
+        const found = this.findNodeById(child, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  async restoreNodePath(path) {
+    if (!path || path.length === 0 || !this.tree) {
+      this.hierarchy.selectNode(this.tree);
+      return;
+    }
+
+    let currentNode = this.tree;
+
+    for (let i = 1; i < path.length; i++) {
+      const targetId = path[i].id;
+      const targetType = path[i].type;
+
+      // Load children if not already loaded
+      if (!currentNode.children || currentNode.children.length === 0) {
+        await this.loadNodeChildren(currentNode);
+      }
+
+      // Find target child in the loaded children
+      let nextNode = currentNode.children?.find(c => c.id === targetId);
+
+      if (!nextNode) {
+        // Maybe children weren't loaded yet, try loading explicitly
+        const nodeData = await this.client.getNode(currentNode.id, currentNode.type);
+        if (nodeData && nodeData.children) {
+          this.hierarchy.setChildren(currentNode, nodeData.children);
+          this.viewGraph.addChildren(currentNode, nodeData.children);
+          this.viewBounds.addChildren(currentNode, nodeData.children);
+          nextNode = nodeData.children.find(c => c.id === targetId);
+        }
+      }
+
+      if (!nextNode) {
+        console.warn('Could not find node in path:', targetId);
+        break;
+      }
+
+      // Expand this node in the hierarchy
+      this.hierarchy.expandNode(currentNode);
+
+      currentNode = nextNode;
+    }
+
+    // Expand tree to show the node, then select it
+    this.hierarchy.expandToNode(currentNode);
+    this.hierarchy.selectNode(currentNode);
+    this.viewBounds.selectNode(currentNode.id, currentNode.type);
+    this.viewBounds.zoomToNode(currentNode);
+    setTimeout(() => {
+      this.viewGraph.zoomToNode(currentNode);
+    }, 100);
   }
 
   async loadNodeChildren(node) {
