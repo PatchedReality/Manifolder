@@ -102,6 +102,7 @@ export class LayoutManager {
 
     this.graphEnabled = true;
     this.boundsEnabled = true;
+    this.resourceEnabled = false;
 
     toggles.forEach(toggle => {
       toggle.addEventListener('click', () => {
@@ -111,12 +112,16 @@ export class LayoutManager {
           this.graphEnabled = !this.graphEnabled;
         } else if (view === 'bounds') {
           this.boundsEnabled = !this.boundsEnabled;
+        } else if (view === 'resource') {
+          this.resourceEnabled = !this.resourceEnabled;
         }
 
         // Ensure at least one view is enabled
-        if (!this.graphEnabled && !this.boundsEnabled) {
+        if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
           if (view === 'graph') {
             this.boundsEnabled = true;
+          } else if (view === 'bounds') {
+            this.graphEnabled = true;
           } else {
             this.graphEnabled = true;
           }
@@ -138,6 +143,8 @@ export class LayoutManager {
         toggle.classList.toggle('active', this.graphEnabled);
       } else if (view === 'bounds') {
         toggle.classList.toggle('active', this.boundsEnabled);
+      } else if (view === 'resource') {
+        toggle.classList.toggle('active', this.resourceEnabled);
       }
     });
   }
@@ -146,19 +153,20 @@ export class LayoutManager {
     const content = document.querySelector('.viewport-content');
     const vGraph = document.getElementById('viewport-graph');
     const vBounds = document.getElementById('viewport-bounds');
+    const vResource = document.getElementById('viewport-resource');
 
-    content.classList.remove('split-view');
+    content.classList.remove('split-view', 'triple-view');
 
-    if (this.graphEnabled && this.boundsEnabled) {
+    const enabledCount = [this.graphEnabled, this.boundsEnabled, this.resourceEnabled].filter(Boolean).length;
+
+    vGraph.style.display = this.graphEnabled ? 'block' : 'none';
+    vBounds.style.display = this.boundsEnabled ? 'block' : 'none';
+    vResource.style.display = this.resourceEnabled ? 'block' : 'none';
+
+    if (enabledCount === 3) {
+      content.classList.add('triple-view');
+    } else if (enabledCount === 2) {
       content.classList.add('split-view');
-      vGraph.style.display = 'block';
-      vBounds.style.display = 'block';
-    } else if (this.graphEnabled) {
-      vGraph.style.display = 'block';
-      vBounds.style.display = 'none';
-    } else if (this.boundsEnabled) {
-      vGraph.style.display = 'none';
-      vBounds.style.display = 'block';
     }
 
     window.dispatchEvent(new Event('resize'));
@@ -311,6 +319,10 @@ export class LayoutManager {
             e.preventDefault();
             this.toggleView('bounds');
             break;
+          case '3':
+            e.preventDefault();
+            this.toggleView('resource');
+            break;
         }
       }
     });
@@ -321,12 +333,16 @@ export class LayoutManager {
       this.graphEnabled = !this.graphEnabled;
     } else if (view === 'bounds') {
       this.boundsEnabled = !this.boundsEnabled;
+    } else if (view === 'resource') {
+      this.resourceEnabled = !this.resourceEnabled;
     }
 
     // Ensure at least one view is enabled
-    if (!this.graphEnabled && !this.boundsEnabled) {
+    if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
       if (view === 'graph') {
         this.boundsEnabled = true;
+      } else if (view === 'bounds') {
+        this.graphEnabled = true;
       } else {
         this.graphEnabled = true;
       }

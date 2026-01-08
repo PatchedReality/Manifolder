@@ -3,6 +3,8 @@
  * Shows basic info, transform, bounds, and raw JSON data
  */
 
+import { getResourceUrl } from './node-helpers.js';
+
 const TYPE_COLORS = {
   RMRoot: 'var(--node-rmroot)',
   RMCObject: 'var(--node-rmcobject)',
@@ -219,31 +221,9 @@ export class InspectorPanel {
     this.container.appendChild(rawDiv);
   }
 
-  _getResourceUrl(node) {
-    const pResource = node?.properties?.pResource;
-    if (!pResource) return null;
-
-    // Check sReference first (if it's a valid http(s) URL)
-    const ref = pResource.sReference;
-    if (ref && typeof ref === 'string' &&
-        ref.toLowerCase().endsWith('.json') &&
-        (ref.startsWith('http://') || ref.startsWith('https://'))) {
-      return ref;
-    }
-
-    // Fall back to sName (if it's a valid http(s) URL)
-    const name = pResource.sName;
-    if (name && typeof name === 'string' &&
-        name.toLowerCase().endsWith('.json') &&
-        (name.startsWith('http://') || name.startsWith('https://'))) {
-      return name;
-    }
-
-    return null;
-  }
 
   _renderResource(node) {
-    const resourceUrl = this._getResourceUrl(node);
+    const resourceUrl = getResourceUrl(node);
     if (!resourceUrl) {
       return;
     }

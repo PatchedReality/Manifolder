@@ -418,11 +418,152 @@ export class HierarchyPanel {
   onToggle(callback) {
     this.toggleCallbacks.push(callback);
   }
-  
+
+  getSelectedNode() {
+    if (!this.selectedNode) return null;
+    const uid = this.selectedNode.dataset.uid;
+    return this.nodeData.get(`node-${uid}`);
+  }
+
   getChildren(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
     const nodeData = this.nodeData.get(nodeKey);
     return nodeData ? nodeData.children : null;
+  }
+
+  isNodeExpanded(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodes.get(nodeKey);
+    if (!node) return false;
+
+    const children = node.querySelector(':scope > .tree-children');
+    return children && children.style.display !== 'none';
+  }
+
+  getExpandedDescendants(nodeOrKey) {
+    const results = [];
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const nodeData = this.nodeData.get(nodeKey);
+
+    if (!nodeData || !nodeData.children) return results;
+    if (!this.isNodeExpanded(nodeData)) return results;
+
+    const collectExpanded = (children, parentCumulativePos) => {
+      for (const child of children) {
+        const childPos = this.getNodePosition(child);
+        const cumulativePos = [
+          parentCumulativePos[0] + childPos[0],
+          parentCumulativePos[1] + childPos[1],
+          parentCumulativePos[2] + childPos[2]
+        ];
+
+        const cumulativeTransform = {
+          Position: cumulativePos,
+          Rotation: this.getNodeRotation(child),
+          Scale: this.getNodeScale(child)
+        };
+
+        results.push({ node: child, cumulativeTransform });
+
+        if (this.isNodeExpanded(child) && child.children) {
+          collectExpanded(child.children, cumulativePos);
+        }
+      }
+    };
+
+    collectExpanded(nodeData.children, [0, 0, 0]);
+    return results;
+  }
+
+  getNodePosition(node) {
+    // Check transform property first
+    if (node.transform) {
+      const pos = node.transform.Position || node.transform.position;
+      if (pos) {
+        // Handle both array [x,y,z] and object {x,y,z} formats
+        if (Array.isArray(pos)) return pos;
+        if (typeof pos === 'object') {
+          return [pos.x || pos.X || 0, pos.y || pos.Y || 0, pos.z || pos.Z || 0];
+        }
+      }
+    }
+    // Check direct position property
+    const pos = node.position || node.Position;
+    if (pos) {
+      if (Array.isArray(pos)) return pos;
+      if (typeof pos === 'object') {
+        return [pos.x || pos.X || 0, pos.y || pos.Y || 0, pos.z || pos.Z || 0];
+      }
+    }
+    return [0, 0, 0];
+  }
+
+  getNodeRotation(node) {
+    if (node.transform) {
+      const rot = node.transform.Rotation || node.transform.rotation;
+      if (rot) {
+        if (Array.isArray(rot)) return rot;
+        if (typeof rot === 'object') {
+          return [rot.x || rot.X || 0, rot.y || rot.Y || 0, rot.z || rot.Z || 0, rot.w || rot.W || 1];
+        }
+      }
+    }
+    const rot = node.rotation || node.Rotation;
+    if (rot) {
+      if (Array.isArray(rot)) return rot;
+      if (typeof rot === 'object') {
+        return [rot.x || rot.X || 0, rot.y || rot.Y || 0, rot.z || rot.Z || 0, rot.w || rot.W || 1];
+      }
+    }
+    return [0, 0, 0, 1];
+  }
+
+  getNodeScale(node) {
+    if (node.transform) {
+      const scale = node.transform.Scale || node.transform.scale;
+      if (scale) {
+        if (Array.isArray(scale)) return scale;
+        if (typeof scale === 'object') {
+          return [scale.x || scale.X || 1, scale.y || scale.Y || 1, scale.z || scale.Z || 1];
+        }
+      }
+    }
+    const scale = node.scale || node.Scale;
+    if (scale) {
+      if (Array.isArray(scale)) return scale;
+      if (typeof scale === 'object') {
+        return [scale.x || scale.X || 1, scale.y || scale.Y || 1, scale.z || scale.Z || 1];
+      }
+    }
+    return [1, 1, 1];
+  }
+
+  combineTransforms(parentTransform, childTransform) {
+    if (!childTransform) return parentTransform;
+    if (!parentTransform) return childTransform;
+
+    const getPos = (t) => t.Position || t.position || [0, 0, 0];
+    const getRot = (t) => t.Rotation || t.rotation || [0, 0, 0, 1];
+    const getScale = (t) => t.Scale || t.scale || [1, 1, 1];
+
+    const pPos = getPos(parentTransform);
+    const cPos = getPos(childTransform);
+    const pScale = getScale(parentTransform);
+    const cScale = getScale(childTransform);
+
+    return {
+      Position: [
+        pPos[0] + cPos[0],
+        pPos[1] + cPos[1],
+        pPos[2] + cPos[2]
+      ],
+      Rotation: getRot(childTransform),
+      Scale: [
+        pScale[0] * cScale[0],
+        pScale[1] * cScale[1],
+        pScale[2] * cScale[2]
+      ]
+    };
   }
 
   markNodeLoaded(nodeOrKey) {

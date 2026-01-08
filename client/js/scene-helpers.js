@@ -1,6 +1,89 @@
 import * as THREE from 'three';
 
 /**
+ * Creates an infinite ground grid using a shader
+ * @param {THREE.Scene} scene - The scene to add the grid to
+ * @param {Object} options - Configuration options
+ * @returns {THREE.Mesh} The grid mesh
+ */
+export function createInfiniteGrid(scene, options = {}) {
+  const {
+    size = 100000,
+    gridSpacing = 10,
+    majorGridSpacing = 100,
+    fadeDistance = 10000
+  } = options;
+
+  const vertexShader = `
+    varying vec3 vWorldPosition;
+    void main() {
+      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+      vWorldPosition = worldPosition.xyz;
+      gl_Position = projectionMatrix * viewMatrix * worldPosition;
+    }
+  `;
+
+  const fragmentShader = `
+    precision highp float;
+
+    uniform float uGridSpacing;
+    uniform float uMajorGridSpacing;
+    uniform float uFadeDistance;
+    varying vec3 vWorldPosition;
+
+    float gridLine(float coord, float lineWidth) {
+      float wrappedCoord = mod(coord, 1.0);
+      return step(wrappedCoord, lineWidth) + step(1.0 - lineWidth, wrappedCoord);
+    }
+
+    void main() {
+      float distanceFromCenter = length(vWorldPosition.xz);
+      float fadeAlpha = 1.0 - smoothstep(uFadeDistance * 0.3, uFadeDistance, distanceFromCenter);
+
+      if (fadeAlpha < 0.01) discard;
+
+      vec2 minorCoord = vWorldPosition.xz / uGridSpacing;
+      vec2 majorCoord = vWorldPosition.xz / uMajorGridSpacing;
+
+      float lineWidth = 0.02;
+      float minorLine = max(gridLine(minorCoord.x, lineWidth), gridLine(minorCoord.y, lineWidth));
+      float majorLine = max(gridLine(majorCoord.x, lineWidth * 0.25), gridLine(majorCoord.y, lineWidth * 0.25));
+
+      vec3 minorColor = vec3(0.15);
+      vec3 majorColor = vec3(0.3);
+
+      vec3 color = mix(minorColor, majorColor, majorLine);
+      float alpha = max(minorLine * 0.4, majorLine * 0.7) * fadeAlpha;
+
+      if (alpha < 0.01) discard;
+      gl_FragColor = vec4(color, alpha);
+    }
+  `;
+
+  const geometry = new THREE.PlaneGeometry(size, size, 1, 1);
+  geometry.rotateX(-Math.PI / 2);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uGridSpacing: { value: gridSpacing },
+      uMajorGridSpacing: { value: majorGridSpacing },
+      uFadeDistance: { value: fadeDistance }
+    },
+    vertexShader,
+    fragmentShader,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+
+  const grid = new THREE.Mesh(geometry, material);
+  grid.frustumCulled = false;
+  scene.add(grid);
+
+  return grid;
+}
+
+/**
  * Creates a starfield surrounding the scene
  * @param {THREE.Scene} scene - The scene to add the starfield to
  * @param {Object} options - Configuration options

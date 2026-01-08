@@ -2,6 +2,7 @@ import { LayoutManager } from './layout.js';
 import { HierarchyPanel } from './hierarchy-panel.js';
 import { ViewGraph } from './view-graph.js';
 import { ViewBounds, NODE_TYPES } from './view-bounds.js';
+import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { RP1Client } from './rp1-client.js';
 
@@ -11,6 +12,7 @@ class App {
     this.hierarchy = new HierarchyPanel('#hierarchy-tree');
     this.viewGraph = new ViewGraph('#viewport-graph');
     this.viewBounds = new ViewBounds('#viewport-bounds');
+    this.viewResource = new ViewResource('#viewport-resource');
     this.inspector = new InspectorPanel('#inspector-content');
     this.client = new RP1Client();
 
@@ -129,6 +131,8 @@ class App {
     this.hierarchy.onSelect(node => {
       this.viewGraph.selectNode(node);
       this.viewBounds.selectNode(node.id, node.type);
+      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+      this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
     });
 
@@ -165,6 +169,8 @@ class App {
       this.hierarchy.selectNode(node);
       this.hierarchy.expandToNode(node);
       this.viewBounds.selectNode(node.id, node.type);
+      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+      this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
     });
 
@@ -182,6 +188,8 @@ class App {
       this.hierarchy.selectNode(node);
       this.hierarchy.expandToNode(node);
       this.viewGraph.selectNode(node);
+      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+      this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
     });
 
@@ -286,6 +294,12 @@ class App {
         this.hierarchy.setChildren(node, nodeData.children);
         this.viewGraph.addChildren(node, nodeData.children);
         this.viewBounds.addChildren(node, nodeData.children);
+
+        const selectedNode = this.hierarchy.getSelectedNode();
+        if (selectedNode && selectedNode._uid === node._uid) {
+          const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+          this.viewResource.setNode(node, expandedDescendants);
+        }
       }
       this.hierarchy.markNodeLoaded(node);
     } catch (error) {
