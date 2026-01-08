@@ -173,6 +173,11 @@ class App {
       this.viewBounds.zoomToNode(node);
     });
 
+    this.viewGraph.onMsfLoad(url => {
+      this.layout.setUrl(url);
+      this.handleLoadMap(url);
+    });
+
     this.viewBounds.onSelect(node => {
       this.hierarchy.selectNode(node);
       this.hierarchy.expandToNode(node);
@@ -192,6 +197,11 @@ class App {
       }
       this.viewBounds.zoomToNode(node);
       this.viewGraph.zoomToNode(node);
+    });
+
+    this.viewBounds.onMsfLoad(url => {
+      this.layout.setUrl(url);
+      this.handleLoadMap(url);
     });
   }
 
@@ -241,35 +251,27 @@ class App {
       this.layout.setStatus('Map loaded', 'connected');
 
       if (tree) {
-        // Auto-drill down to the lowest child of type 'Root'
-        let targetNode = tree;
-        
-        // Keep drilling down as long as we have children and the current node is a 'Root'
-        // We want to stop AT the last Root node (e.g. Earth), so we check the children.
-        while (
-          targetNode && 
-          targetNode.children && 
-          targetNode.children.length > 0
-        ) {
-          // Check if the first child is also a Root. 
-          // If so, we assume it's a wrapper and go down.
-          // Note: This assumes a linear chain of Roots or that we follow the first one.
-          // Adjust if we need to handle multiple Root children differently.
-          const firstChild = targetNode.children[0];
-          if ((firstChild.nodeType === 'Root' || firstChild.type === 'RMRoot')) {
-             targetNode = firstChild;
-          } else {
-             break;
-          }
+        // Expand all nodes at top 3 levels
+        const expandLevel = (nodes, depth) => {
+          if (depth > 3 || !nodes) return;
+          nodes.forEach(node => {
+            this.hierarchy.expandNode(node);
+            if (node.children && node.children.length > 0) {
+              expandLevel(node.children, depth + 1);
+            }
+          });
+        };
+
+        this.hierarchy.expandNode(tree);
+        if (tree.children) {
+          expandLevel(tree.children, 2);
         }
 
-        this.hierarchy.selectNode(targetNode);
-        this.hierarchy.expandToNode(targetNode);
-        this.hierarchy.expandNode(targetNode);
-        
+        this.hierarchy.selectNode(tree);
+
         // Force a slight delay to ensure the renderer has had a frame to update positions if needed
         setTimeout(() => {
-          this.viewGraph.zoomToNode(targetNode);
+          this.viewGraph.zoomToNode(tree);
         }, 100);
       }
     } catch (error) {

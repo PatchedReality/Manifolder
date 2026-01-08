@@ -284,6 +284,14 @@ export class LayoutManager {
     this.loadUrlHistory();
   }
 
+  setUrl(url) {
+    const input = document.getElementById('url-input');
+    if (input) {
+      input.value = url;
+    }
+    this.addToUrlHistory(url);
+  }
+
   truncateUrl(url, maxLength = 50) {
     if (url.length <= maxLength) {
       return url;

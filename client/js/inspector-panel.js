@@ -45,6 +45,8 @@ export class InspectorPanel {
     this.container = document.querySelector(containerSelector);
     this.currentNode = null;
     this.showRawJson = false;
+    this.showResource = false;
+    this.resourceCache = new Map();
   }
 
   showNode(nodeData) {
@@ -59,6 +61,7 @@ export class InspectorPanel {
     this._renderTransform(nodeData);
     this._renderBounds(nodeData);
     this._renderRawJson(nodeData);
+    this._renderResource(nodeData);
   }
 
   clear() {
@@ -214,6 +217,119 @@ export class InspectorPanel {
     rawDiv.appendChild(header);
     rawDiv.appendChild(content);
     this.container.appendChild(rawDiv);
+  }
+
+  _getResourceUrl(node) {
+    const pResource = node?.properties?.pResource;
+    if (!pResource) return null;
+
+    // Check sReference first (if it's a valid http(s) URL)
+    const ref = pResource.sReference;
+    if (ref && typeof ref === 'string' &&
+        ref.toLowerCase().endsWith('.json') &&
+        (ref.startsWith('http://') || ref.startsWith('https://'))) {
+      return ref;
+    }
+
+    // Fall back to sName (if it's a valid http(s) URL)
+    const name = pResource.sName;
+    if (name && typeof name === 'string' &&
+        name.toLowerCase().endsWith('.json') &&
+        (name.startsWith('http://') || name.startsWith('https://'))) {
+      return name;
+    }
+
+    return null;
+  }
+
+  _renderResource(node) {
+    const resourceUrl = this._getResourceUrl(node);
+    if (!resourceUrl) {
+      return;
+    }
+
+    const resourceDiv = document.createElement('div');
+    resourceDiv.className = 'inspector-raw';
+    if (this.showResource) {
+      resourceDiv.classList.add('expanded');
+    }
+
+    const header = document.createElement('div');
+    header.className = 'inspector-raw-header';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'inspector-toggle-btn';
+    toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
+    toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
+
+    const title = document.createElement('span');
+    title.textContent = 'Resource';
+    title.className = 'inspector-raw-title';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'inspector-copy-btn';
+    copyBtn.title = 'Copy to clipboard';
+    copyBtn.innerHTML = '&#128203;';
+
+    const content = document.createElement('pre');
+    content.className = 'inspector-raw-content';
+    content.textContent = 'Loading...';
+    content.style.display = this.showResource ? 'block' : 'none';
+
+    const toggleResource = () => {
+      this.showResource = !this.showResource;
+      content.style.display = this.showResource ? 'block' : 'none';
+      toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
+      toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
+      resourceDiv.classList.toggle('expanded', this.showResource);
+    };
+
+    toggleBtn.addEventListener('click', toggleResource);
+    title.addEventListener('click', toggleResource);
+    title.style.cursor = 'pointer';
+
+    copyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(content.textContent);
+        copyBtn.innerHTML = '&#10003;';
+        setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    });
+
+    header.appendChild(toggleBtn);
+    header.appendChild(title);
+    header.appendChild(copyBtn);
+
+    resourceDiv.appendChild(header);
+    resourceDiv.appendChild(content);
+    this.container.appendChild(resourceDiv);
+
+    // Fetch the resource JSON
+    this._loadResource(resourceUrl, content);
+  }
+
+  async _loadResource(url, contentElement) {
+    // Check cache first
+    if (this.resourceCache.has(url)) {
+      contentElement.textContent = this.resourceCache.get(url);
+      return;
+    }
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const json = await response.json();
+      const jsonText = JSON.stringify(json, null, 2);
+      this.resourceCache.set(url, jsonText);
+      contentElement.textContent = jsonText;
+    } catch (err) {
+      contentElement.textContent = `Failed to load: ${err.message}`;
+    }
   }
 
   _createSection(title) {

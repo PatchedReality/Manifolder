@@ -74,6 +74,7 @@ export class ViewGraph {
     this.mouse = new THREE.Vector2();
     this.selectCallbacks = [];
     this.toggleCallbacks = [];
+    this.msfLoadCallbacks = [];
     this.selectedId = null;
     this.highlightMesh = null;
 
@@ -86,9 +87,23 @@ export class ViewGraph {
   }
 
   _getTextureUrl(nodeData) {
-    // Check for pResource.sReference texture URL
+    // Check for pResource.sReference texture URL (only image types)
     const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && ref.length > 0) {
+    if (ref && typeof ref === 'string') {
+      const lower = ref.toLowerCase();
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') || lower.endsWith('.gif') ||
+          lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+        return ref;
+      }
+    }
+    return null;
+  }
+
+  _getMsfReference(nodeData) {
+    // Check for pResource.sReference that points to an MSF file
+    const ref = nodeData?.properties?.pResource?.sReference;
+    if (ref && typeof ref === 'string' && ref.endsWith('.msf')) {
       return ref;
     }
     return null;
@@ -219,7 +234,15 @@ export class ViewGraph {
       const { id, type } = nodeIntersect.object.userData;
       const node = this.graphNodes.find(n => n.id === id && n.type === type);
       if (node) {
-        this.toggleCallbacks.forEach(cb => cb(node.data));
+        // Check for MSF reference - prompt to load instead of toggling
+        const msfUrl = this._getMsfReference(node.data);
+        if (msfUrl) {
+          if (confirm(`Load map: ${msfUrl}?`)) {
+            this.msfLoadCallbacks.forEach(cb => cb(msfUrl));
+          }
+        } else {
+          this.toggleCallbacks.forEach(cb => cb(node.data));
+        }
       }
     }
   }
@@ -750,6 +773,10 @@ export class ViewGraph {
 
   onToggle(callback) {
     this.toggleCallbacks.push(callback);
+  }
+
+  onMsfLoad(callback) {
+    this.msfLoadCallbacks.push(callback);
   }
 
   createLabel(node) {

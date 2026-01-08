@@ -68,6 +68,7 @@ export class ViewBounds {
 
     this.selectCallbacks = [];
     this.toggleCallbacks = [];
+    this.msfLoadCallbacks = [];
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
@@ -293,9 +294,17 @@ export class ViewBounds {
       const mesh = intersects[0].object;
       const nodeData = mesh.userData.nodeData;
       if (nodeData) {
-        this.selectNode(nodeData.id, nodeData.type);
-        this.zoomToNode(nodeData);
-        this.toggleNode(nodeData);
+        // Check for MSF reference - prompt to load instead of toggling
+        const msfUrl = this._getMsfReference(nodeData);
+        if (msfUrl) {
+          if (confirm(`Load map: ${msfUrl}?`)) {
+            this.msfLoadCallbacks.forEach(cb => cb(msfUrl));
+          }
+        } else {
+          this.selectNode(nodeData.id, nodeData.type);
+          this.zoomToNode(nodeData);
+          this.toggleNode(nodeData);
+        }
       }
     }
   }
@@ -365,6 +374,14 @@ export class ViewBounds {
 
   _getKey(id, type) {
     return `${type}_${id}`;
+  }
+
+  _getMsfReference(nodeData) {
+    const ref = nodeData?.properties?.pResource?.sReference;
+    if (ref && typeof ref === 'string' && ref.endsWith('.msf')) {
+      return ref;
+    }
+    return null;
   }
 
   clearNodes() {
@@ -760,6 +777,10 @@ export class ViewBounds {
 
   onToggle(callback) {
     this.toggleCallbacks.push(callback);
+  }
+
+  onMsfLoad(callback) {
+    this.msfLoadCallbacks.push(callback);
   }
 
   render() {
