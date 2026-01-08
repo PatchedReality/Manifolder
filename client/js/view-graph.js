@@ -8,7 +8,7 @@ const NODE_COLORS = {
   RMTObject: 0x50c878,
   RMPObject: 0xff8c42,
 
-  // Specific types
+  // Terrestrial types
   Root: 0xffd700,
   Land: 0x4a9eff,
   Territory: 0xff7f50,
@@ -17,7 +17,26 @@ const NODE_COLORS = {
   State: 0x20b2aa,
   City: 0xf08080,
   Sector: 0x98fb98,
-  Community: 0xdda0dd
+  Community: 0xdda0dd,
+
+  // Celestial types
+  Universe: 0xe0e0ff,
+  Supercluster: 0xb8b8ff,
+  GalaxyCluster: 0x9090ff,
+  Galaxy: 0x8080ff,
+  BlackHole: 0x303030,
+  Nebula: 0xff80ff,
+  StarCluster: 0xffffaa,
+  Constellation: 0xaaffff,
+  StarSystem: 0xffdd44,
+  Star: 0xffff00,
+  PlanetSystem: 0x44aaff,
+  Planet: 0x44ff88,
+  Moon: 0xcccccc,
+  Debris: 0x666666,
+  Satellite: 0x88ff88,
+  Transport: 0xff8800,
+  Surface: 0x886644
 };
 
 const HIGHLIGHT_INTENSITY = 1.5;

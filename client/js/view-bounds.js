@@ -4,15 +4,36 @@ import { createStarfield, createGroundGrid } from './scene-helpers.js';
 
 // Display node types with their colors (hex for Three.js, CSS var name for UI)
 export const NODE_TYPES = [
-  { name: 'Root', color: 0xffd700, cssVar: '--node-root' },
-  { name: 'Land', color: 0x4a9eff, cssVar: '--node-land' },
-  { name: 'Territory', color: 0xff7f50, cssVar: '--node-territory' },
-  { name: 'Country', color: 0x9370db, cssVar: '--node-country' },
-  { name: 'County', color: 0x87ceeb, cssVar: '--node-county' },
-  { name: 'State', color: 0x20b2aa, cssVar: '--node-state' },
-  { name: 'City', color: 0xf08080, cssVar: '--node-city' },
-  { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector' },
-  { name: 'Community', color: 0xdda0dd, cssVar: '--node-community' }
+  // Terrestrial types (bType 1-11)
+  { name: 'Root', color: 0xffd700, cssVar: '--node-root' },         // 1
+  { name: 'Water', color: 0x2266cc, cssVar: '--node-water' },       // 2
+  { name: 'Land', color: 0x4a9eff, cssVar: '--node-land' },         // 3
+  { name: 'Country', color: 0x9370db, cssVar: '--node-country' },   // 4
+  { name: 'Territory', color: 0xff7f50, cssVar: '--node-territory' }, // 5
+  { name: 'State', color: 0x20b2aa, cssVar: '--node-state' },       // 6
+  { name: 'County', color: 0x87ceeb, cssVar: '--node-county' },     // 7
+  { name: 'City', color: 0xf08080, cssVar: '--node-city' },         // 8
+  { name: 'Community', color: 0xdda0dd, cssVar: '--node-community' }, // 9
+  { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector' },     // 10
+  { name: 'Parcel', color: 0xffaa44, cssVar: '--node-parcel' },     // 11
+  // Celestial types
+  { name: 'Universe', color: 0xe0e0ff, cssVar: '--node-universe' },
+  { name: 'Supercluster', color: 0xc0c0ff, cssVar: '--node-supercluster' },
+  { name: 'GalaxyCluster', color: 0xa0a0ff, cssVar: '--node-galaxycluster' },
+  { name: 'Galaxy', color: 0x8080ff, cssVar: '--node-galaxy' },
+  { name: 'BlackHole', color: 0x4a0080, cssVar: '--node-blackhole' },
+  { name: 'Nebula', color: 0xff80ff, cssVar: '--node-nebula' },
+  { name: 'StarCluster', color: 0xffff80, cssVar: '--node-starcluster' },
+  { name: 'Constellation', color: 0x80ffff, cssVar: '--node-constellation' },
+  { name: 'StarSystem', color: 0xffcc00, cssVar: '--node-starsystem' },
+  { name: 'Star', color: 0xffff00, cssVar: '--node-star' },
+  { name: 'PlanetSystem', color: 0x88ff88, cssVar: '--node-planetsystem' },
+  { name: 'Planet', color: 0x44ff88, cssVar: '--node-planet' },
+  { name: 'Moon', color: 0xaaaaaa, cssVar: '--node-moon' },
+  { name: 'Debris', color: 0x666666, cssVar: '--node-debris' },
+  { name: 'Satellite', color: 0xcc8844, cssVar: '--node-satellite' },
+  { name: 'Transport', color: 0xff4444, cssVar: '--node-transport' },
+  { name: 'Surface', color: 0x44aa44, cssVar: '--node-surface' }
 ];
 
 // Build NODE_COLORS lookup from NODE_TYPES

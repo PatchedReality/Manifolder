@@ -3,8 +3,10 @@
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
-const NODE_TYPE_MAP = {
+// Terrestrial types (used by RMTObject - terrains)
+const TERRESTRIAL_TYPE_MAP = {
   1: 'Root',
+  2: 'Water',
   3: 'Land',
   4: 'Country',
   5: 'Territory',
@@ -12,7 +14,29 @@ const NODE_TYPE_MAP = {
   7: 'County',
   8: 'City',
   9: 'Community',
-  10: 'Sector'
+  10: 'Sector',
+  11: 'Parcel'
+};
+
+// Celestial types (used by RMCObject - containers)
+const CELESTIAL_TYPE_MAP = {
+  1: 'Universe',
+  2: 'Supercluster',
+  3: 'GalaxyCluster',
+  4: 'Galaxy',
+  5: 'BlackHole',
+  6: 'Nebula',
+  7: 'StarCluster',
+  8: 'Constellation',
+  9: 'StarSystem',
+  10: 'Star',
+  11: 'PlanetSystem',
+  12: 'Planet',
+  13: 'Moon',
+  14: 'Debris',
+  15: 'Satellite',
+  16: 'Transport',
+  17: 'Surface'
 };
 
 export class RP1Proxy {
@@ -32,16 +56,22 @@ export class RP1Proxy {
     if (bType === undefined && data.pType) {
       bType = data.pType.bType;
     }
-    
+
     // Check if it's explicitly named in properties
     if (bType === undefined && data.properties) {
-        bType = data.properties.bType;
+      bType = data.properties.bType;
     }
 
-    if (bType !== undefined && NODE_TYPE_MAP[bType]) {
-      return NODE_TYPE_MAP[bType];
+    if (bType !== undefined) {
+      // Use celestial types for RMCObject, terrestrial for RMTObject
+      if (defaultType === 'RMCObject' && CELESTIAL_TYPE_MAP[bType]) {
+        return CELESTIAL_TYPE_MAP[bType];
+      }
+      if (defaultType === 'RMTObject' && TERRESTRIAL_TYPE_MAP[bType]) {
+        return TERRESTRIAL_TYPE_MAP[bType];
+      }
     }
-    
+
     return defaultType;
   }
 
@@ -309,44 +339,43 @@ export class RP1Proxy {
     };
   }
 
-  async buildContainerNode(data, id) {
-    const nodeType = this.resolveNodeType(data, 'RMCObject');
+  buildContainerNode(data, id) {
+    // Handle :update response format with Parent and aChild
+    const parent = data.Parent || data;
+    const aChild = data.aChild || [];
+
+    const nodeType = this.resolveNodeType(parent, 'RMCObject');
+
     const node = {
-      name: data.sName || `Container ${id}`,
+      name: parent.pName?.wsRMCObjectId || parent.sName || `Container ${id}`,
       type: 'RMCObject',
       nodeType: nodeType,
-      class: data.sClass,
-      id: data.twRMCObjectIx || id,
-      transform: this.parseTransform(data),
-      bound: this.parseBound(data),
-      properties: this.extractProperties(data),
+      class: parent.sClass,
+      id: parent.twRMCObjectIx || id,
+      transform: this.parseTransformFromData(parent),
+      bound: this.parseBoundFromData(parent),
+      properties: this.extractProperties(parent),
       children: [],
       hasChildren: false
     };
 
-    // Check for terrain children
-    const terrainRefs = data.children || data.aRMTObjectIx || [];
-    node.hasChildren = terrainRefs.length > 0;
+    // Parse children - detect type from each child's properties
+    const allChildren = aChild.flat();
 
-    // Recursively fetch terrain objects (limit depth for initial load)
-    if (terrainRefs.length > 0 && terrainRefs.length <= 10) {
-      console.log(`[RP1] Container ${id} has ${terrainRefs.length} terrain children`);
+    console.log(`[RP1] Container ${node.name} has ${allChildren.length} total children`);
 
-      for (const terrainRef of terrainRefs) {
-        const terrainId = typeof terrainRef === 'object' ? terrainRef.twRMTObjectIx : terrainRef;
-
-        try {
-          const terrainResponse = await this.emitWithCallback('RMTOBJECT:open', { twRMTObjectIx: terrainId });
-
-          if (terrainResponse && (terrainResponse.nResult === undefined || terrainResponse.nResult === 0)) {
-            const terrainNode = this.buildTerrainNode(terrainResponse, terrainId);
-            node.children.push(terrainNode);
-          }
-        } catch (err) {
-          console.error(`[RP1] Error fetching RMTOBJECT ${terrainId}:`, err.message);
-        }
+    for (const child of allChildren) {
+      // Detect type from index property
+      if (child.twRMCObjectIx !== undefined) {
+        node.children.push(this.parseContainerNode(child));
+      } else if (child.twRMTObjectIx !== undefined) {
+        node.children.push(this.parseTerrainNode(child));
+      } else if (child.twRMPObjectIx !== undefined) {
+        node.children.push(this.parsePlaceableNode(child));
       }
     }
+
+    node.hasChildren = node.children.length > 0 || parent.nChildren > 0;
 
     return node;
   }
@@ -480,7 +509,7 @@ export class RP1Proxy {
           response = await this.emitWithCallback('RMCObject:update', { twRMCObjectIx: nodeId });
           console.log(`[RP1] RMCObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = await this.buildContainerNode(response, nodeId);
+            node = this.buildContainerNode(response, nodeId);
           }
           break;
 

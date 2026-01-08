@@ -9,7 +9,7 @@ const TYPE_COLORS = {
   RMTObject: 'var(--node-rmtobject)',
   RMPObject: 'var(--node-rmpobject)',
 
-  // Specific Node Types
+  // Terrestrial Node Types
   Root: 'var(--node-root)',
   Land: 'var(--node-land)',
   Territory: 'var(--node-territory)',
@@ -18,7 +18,26 @@ const TYPE_COLORS = {
   State: 'var(--node-state)',
   City: 'var(--node-city)',
   Sector: 'var(--node-sector)',
-  Community: 'var(--node-community)'
+  Community: 'var(--node-community)',
+
+  // Celestial Node Types
+  Universe: 'var(--node-universe)',
+  Supercluster: 'var(--node-supercluster)',
+  GalaxyCluster: 'var(--node-galaxycluster)',
+  Galaxy: 'var(--node-galaxy)',
+  BlackHole: 'var(--node-blackhole)',
+  Nebula: 'var(--node-nebula)',
+  StarCluster: 'var(--node-starcluster)',
+  Constellation: 'var(--node-constellation)',
+  StarSystem: 'var(--node-starsystem)',
+  Star: 'var(--node-star)',
+  PlanetSystem: 'var(--node-planetsystem)',
+  Planet: 'var(--node-planet)',
+  Moon: 'var(--node-moon)',
+  Debris: 'var(--node-debris)',
+  Satellite: 'var(--node-satellite)',
+  Transport: 'var(--node-transport)',
+  Surface: 'var(--node-surface)'
 };
 
 export class InspectorPanel {

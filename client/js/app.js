@@ -35,12 +35,44 @@ class App {
 
     if (!filterBtn || !dropdown) return;
 
-    // Build filter checkboxes from NODE_TYPES
-    NODE_TYPES.forEach(type => {
-      const label = document.createElement('label');
-      label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="type-dot" style="background: var(${type.cssVar})"></span> ${type.name}`;
-      dropdown.appendChild(label);
-    });
+    // Split types into categories
+    const celestialTypes = new Set([
+      'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'BlackHole',
+      'Nebula', 'StarCluster', 'Constellation', 'StarSystem', 'Star',
+      'PlanetSystem', 'Planet', 'Moon', 'Debris', 'Satellite', 'Transport', 'Surface'
+    ]);
+
+    const terrestrialTypes = NODE_TYPES.filter(t => !celestialTypes.has(t.name));
+    const celestialTypesList = NODE_TYPES.filter(t => celestialTypes.has(t.name));
+
+    // Helper to create a category
+    const createCategory = (name, types) => {
+      const category = document.createElement('div');
+      category.className = 'filter-category';
+
+      const header = document.createElement('label');
+      header.className = 'filter-category-header';
+      header.innerHTML = `<input type="checkbox" data-category="${name}" checked> ${name}`;
+      category.appendChild(header);
+
+      const items = document.createElement('div');
+      items.className = 'filter-category-items';
+
+      types.forEach(type => {
+        const label = document.createElement('label');
+        const isCelestial = celestialTypes.has(type.name);
+        const shapeClass = isCelestial ? 'type-triangle' : 'type-dot';
+        const colorStyle = isCelestial ? 'border-bottom-color' : 'background';
+        label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="${shapeClass}" style="${colorStyle}: var(${type.cssVar})"></span> ${type.name}`;
+        items.appendChild(label);
+      });
+
+      category.appendChild(items);
+      return category;
+    };
+
+    dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
+    dropdown.appendChild(createCategory('Celestial', celestialTypesList));
 
     // Toggle dropdown
     filterBtn.addEventListener('click', (e) => {
@@ -58,16 +90,39 @@ class App {
       e.stopPropagation();
     });
 
-    // Handle checkbox changes
-    const checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-      checkbox.addEventListener('change', () => {
-        const enabledTypes = Array.from(dropdown.querySelectorAll('input[type="checkbox"]'))
-          .filter(cb => cb.checked)
-          .map(cb => cb.value);
-        this.viewBounds.setTypeFilter(enabledTypes);
+    // Handle category checkbox changes (toggle all children)
+    dropdown.querySelectorAll('input[data-category]').forEach(categoryCheckbox => {
+      categoryCheckbox.addEventListener('change', () => {
+        const category = categoryCheckbox.closest('.filter-category');
+        const childCheckboxes = category.querySelectorAll('.filter-category-items input[type="checkbox"]');
+        childCheckboxes.forEach(cb => {
+          cb.checked = categoryCheckbox.checked;
+        });
+        this.updateTypeFilter(dropdown);
       });
     });
+
+    // Handle individual checkbox changes
+    dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]').forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        // Update category checkbox state
+        const category = checkbox.closest('.filter-category');
+        const categoryCheckbox = category.querySelector('input[data-category]');
+        const childCheckboxes = category.querySelectorAll('.filter-category-items input[type="checkbox"]');
+        const allChecked = Array.from(childCheckboxes).every(cb => cb.checked);
+        const someChecked = Array.from(childCheckboxes).some(cb => cb.checked);
+        categoryCheckbox.checked = allChecked;
+        categoryCheckbox.indeterminate = someChecked && !allChecked;
+        this.updateTypeFilter(dropdown);
+      });
+    });
+  }
+
+  updateTypeFilter(dropdown) {
+    const enabledTypes = Array.from(dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]'))
+      .filter(cb => cb.checked)
+      .map(cb => cb.value);
+    this.viewBounds.setTypeFilter(enabledTypes);
   }
 
   setupHierarchyEvents() {

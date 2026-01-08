@@ -2,6 +2,13 @@
  * HierarchyPanel - Tree view component for displaying map hierarchy
  * Supports lazy-loading, search filtering, and node selection
  */
+
+const CELESTIAL_TYPES = new Set([
+  'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'BlackHole',
+  'Nebula', 'StarCluster', 'Constellation', 'StarSystem', 'Star',
+  'PlanetSystem', 'Planet', 'Moon', 'Debris', 'Satellite', 'Transport', 'Surface'
+]);
+
 export class HierarchyPanel {
   constructor(containerSelector) {
     this.container = document.querySelector(containerSelector);
@@ -156,7 +163,8 @@ export class HierarchyPanel {
 
     const icon = document.createElement('span');
     icon.className = 'tree-icon';
-    icon.textContent = '●';
+    const isCelestial = CELESTIAL_TYPES.has(nodeData.nodeType);
+    icon.textContent = isCelestial ? '▲' : '●';
 
     const label = document.createElement('span');
     label.className = 'tree-label';
@@ -234,11 +242,20 @@ export class HierarchyPanel {
 
     childrenContainer.innerHTML = '';
     this.loadedNodes.add(parentKey);
-    
+
     // Update internal data cache
     const parentNodeData = this.nodeData.get(parentKey);
     if (parentNodeData) {
       parentNodeData.children = children;
+      parentNodeData.hasChildren = children && children.length > 0;
+    }
+
+    // Hide toggle if no children
+    const toggle = parentElement.querySelector(':scope > .tree-node-content > .tree-toggle');
+    if (toggle) {
+      if (!children || children.length === 0) {
+        toggle.textContent = '';
+      }
     }
 
     this._sortChildren(children).forEach(child => {
@@ -419,6 +436,20 @@ export class HierarchyPanel {
         const loading = children.querySelector('.tree-loading');
         if (loading) {
           loading.remove();
+        }
+
+        // Hide toggle if no children were loaded
+        const hasChildren = children.querySelectorAll(':scope > .tree-node').length > 0;
+        if (!hasChildren) {
+          const toggle = node.querySelector(':scope > .tree-node-content > .tree-toggle');
+          if (toggle) {
+            toggle.textContent = '';
+          }
+          // Update data cache
+          const nodeData = this.nodeData.get(nodeKey);
+          if (nodeData) {
+            nodeData.hasChildren = false;
+          }
         }
       }
     }
