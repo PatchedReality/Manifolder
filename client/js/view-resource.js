@@ -49,7 +49,7 @@ export class ViewResource {
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000);
     this.camera.position.set(5, 5, 10);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -293,7 +293,6 @@ export class ViewResource {
     const scale = transform.Scale || transform.scale || [1, 1, 1];
 
     if (!isFinite(pos[0]) || !isFinite(pos[1]) || !isFinite(pos[2])) {
-      console.warn('Invalid position in transform, skipping', pos);
       return;
     }
 
@@ -436,10 +435,6 @@ export class ViewResource {
     }
 
     if (boundingBox.isEmpty() || !isFinite(boundingBox.min.x) || validCount === 0) {
-      console.warn('No valid bounding boxes found', {
-        validCount,
-        totalModels: this.loadedModels.length
-      });
       return;
     }
 
@@ -456,20 +451,12 @@ export class ViewResource {
     scale = Math.max(minScale, Math.min(maxScale, scale));
 
     if (!isFinite(scale) || !isFinite(center.x)) {
-      console.warn('Invalid scale or center, skipping centering');
       return;
     }
 
     this.contentGroup.scale.setScalar(scale);
     this.contentGroup.position.copy(center).multiplyScalar(-scale);
 
-    console.log('centerContent:', {
-      originalCenter: center.toArray(),
-      originalMin: boundingBox.min.toArray(),
-      scale,
-      expectedWorldMinY: (boundingBox.min.y - center.y) * scale,
-      groupPosition: this.contentGroup.position.toArray()
-    });
   }
 
   fitCameraToContent() {
@@ -496,10 +483,6 @@ export class ViewResource {
     }
 
     if (boundingBox.isEmpty() || validCount === 0) {
-      console.warn('No valid bounding boxes in fitCamera', {
-        validCount,
-        totalModels: this.loadedModels.length
-      });
       this.resetCamera();
       return;
     }
@@ -508,13 +491,6 @@ export class ViewResource {
     const size = new THREE.Vector3();
     boundingBox.getCenter(center);
     boundingBox.getSize(size);
-
-    console.log('fitCamera bounds:', {
-      center: center.toArray(),
-      size: size.toArray(),
-      min: boundingBox.min.toArray(),
-      max: boundingBox.max.toArray()
-    });
 
     const maxDim = Math.max(size.x, size.y, size.z);
     const fov = this.camera.fov * (Math.PI / 180);
@@ -525,7 +501,6 @@ export class ViewResource {
     const finalDistance = Math.max(minDistance, Math.min(maxDistance, distance));
 
     if (!isFinite(finalDistance) || !isFinite(center.x)) {
-      console.warn('Invalid camera position, resetting');
       this.resetCamera();
       return;
     }
@@ -536,7 +511,7 @@ export class ViewResource {
     this.controls.update();
 
     if (this.gridHelper && isFinite(boundingBox.min.y)) {
-      this.gridHelper.position.y = boundingBox.min.y - 0.1;
+      this.gridHelper.position.y = boundingBox.min.y - 5;
     }
   }
 

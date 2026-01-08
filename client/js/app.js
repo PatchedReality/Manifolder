@@ -287,7 +287,7 @@ class App {
         // Try to restore previously selected node via path
         const savedPath = localStorage.getItem('selectedNodePath');
         if (savedPath) {
-          this.restoreNodePath(JSON.parse(savedPath));
+          await this.restoreNodePath(JSON.parse(savedPath));
         } else {
           this.hierarchy.selectNode(tree);
           setTimeout(() => {
@@ -323,32 +323,33 @@ class App {
       const targetId = path[i].id;
       const targetType = path[i].type;
 
+      // Expand current node first
+      this.hierarchy.expandNode(currentNode);
+
       // Load children if not already loaded
       if (!currentNode.children || currentNode.children.length === 0) {
-        await this.loadNodeChildren(currentNode);
-      }
-
-      // Find target child in the loaded children
-      let nextNode = currentNode.children?.find(c => c.id === targetId);
-
-      if (!nextNode) {
-        // Maybe children weren't loaded yet, try loading explicitly
-        const nodeData = await this.client.getNode(currentNode.id, currentNode.type);
-        if (nodeData && nodeData.children) {
-          this.hierarchy.setChildren(currentNode, nodeData.children);
-          this.viewGraph.addChildren(currentNode, nodeData.children);
-          this.viewBounds.addChildren(currentNode, nodeData.children);
-          nextNode = nodeData.children.find(c => c.id === targetId);
+        try {
+          await this.loadNodeChildren(currentNode);
+          // Small delay to let UI update
+          await new Promise(r => setTimeout(r, 50));
+        } catch (err) {
+          console.warn('Failed to load children during restore:', err);
+          break;
         }
       }
 
+      // Find target child in the loaded children
+      let nextNode = currentNode.children?.find(c => c.id === targetId && c.type === targetType);
+
       if (!nextNode) {
-        console.warn('Could not find node in path:', targetId);
-        break;
+        // Try by id only if type match failed
+        nextNode = currentNode.children?.find(c => c.id === targetId);
       }
 
-      // Expand this node in the hierarchy
-      this.hierarchy.expandNode(currentNode);
+      if (!nextNode) {
+        console.warn('Could not find node in path:', targetId, targetType);
+        break;
+      }
 
       currentNode = nextNode;
     }
