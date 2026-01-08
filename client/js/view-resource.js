@@ -77,7 +77,7 @@ export class ViewResource {
     this.scene.add(this.camera);
 
     this.gridHelper = createInfiniteGrid(this.scene);
-    createStarfield(this.scene);
+    createStarfield(this.scene, { radius: 2500 });
 
     window.addEventListener('resize', () => this.onWindowResize());
     this.setupEventListeners();
@@ -449,7 +449,7 @@ export class ViewResource {
     boundingBox.getSize(size);
 
     const maxDim = Math.max(size.x, size.y, size.z);
-    const targetSize = 500;
+    const targetSize = 1500;
     const minScale = 0.0001;
     const maxScale = 10000;
     let scale = maxDim > 0 ? targetSize / maxDim : 1;

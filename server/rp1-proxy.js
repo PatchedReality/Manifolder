@@ -505,6 +505,24 @@ export class RP1Proxy {
       let node;
 
       switch (nodeType) {
+        case 'RMRoot':
+          // RMRoot is either a virtual wrapper (id=0) or an actual root
+          if (nodeId === 0) {
+            // Virtual wrapper - re-fetch all roots and return combined children
+            const result = await this.getMapTree();
+            if (result.tree) {
+              node = result.tree;
+            }
+          } else {
+            // Actual root - fetch just this root
+            response = await this.emitWithCallback('RMRoot:update', { twRMRootIx: nodeId });
+            console.log(`[RP1] RMRoot:update response:`, JSON.stringify(response).substring(0, 500));
+            if (response && (response.nResult === undefined || response.nResult === 0)) {
+              node = await this.buildTreeFromRoot(response, nodeId);
+            }
+          }
+          break;
+
         case 'RMCObject':
           response = await this.emitWithCallback('RMCObject:update', { twRMCObjectIx: nodeId });
           console.log(`[RP1] RMCObject:update response:`, JSON.stringify(response).substring(0, 500));

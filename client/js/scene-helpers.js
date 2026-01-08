@@ -57,7 +57,7 @@ export function createInfiniteGrid(scene, options = {}) {
       float baseAlpha = .8;
 
       vec3 color = mix(baseColor, mix(minorColor, majorColor, majorLine), lineAlpha > 0.0 ? 1.0 : 0.0);
-      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;
+      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;  
 
       if (alpha < 0.01) discard;
       gl_FragColor = vec4(color, alpha);

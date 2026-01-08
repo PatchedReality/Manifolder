@@ -282,6 +282,7 @@ export class HierarchyPanel {
     const content = node.querySelector(':scope > .tree-node-content');
     if (content) {
       content.classList.add('selected');
+      content.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     this.selectedNode = node;
@@ -423,6 +424,26 @@ export class HierarchyPanel {
     if (!this.selectedNode) return null;
     const uid = this.selectedNode.dataset.uid;
     return this.nodeData.get(`node-${uid}`);
+  }
+
+  getPathToNode(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const element = this.nodes.get(nodeKey);
+    if (!element) return null;
+
+    const path = [];
+    let current = element;
+
+    while (current && current.classList.contains('tree-node')) {
+      const uid = current.dataset.uid;
+      const nodeData = this.nodeData.get(`node-${uid}`);
+      if (nodeData) {
+        path.unshift({ id: nodeData.id, type: nodeData.type });
+      }
+      current = current.parentElement?.closest('.tree-node');
+    }
+
+    return path;
   }
 
   getChildren(nodeOrKey) {
