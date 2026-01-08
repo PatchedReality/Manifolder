@@ -10,14 +10,16 @@ const NODE_COLORS = {
 
   // Terrestrial types
   Root: 0xffd700,
+  Water: 0x2266cc,
   Land: 0x4a9eff,
-  Territory: 0xff7f50,
   Country: 0x9370db,
-  County: 0x87ceeb,
+  Territory: 0xff7f50,
   State: 0x20b2aa,
+  County: 0x87ceeb,
   City: 0xf08080,
-  Sector: 0x98fb98,
   Community: 0xdda0dd,
+  Sector: 0x98fb98,
+  Parcel: 0xffaa44,
 
   // Celestial types
   Universe: 0xe0e0ff,
@@ -42,6 +44,9 @@ const NODE_COLORS = {
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
 const SELECTION_COLOR = 0xffffff;
+
+// Texture loader (shared instance)
+const textureLoader = new THREE.TextureLoader();
 
 // Force Layout Parameters
 const REPULSION = 600;
@@ -78,6 +83,49 @@ export class ViewGraph {
 
   _getKey(id, type) {
     return `${type}_${id}`;
+  }
+
+  _getTextureUrl(nodeData) {
+    // Check for pResource.sReference texture URL
+    const ref = nodeData?.properties?.pResource?.sReference;
+    if (ref && typeof ref === 'string' && ref.length > 0) {
+      return ref;
+    }
+    return null;
+  }
+
+  _createNodeMaterial(nodeData, color) {
+    const textureUrl = this._getTextureUrl(nodeData);
+
+    if (textureUrl) {
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.5,
+        metalness: 0.1
+      });
+
+      textureLoader.load(
+        textureUrl,
+        (texture) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          material.map = texture;
+          material.needsUpdate = true;
+        },
+        undefined,
+        (err) => {
+          console.warn(`Failed to load texture: ${textureUrl}`, err);
+          material.color.setHex(color);
+        }
+      );
+
+      return material;
+    }
+
+    return new THREE.MeshStandardMaterial({
+      color: color,
+      roughness: 0.3,
+      metalness: 0.1
+    });
   }
 
   init() {
@@ -281,11 +329,7 @@ export class ViewGraph {
 
     this.graphNodes.forEach((node, index) => {
       const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
-      const material = new THREE.MeshStandardMaterial({ 
-        color: color,
-        roughness: 0.3,
-        metalness: 0.1
-      });
+      const material = this._createNodeMaterial(node.data, color);
       const mesh = new THREE.Mesh(geometry, material);
       
       mesh.userData = { 
@@ -358,11 +402,7 @@ export class ViewGraph {
       // Create mesh
       const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
       const color = NODE_COLORS[child.nodeType] || NODE_COLORS[child.type] || 0x888888;
-      const material = new THREE.MeshStandardMaterial({ 
-        color: color,
-        roughness: 0.3,
-        metalness: 0.1
-      });
+      const material = this._createNodeMaterial(child, color);
       const mesh = new THREE.Mesh(geometry, material);
       
       mesh.userData = { 
