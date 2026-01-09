@@ -47,6 +47,14 @@ const NODE_COLORS = {
 
 const DEFAULT_COLOR = 0x888888;
 const SELECTION_COLOR = 0xffffff;
+
+// Celestial types use focus-based logarithmic scaling (derived from NODE_TYPES, indices 12-27 minus Surface)
+const TERRESTRIAL_NAMES = new Set(['Root', 'Water', 'Land', 'Country', 'Territory', 'State', 'County', 'City', 'Community', 'Sector', 'Parcel', 'Surface']);
+const CELESTIAL_TYPES = new Set(NODE_TYPES.map(t => t.name).filter(n => !TERRESTRIAL_NAMES.has(n)));
+
+// Scale factors for logarithmic rendering (tunable)
+const LOG_SCALE_FACTOR = 50;   // Controls visual distance compression
+const FOCUS_VISUAL_SIZE = 100; // Visual size of focus node in scene units
 const GLOBE_RADIUS = 100;
 const POLYGON_OFFSET = 0.5; // Slight offset above sphere surface
 
@@ -60,11 +68,13 @@ export class ViewBounds {
     this.globe = null;
 
     this.nodeData = new Map();
+    this.nodeParents = new Map();  // Separate map for parent refs to avoid circular JSON
     this.nodeMeshes = new Map();
     this.expandedNodes = new Set();
     this.tree = null;
     this.selectedId = null;
     this.selectedType = null;
+    this.focusNode = null;  // Celestial node that defines current scale reference
 
     this.selectCallbacks = [];
     this.toggleCallbacks = [];
@@ -97,8 +107,8 @@ export class ViewBounds {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x111111);
 
-    // Camera
-    this.camera = new THREE.PerspectiveCamera(50, width / height, 0.01, 10000);
+    // Camera - extended far plane for large celestial scales
+    this.camera = new THREE.PerspectiveCamera(50, width / height, 0.01, 1000000);
     this.camera.position.set(0, 0, 300);
 
     // Renderer
@@ -114,6 +124,7 @@ export class ViewBounds {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
     this.controls.minDistance = 0.1;
+    this.controls.maxDistance = 500000;
 
     // Lights
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
@@ -312,6 +323,23 @@ export class ViewBounds {
   animate() {
     requestAnimationFrame(() => this.animate());
     this.controls.update();
+
+    // Scale labels based on camera distance - only shrink when very close, never grow
+    this.nodeMeshes.forEach(({ label }) => {
+      if (label && label.userData.baseScale) {
+        const dist = this.camera.position.distanceTo(label.position);
+        // Shrink labels when camera is closer than the label's base width
+        const baseWidth = label.userData.baseScale.x;
+        const shrinkThreshold = baseWidth * 2;
+        if (dist < shrinkThreshold) {
+          const scaleFactor = Math.max(0.1, dist / shrinkThreshold);
+          label.scale.copy(label.userData.baseScale).multiplyScalar(scaleFactor);
+        } else {
+          label.scale.copy(label.userData.baseScale);
+        }
+      }
+    });
+
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -319,9 +347,11 @@ export class ViewBounds {
     this.tree = tree;
     this.clearNodes();
     this.nodeData.clear();
+    this.nodeParents.clear();
     this.expandedNodes.clear();
     this.selectedId = null;
     this.selectedType = null;
+    this.focusNode = null;
 
     if (tree) {
       this.buildNodeData(tree);
@@ -416,7 +446,7 @@ export class ViewBounds {
     };
   }
 
-  buildNodeData(node, parentWorldPos = null, parentWorldRot = null) {
+  buildNodeData(node, parentWorldPos = null, parentWorldRot = null, parentNode = null) {
     const localPos = node.transform?.position || { x: 0, y: 0, z: 0 };
     const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
     const bound = node.bound || { x: 0, y: 0, z: 0 };
@@ -446,9 +476,22 @@ export class ViewBounds {
     node._worldRot = worldRot;
     node._bound = bound;
 
+    // Verify transform accumulation
+    console.log(`[buildNodeData] ${node.name}:`,
+      `localPos=${JSON.stringify(localPos)}`,
+      `parentWorldPos=${parentWorldPos ? JSON.stringify(parentWorldPos) : 'null'}`,
+      `=> worldPos=${JSON.stringify(worldPos)}`,
+      `bound=${JSON.stringify(bound)}`
+    );
+
+    // Store parent ref in separate map to avoid circular JSON
+    if (parentNode) {
+      this.nodeParents.set(key, parentNode);
+    }
+
     if (node.children && node.children.length > 0) {
       node.children.forEach(child => {
-        this.buildNodeData(child, worldPos, worldRot);
+        this.buildNodeData(child, worldPos, worldRot, node);
       });
     }
   }
@@ -502,39 +545,106 @@ export class ViewBounds {
     const worldRot = node._worldRot;
     const bound = node._bound;
 
-    // Skip nodes exactly at origin (root containers)
-    const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (radius < 0.1) return;
-
     const key = this._getKey(node.id, node.type);
     const isSelected = node.id === this.selectedId && node.type === this.selectedType;
     const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
     const isExpanded = this.expandedNodes.has(key);
 
-    // Create polygon on sphere
-    const meshData = this.createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded);
+    const isCelestial = this.isCelestialNode(node);
+    console.log(`[addVisibleNode] ${node.name} isCelestial=${isCelestial} focusNode=${this.focusNode?.name || 'null'} worldPos=`, worldPos);
+    let scaledData = null;
+
+    if (isCelestial && this.focusNode) {
+      // Celestial node with focus - use logarithmic scaling
+
+      const scaledPos = this.calculateLogarithmicPosition(node, this.focusNode);
+      const scaledSize = this.calculateLogarithmicSize(node, this.focusNode);
+
+      // Scale bounds proportionally
+      const originalSize = this.getNodeBoundSize(node);
+      const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
+
+      scaledData = {
+        x: scaledPos.x,
+        y: scaledPos.y,
+        z: scaledPos.z,
+        halfX: (bound.x || 1) / 2 * sizeRatio,
+        halfY: (bound.y || bound.x || 1) / 2 * sizeRatio,
+        halfZ: (bound.z || bound.x || 1) / 2 * sizeRatio
+      };
+      console.log(`[celestial] ${node.name}: bound=${JSON.stringify(bound)} originalSize=${originalSize} scaledSize=${scaledSize} halfX=${scaledData.halfX}`);
+    } else if (!isCelestial) {
+      // Terrestrial node - use linear scaling relative to celestial parent
+      const celestialParent = this.findCelestialParent(node);
+
+      if (celestialParent && this.focusNode) {
+        // Get parent's scaled position as our reference frame
+        const parentScaledPos = this.calculateLogarithmicPosition(celestialParent, this.focusNode);
+        const parentScaledSize = this.calculateLogarithmicSize(celestialParent, this.focusNode);
+        const parentOriginalSize = this.getNodeBoundSize(celestialParent);
+
+        // Position relative to parent, scaled by parent's scale factor
+        const parentScale = parentOriginalSize > 0.001 ? parentScaledSize / parentOriginalSize : 1;
+        const relX = worldPos.x - celestialParent._worldPos.x;
+        const relY = worldPos.y - celestialParent._worldPos.y;
+        const relZ = worldPos.z - celestialParent._worldPos.z;
+
+        scaledData = {
+          x: parentScaledPos.x + relX * parentScale,
+          y: parentScaledPos.y + relY * parentScale,
+          z: parentScaledPos.z + relZ * parentScale,
+          halfX: (bound.x || 1) / 2 * parentScale,
+          halfY: (bound.y || bound.x || 1) / 2 * parentScale,
+          halfZ: (bound.z || bound.x || 1) / 2 * parentScale
+        };
+      }
+      // else: fall through to linear scaling (no celestial context)
+    }
+    // else: celestial but no focus - fall through to linear scaling
+
+    // Skip nodes at origin if using linear scaling
+    if (!scaledData) {
+      const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
+      if (radius < 0.1) {
+        console.log(`[addVisibleNode] SKIPPED ${node.name} - at origin (radius=${radius})`);
+        return;
+      }
+    }
+    console.log(`[addVisibleNode] RENDERING ${node.name} scaledData=`, scaledData);
+
+    const meshData = this.createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded, scaledData);
     if (meshData) {
       this.nodeMeshes.set(key, meshData);
     }
   }
 
-  createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded) {
-    // Skip nodes at origin
-    const nodeRadius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (nodeRadius < 0.1) return null;
+  createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded, scaledData = null) {
+    // Skip nodes at origin (unless pre-scaled data provided)
+    if (!scaledData) {
+      const nodeRadius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
+      if (nodeRadius < 0.1) return null;
+    }
 
-    // Use raw positions - scale to fit in view
-    const SCALE = this.scale;
+    let center, halfX, halfY, halfZ;
 
-    const center = new THREE.Vector3(
-      worldPos.x * SCALE,
-      worldPos.y * SCALE,
-      worldPos.z * SCALE
-    );
-
-    let halfX = (bound.x || 100000) / 2 * SCALE;
-    let halfY = (bound.y || bound.x || 100000) / 2 * SCALE;
-    let halfZ = (bound.z || bound.x || 100000) / 2 * SCALE;
+    if (scaledData) {
+      // Use pre-calculated scaled position and size (for celestial focus-based rendering)
+      center = new THREE.Vector3(scaledData.x, scaledData.y, scaledData.z);
+      halfX = scaledData.halfX;
+      halfY = scaledData.halfY;
+      halfZ = scaledData.halfZ;
+    } else {
+      // Use linear scaling (for terrestrial or fallback)
+      const SCALE = this.scale;
+      center = new THREE.Vector3(
+        worldPos.x * SCALE,
+        worldPos.y * SCALE,
+        worldPos.z * SCALE
+      );
+      halfX = (bound.x || 100000) / 2 * SCALE;
+      halfY = (bound.y || bound.x || 100000) / 2 * SCALE;
+      halfZ = (bound.z || bound.x || 100000) / 2 * SCALE;
+    }
 
     // Get color based on nodeType (set by server from bType), fallback to type
     const typeName = node.nodeType || node.type;
@@ -578,11 +688,12 @@ export class ViewBounds {
     outline.position.copy(center);
     this.scene.add(outline);
 
-    // Create text label sprite at centroid, scaled to fit within bounds
+    // Create text label sprite at center of bounding box
     // Use the two largest dimensions to ensure label is visible regardless of rotation
     const sortedHalves = [halfX, halfY, halfZ].sort((a, b) => b - a);
     const label = this.createLabel(node.name || '(unnamed)', sortedHalves[0], sortedHalves[1]);
     label.position.copy(center);
+    label.userData.baseScale = label.scale.clone();
     this.scene.add(label);
 
     return { mesh, outline, label };
@@ -656,6 +767,14 @@ export class ViewBounds {
   selectNode(id, type) {
     this.selectedId = id;
     this.selectedType = type;
+
+    // Update focus node if selected node is celestial
+    const key = this._getKey(id, type);
+    const node = this.nodeData.get(key);
+    if (node && this.isCelestialNode(node)) {
+      this.focusNode = node;
+    }
+
     this.rebuildVisibleNodes();
   }
 
@@ -700,7 +819,7 @@ export class ViewBounds {
     const parentWorldRot = parent._worldRot;
 
     children.forEach(child => {
-      this.buildNodeData(child, parentWorldPos, parentWorldRot);
+      this.buildNodeData(child, parentWorldPos, parentWorldRot, parent);
     });
 
     if (!parent.children) {
@@ -729,22 +848,39 @@ export class ViewBounds {
     }
 
     const worldPos = targetNode._worldPos;
-    const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-    if (radius < 0.1) return;
-
-    const SCALE = this.scale;
-    const targetPos = new THREE.Vector3(
-      worldPos.x * SCALE,
-      worldPos.y * SCALE,
-      worldPos.z * SCALE
-    );
-
     const bound = targetNode._bound || { x: 1, y: 1, z: 1 };
-    // Minimum bound of 1m to prevent division by zero on 0-size nodes
     const MIN_BOUND = 1;
-    const boxWidth = Math.max(bound.x || MIN_BOUND, MIN_BOUND) * SCALE;
-    const boxHeight = Math.max(bound.y || MIN_BOUND, MIN_BOUND) * SCALE;
-    const boxDepth = Math.max(bound.z || MIN_BOUND, MIN_BOUND) * SCALE;
+
+    let targetPos, boxWidth, boxHeight, boxDepth;
+    const isCelestial = this.isCelestialNode(targetNode);
+
+    if (isCelestial && this.focusNode) {
+      // Use logarithmic scaling for celestial nodes
+      const scaledPos = this.calculateLogarithmicPosition(targetNode, this.focusNode);
+      const scaledSize = this.calculateLogarithmicSize(targetNode, this.focusNode);
+      const originalSize = this.getNodeBoundSize(targetNode);
+      const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
+
+      targetPos = new THREE.Vector3(scaledPos.x, scaledPos.y, scaledPos.z);
+      boxWidth = Math.max(bound.x || MIN_BOUND, MIN_BOUND) * sizeRatio;
+      boxHeight = Math.max(bound.y || MIN_BOUND, MIN_BOUND) * sizeRatio;
+      boxDepth = Math.max(bound.z || MIN_BOUND, MIN_BOUND) * sizeRatio;
+      console.log(`[zoomToNode] ${targetNode.name} celestial: scaledPos=`, scaledPos, `scaledSize=${scaledSize} originalSize=${originalSize} sizeRatio=${sizeRatio} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
+    } else {
+      // Fall back to linear scaling
+      const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
+      if (radius < 0.1) return;
+
+      const SCALE = this.scale;
+      targetPos = new THREE.Vector3(
+        worldPos.x * SCALE,
+        worldPos.y * SCALE,
+        worldPos.z * SCALE
+      );
+      boxWidth = Math.max(bound.x || MIN_BOUND, MIN_BOUND) * SCALE;
+      boxHeight = Math.max(bound.y || MIN_BOUND, MIN_BOUND) * SCALE;
+      boxDepth = Math.max(bound.z || MIN_BOUND, MIN_BOUND) * SCALE;
+    }
 
     // Calculate distance to fit box in view at 80% fill
     const fovRad = this.camera.fov * Math.PI / 180;
@@ -760,6 +896,7 @@ export class ViewBounds {
     // Use the largest distance so everything fits, with minimum for visibility
     const minDist = 0.5;
     const cameraDistance = Math.max(distForHeight, distForWidth, distForDepth, minDist);
+    console.log(`[zoomToNode] cameraDistance=${cameraDistance} targetPos=`, targetPos);
 
     // Position camera looking at target from current viewing direction
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
@@ -872,5 +1009,121 @@ export class ViewBounds {
     if (nodeType === 'RMCObject' && this.typeFilter.has('Land')) return true;
     if (nodeType === 'RMPObject' && this.typeFilter.has('Sector')) return true;
     return false;
+  }
+
+  isCelestialNode(node) {
+    const nodeType = node.nodeType || node.type;
+    return CELESTIAL_TYPES.has(nodeType);
+  }
+
+  isRelatedToFocus(node) {
+    if (!this.focusNode) return true;
+
+    // Focus node itself
+    if (node === this.focusNode) return true;
+
+    const focusKey = this._getKey(this.focusNode.id, this.focusNode.type);
+    const nodeKey = this._getKey(node.id, node.type);
+
+    // Parent of focus
+    const focusParent = this.nodeParents.get(focusKey);
+    if (focusParent === node) return true;
+
+    // Children of focus (check if node's parent is focus)
+    const nodeParent = this.nodeParents.get(nodeKey);
+    if (nodeParent === this.focusNode) return true;
+
+    // Siblings (same parent as focus)
+    if (focusParent && nodeParent === focusParent) return true;
+
+    return false;
+  }
+
+  findCelestialParent(node) {
+    let currentKey = this._getKey(node.id, node.type);
+    let current = this.nodeParents.get(currentKey);
+    while (current) {
+      if (this.isCelestialNode(current)) {
+        return current;
+      }
+      currentKey = this._getKey(current.id, current.type);
+      current = this.nodeParents.get(currentKey);
+    }
+    return null;
+  }
+
+  getNodeBoundSize(node) {
+    const bound = node._bound || { x: 1, y: 1, z: 1 };
+    return Math.max(bound.x || 1, bound.y || 1, bound.z || 1);
+  }
+
+  calculateLogarithmicPosition(node, focusNode) {
+    const focusPos = focusNode._worldPos;
+    const nodePos = node._worldPos;
+
+    // Distance vector from focus to node
+    const dx = nodePos.x - focusPos.x;
+    const dy = nodePos.y - focusPos.y;
+    const dz = nodePos.z - focusPos.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    if (distance < 0.001) {
+      // Node is at focus position
+      return { x: 0, y: 0, z: 0 };
+    }
+
+    // Reference unit based on focus node's size
+    const refUnit = this.getNodeBoundSize(focusNode);
+
+    // Logarithmic scaling: compress large distances
+    // Result in scene units relative to FOCUS_VISUAL_SIZE
+    const logDistance = Math.log10(1 + distance / refUnit);
+    const scaledDistance = logDistance * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
+
+    // Preserve direction, apply scaled distance
+    const scale = scaledDistance / distance;
+    return {
+      x: dx * scale,
+      y: dy * scale,
+      z: dz * scale
+    };
+  }
+
+  calculateLogarithmicSize(node, focusNode) {
+    const nodeSize = this.getNodeBoundSize(node);
+    const focusSize = this.getNodeBoundSize(focusNode);
+
+    // Focus node renders at FOCUS_VISUAL_SIZE
+    if (nodeSize === focusSize) {
+      return FOCUS_VISUAL_SIZE;
+    }
+
+    // Use cube root to compress extreme size differences while preserving visible ratios
+    // Cube root of 1000x difference = 10x visual difference
+    const ratio = nodeSize / focusSize;
+    const scaleFactor = Math.pow(ratio, 1/3);  // Cube root
+
+    // Apply to focus visual size, with min/max bounds
+    return Math.max(5, Math.min(FOCUS_VISUAL_SIZE * 20, FOCUS_VISUAL_SIZE * scaleFactor));
+  }
+
+  shouldCullNode(node, focusNode) {
+    // Don't cull the focus node itself
+    if (node === focusNode) return false;
+
+    // Don't cull nodes at the same position (likely parent/child containers)
+    const focusPos = focusNode._worldPos;
+    const nodePos = node._worldPos;
+    const dx = nodePos.x - focusPos.x;
+    const dy = nodePos.y - focusPos.y;
+    const dz = nodePos.z - focusPos.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance < 0.001) return false;
+
+    // Cull nodes whose actual bounds are larger than 10x the focus node's bounds
+    // This hides giant parent containers when viewing small objects
+    const focusSize = this.getNodeBoundSize(focusNode);
+    const nodeSize = this.getNodeBoundSize(node);
+    return nodeSize > focusSize * 10;
   }
 }
