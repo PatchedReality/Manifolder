@@ -246,18 +246,18 @@ export class ViewBounds {
     const intersects = this.raycaster.intersectObjects(meshes, false);
 
     if (intersects.length > 0) {
-      // If first hit is already selected, try to click through to next object
-      let targetIntersect = intersects[0];
-      const firstNodeData = targetIntersect.object.userData.nodeData;
+      let targetIndex = 0;
 
-      if (firstNodeData &&
-          firstNodeData.id === this.selectedId &&
-          firstNodeData.type === this.selectedType &&
-          intersects.length > 1) {
-        targetIntersect = intersects[1];
+      const currentIndex = intersects.findIndex(i => {
+        const nd = i.object.userData.nodeData;
+        return nd && nd.id === this.selectedId && nd.type === this.selectedType;
+      });
+
+      if (currentIndex !== -1) {
+        targetIndex = (currentIndex + 1) % intersects.length;
       }
 
-      const nodeData = targetIntersect.object.userData.nodeData;
+      const nodeData = intersects[targetIndex].object.userData.nodeData;
       if (nodeData) {
         this.selectNode(nodeData.id, nodeData.type);
         this.selectCallbacks.forEach(cb => cb(nodeData));
@@ -276,20 +276,24 @@ export class ViewBounds {
     const intersects = this.raycaster.intersectObjects(meshes, false);
 
     if (intersects.length > 0) {
-      const mesh = intersects[0].object;
-      const nodeData = mesh.userData.nodeData;
-      if (nodeData) {
-        // Check for MSF reference - prompt to load instead of toggling
-        const msfUrl = this._getMsfReference(nodeData);
-        if (msfUrl) {
-          if (confirm(`Load map: ${msfUrl}?`)) {
-            this.msfLoadCallbacks.forEach(cb => cb(msfUrl));
-          }
-        } else {
+      const currentIndex = intersects.findIndex(i => {
+        const nd = i.object.userData.nodeData;
+        return nd && nd.id === this.selectedId && nd.type === this.selectedType;
+      });
+
+      let nodeData;
+      if (currentIndex !== -1) {
+        nodeData = intersects[currentIndex].object.userData.nodeData;
+      } else {
+        nodeData = intersects[0].object.userData.nodeData;
+        if (nodeData) {
           this.selectNode(nodeData.id, nodeData.type);
-          this.zoomToNode(nodeData);
-          this.toggleNode(nodeData);
+          this.selectCallbacks.forEach(cb => cb(nodeData));
         }
+      }
+
+      if (nodeData) {
+        this.zoomToNode(nodeData);
       }
     }
   }
