@@ -298,18 +298,33 @@ export class ViewBounds {
     requestAnimationFrame(() => this.animate());
     this.controls.update();
 
-    // Scale labels based on camera distance - only shrink when very close, never grow
-    this.nodeMeshes.forEach(({ label }) => {
+    // Hide labels when bounds overflow view, scale when close
+    const fovRad = this.camera.fov * Math.PI / 180;
+    const aspect = this.camera.aspect;
+    const tanHalfFov = Math.tan(fovRad / 2);
+
+    this.nodeMeshes.forEach(({ mesh, label }) => {
       if (label && label.userData.baseScale) {
-        const dist = this.camera.position.distanceTo(label.position);
-        // Shrink labels when camera is closer than the label's base width
-        const baseWidth = label.userData.baseScale.x;
-        const shrinkThreshold = baseWidth * 2;
-        if (dist < shrinkThreshold) {
-          const scaleFactor = Math.max(0.1, dist / shrinkThreshold);
-          label.scale.copy(label.userData.baseScale).multiplyScalar(scaleFactor);
+        const params = mesh.geometry.parameters;
+        const distForHeight = params.height / (2 * tanHalfFov);
+        const distForWidth = params.width / (2 * tanHalfFov * aspect);
+        const minDist = Math.max(distForHeight, distForWidth);
+
+        const actualDist = this.camera.position.distanceTo(mesh.position);
+
+        if (actualDist < minDist) {
+          label.visible = false;
         } else {
-          label.scale.copy(label.userData.baseScale);
+          label.visible = true;
+          // Shrink labels when camera is closer than the label's base width
+          const baseWidth = label.userData.baseScale.x;
+          const shrinkThreshold = baseWidth * 2;
+          if (actualDist < shrinkThreshold) {
+            const scaleFactor = Math.max(0.1, actualDist / shrinkThreshold);
+            label.scale.copy(label.userData.baseScale).multiplyScalar(scaleFactor);
+          } else {
+            label.scale.copy(label.userData.baseScale);
+          }
         }
       }
     });
