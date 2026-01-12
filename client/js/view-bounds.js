@@ -1,40 +1,15 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createGroundGrid } from './scene-helpers.js';
+import {
+  NODE_TYPES,
+  CELESTIAL_NAMES,
+  TERRESTRIAL_NAMES,
+  PLACEMENT_NAMES
+} from '/shared/node-types.js';
 
-// Display node types with their colors (hex for Three.js, CSS var name for UI)
-export const NODE_TYPES = [
-  // Terrestrial types (bType 1-11)
-  { name: 'Root', color: 0xffd700, cssVar: '--node-root' },         // 1
-  { name: 'Water', color: 0x2266cc, cssVar: '--node-water' },       // 2
-  { name: 'Land', color: 0x4a9eff, cssVar: '--node-land' },         // 3
-  { name: 'Country', color: 0x9370db, cssVar: '--node-country' },   // 4
-  { name: 'Territory', color: 0xff7f50, cssVar: '--node-territory' }, // 5
-  { name: 'State', color: 0x20b2aa, cssVar: '--node-state' },       // 6
-  { name: 'County', color: 0x87ceeb, cssVar: '--node-county' },     // 7
-  { name: 'City', color: 0xf08080, cssVar: '--node-city' },         // 8
-  { name: 'Community', color: 0xdda0dd, cssVar: '--node-community' }, // 9
-  { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector' },     // 10
-  { name: 'Parcel', color: 0xffaa44, cssVar: '--node-parcel' },     // 11
-  // Celestial types
-  { name: 'Universe', color: 0xe0e0ff, cssVar: '--node-universe' },
-  { name: 'Supercluster', color: 0xc0c0ff, cssVar: '--node-supercluster' },
-  { name: 'GalaxyCluster', color: 0xa0a0ff, cssVar: '--node-galaxycluster' },
-  { name: 'Galaxy', color: 0x8080ff, cssVar: '--node-galaxy' },
-  { name: 'BlackHole', color: 0x4a0080, cssVar: '--node-blackhole' },
-  { name: 'Nebula', color: 0xff80ff, cssVar: '--node-nebula' },
-  { name: 'StarCluster', color: 0xffff80, cssVar: '--node-starcluster' },
-  { name: 'Constellation', color: 0x80ffff, cssVar: '--node-constellation' },
-  { name: 'StarSystem', color: 0xffcc00, cssVar: '--node-starsystem' },
-  { name: 'Star', color: 0xffff00, cssVar: '--node-star' },
-  { name: 'PlanetSystem', color: 0x88ff88, cssVar: '--node-planetsystem' },
-  { name: 'Planet', color: 0x44ff88, cssVar: '--node-planet' },
-  { name: 'Moon', color: 0xaaaaaa, cssVar: '--node-moon' },
-  { name: 'Debris', color: 0x666666, cssVar: '--node-debris' },
-  { name: 'Satellite', color: 0xcc8844, cssVar: '--node-satellite' },
-  { name: 'Transport', color: 0xff4444, cssVar: '--node-transport' },
-  { name: 'Surface', color: 0x44aa44, cssVar: '--node-surface' }
-];
+// Re-export NODE_TYPES for consumers
+export { NODE_TYPES };
 
 // Build NODE_COLORS lookup from NODE_TYPES
 const NODE_COLORS = {
@@ -48,9 +23,8 @@ const NODE_COLORS = {
 const DEFAULT_COLOR = 0x888888;
 const SELECTION_COLOR = 0xffffff;
 
-// Celestial types use focus-based logarithmic scaling (derived from NODE_TYPES, indices 12-27 minus Surface)
-const TERRESTRIAL_NAMES = new Set(['Root', 'Water', 'Land', 'Country', 'Territory', 'State', 'County', 'City', 'Community', 'Sector', 'Parcel', 'Surface']);
-const CELESTIAL_TYPES = new Set(NODE_TYPES.map(t => t.name).filter(n => !TERRESTRIAL_NAMES.has(n)));
+// Alias for internal use
+const CELESTIAL_TYPES = CELESTIAL_NAMES;
 
 // Scale factors for logarithmic rendering (tunable)
 const LOG_SCALE_FACTOR = 50;   // Controls visual distance compression
@@ -525,8 +499,9 @@ export class ViewBounds {
     this.nodeMeshes.forEach(({ mesh }) => {
       const node = mesh.userData.nodeData;
       if (node && node._worldPos) {
+        const bound = this.getEffectiveBound(node);
         const posY = node._worldPos.y * SCALE;
-        const halfY = ((node._bound?.y || node._bound?.x || 100000) / 2) * SCALE;
+        const halfY = ((bound.y || bound.x || 1) / 2) * SCALE;
         const bottomY = posY - halfY;
         if (bottomY < minY) minY = bottomY;
       }
@@ -543,7 +518,7 @@ export class ViewBounds {
 
     const worldPos = node._worldPos;
     const worldRot = node._worldRot;
-    const bound = node._bound;
+    const bound = this.getEffectiveBound(node);
 
     const key = this._getKey(node.id, node.type);
     const isSelected = node.id === this.selectedId && node.type === this.selectedType;
@@ -560,19 +535,43 @@ export class ViewBounds {
       const scaledPos = this.calculateLogarithmicPosition(node, this.focusNode);
       const scaledSize = this.calculateLogarithmicSize(node, this.focusNode);
 
-      // Scale bounds proportionally
-      const originalSize = this.getNodeBoundSize(node);
-      const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
+      // Check if node has zero bounds - if so, calculate from children in scaled space
+      const hasZeroBounds = !node._bound || (node._bound.x === 0 && node._bound.y === 0 && node._bound.z === 0);
+      const focusNode = this.focusNode;
+      const scaledChildBounds = hasZeroBounds ? this.calculateBoundsFromChildren(node, scaledPos, (child) => {
+        const childScaledPos = this.calculateLogarithmicPosition(child, focusNode);
+        const childOriginalSize = this.getNodeBoundSize(child);
+        const childScaledSize = this.calculateLogarithmicSize(child, focusNode);
+        const scale = childOriginalSize > 0.001 ? childScaledSize / childOriginalSize : 1;
+        return { pos: childScaledPos, scale };
+      }) : null;
 
-      scaledData = {
-        x: scaledPos.x,
-        y: scaledPos.y,
-        z: scaledPos.z,
-        halfX: (bound.x || 1) / 2 * sizeRatio,
-        halfY: (bound.y || bound.x || 1) / 2 * sizeRatio,
-        halfZ: (bound.z || bound.x || 1) / 2 * sizeRatio
-      };
-      console.log(`[celestial] ${node.name}: bound=${JSON.stringify(bound)} originalSize=${originalSize} scaledSize=${scaledSize} halfX=${scaledData.halfX}`);
+      if (scaledChildBounds) {
+        // Use bounds calculated from children's scaled positions
+        scaledData = {
+          x: scaledPos.x,
+          y: scaledPos.y,
+          z: scaledPos.z,
+          halfX: scaledChildBounds.halfX,
+          halfY: scaledChildBounds.halfY,
+          halfZ: scaledChildBounds.halfZ
+        };
+        console.log(`[celestial] ${node.name}: using scaled child bounds halfX=${scaledData.halfX} halfY=${scaledData.halfY} halfZ=${scaledData.halfZ}`);
+      } else {
+        // Scale bounds proportionally
+        const originalSize = this.getNodeBoundSize(node);
+        const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
+
+        scaledData = {
+          x: scaledPos.x,
+          y: scaledPos.y,
+          z: scaledPos.z,
+          halfX: (bound.x || 1) / 2 * sizeRatio,
+          halfY: (bound.y || bound.x || 1) / 2 * sizeRatio,
+          halfZ: (bound.z || bound.x || 1) / 2 * sizeRatio
+        };
+        console.log(`[celestial] ${node.name}: bound=${JSON.stringify(bound)} originalSize=${originalSize} scaledSize=${scaledSize} halfX=${scaledData.halfX}`);
+      }
     } else if (!isCelestial) {
       // Terrestrial node - use linear scaling relative to celestial parent
       const celestialParent = this.findCelestialParent(node);
@@ -602,11 +601,12 @@ export class ViewBounds {
     }
     // else: celestial but no focus - fall through to linear scaling
 
-    // Skip nodes at origin if using linear scaling
-    if (!scaledData) {
+    // Skip celestial nodes at origin if using linear scaling (fallback)
+    // Terrestrial nodes can legitimately be at origin relative to their world
+    if (!scaledData && isCelestial) {
       const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
       if (radius < 0.1) {
-        console.log(`[addVisibleNode] SKIPPED ${node.name} - at origin (radius=${radius})`);
+        console.log(`[addVisibleNode] SKIPPED ${node.name} - celestial at origin (radius=${radius})`);
         return;
       }
     }
@@ -619,8 +619,9 @@ export class ViewBounds {
   }
 
   createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded, scaledData = null) {
-    // Skip nodes at origin (unless pre-scaled data provided)
-    if (!scaledData) {
+    // Skip celestial nodes at origin (unless pre-scaled data provided)
+    // Terrestrial nodes can legitimately be at origin
+    if (!scaledData && this.isCelestialNode(node)) {
       const nodeRadius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
       if (nodeRadius < 0.1) return null;
     }
@@ -647,7 +648,7 @@ export class ViewBounds {
     }
 
     // Get color based on nodeType (set by server from bType), fallback to type
-    const typeName = node.nodeType || node.type;
+    const typeName = this.getDisplayType(node);
     const color = NODE_COLORS[typeName] || DEFAULT_COLOR;
 
     // Create a 3D box
@@ -848,8 +849,7 @@ export class ViewBounds {
     }
 
     const worldPos = targetNode._worldPos;
-    const bound = targetNode._bound || { x: 1, y: 1, z: 1 };
-    const MIN_BOUND = 1;
+    const bound = this.getEffectiveBound(targetNode);
 
     let targetPos, boxWidth, boxHeight, boxDepth;
     const isCelestial = this.isCelestialNode(targetNode);
@@ -862,24 +862,21 @@ export class ViewBounds {
       const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
 
       targetPos = new THREE.Vector3(scaledPos.x, scaledPos.y, scaledPos.z);
-      boxWidth = Math.max(bound.x || MIN_BOUND, MIN_BOUND) * sizeRatio;
-      boxHeight = Math.max(bound.y || MIN_BOUND, MIN_BOUND) * sizeRatio;
-      boxDepth = Math.max(bound.z || MIN_BOUND, MIN_BOUND) * sizeRatio;
+      boxWidth = (bound.x || 1) * sizeRatio;
+      boxHeight = (bound.y || bound.x || 1) * sizeRatio;
+      boxDepth = (bound.z || bound.x || 1) * sizeRatio;
       console.log(`[zoomToNode] ${targetNode.name} celestial: scaledPos=`, scaledPos, `scaledSize=${scaledSize} originalSize=${originalSize} sizeRatio=${sizeRatio} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
     } else {
       // Fall back to linear scaling
-      const radius = Math.sqrt(worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z);
-      if (radius < 0.1) return;
-
       const SCALE = this.scale;
       targetPos = new THREE.Vector3(
         worldPos.x * SCALE,
         worldPos.y * SCALE,
         worldPos.z * SCALE
       );
-      boxWidth = Math.max(bound.x || MIN_BOUND, MIN_BOUND) * SCALE;
-      boxHeight = Math.max(bound.y || MIN_BOUND, MIN_BOUND) * SCALE;
-      boxDepth = Math.max(bound.z || MIN_BOUND, MIN_BOUND) * SCALE;
+      boxWidth = (bound.x || 1) * SCALE;
+      boxHeight = (bound.y || bound.x || 1) * SCALE;
+      boxDepth = (bound.z || bound.x || 1) * SCALE;
     }
 
     // Calculate distance to fit box in view at 80% fill
@@ -893,10 +890,22 @@ export class ViewBounds {
     // Also consider depth
     const distForDepth = (boxDepth / 0.8) / (2 * Math.tan(fovRad / 2));
 
-    // Use the largest distance so everything fits, with minimum for visibility
-    const minDist = 0.5;
-    const cameraDistance = Math.max(distForHeight, distForWidth, distForDepth, minDist);
-    console.log(`[zoomToNode] cameraDistance=${cameraDistance} targetPos=`, targetPos);
+    // Use the largest distance so everything fits
+    const cameraDistance = Math.max(distForHeight, distForWidth, distForDepth);
+    console.log(`[zoomToNode] cameraDistance=${cameraDistance} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth} targetPos=`, targetPos);
+
+    // Dynamically adjust camera near plane to allow viewing tiny objects
+    // Near plane should be smaller than camera distance but not too small (causes z-fighting)
+    const minNear = 1e-6;
+    const desiredNear = cameraDistance * 0.1;
+    const newNear = Math.max(desiredNear, minNear);
+    if (this.camera.near !== newNear) {
+      this.camera.near = newNear;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Also update controls minDistance to allow getting this close
+    this.controls.minDistance = newNear;
 
     // Position camera looking at target from current viewing direction
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
@@ -938,10 +947,10 @@ export class ViewBounds {
           const px = node._worldPos.x * SCALE;
           const py = node._worldPos.y * SCALE;
           const pz = node._worldPos.z * SCALE;
-          const bound = node._bound || { x: 100000, y: 100000, z: 100000 };
-          const hx = (bound.x || 100000) / 2 * SCALE;
-          const hy = (bound.y || bound.x || 100000) / 2 * SCALE;
-          const hz = (bound.z || bound.x || 100000) / 2 * SCALE;
+          const bound = this.getEffectiveBound(node);
+          const hx = (bound.x || 1) / 2 * SCALE;
+          const hy = (bound.y || bound.x || 1) / 2 * SCALE;
+          const hz = (bound.z || bound.x || 1) / 2 * SCALE;
 
           minX = Math.min(minX, px - hx);
           minY = Math.min(minY, py - hy);
@@ -996,24 +1005,26 @@ export class ViewBounds {
     this.rebuildVisibleNodes();
   }
 
-  isTypeEnabled(node) {
-    // Use nodeType (set by server from bType) or fallback to type
+  getDisplayType(node) {
     const nodeType = node.nodeType || node.type;
 
-    // Check against known type names
-    if (this.typeFilter.has(nodeType)) return true;
+    // Map raw RM types to display types
+    if (nodeType === 'RMRoot') return 'Root';
+    if (nodeType === 'RMTObject') return 'Territory';
+    if (nodeType === 'RMCObject') return 'Land';
+    if (nodeType === 'RMPObject') return 'Placement';
 
-    // Map RM types to display types (fallback for nodes without nodeType)
-    if (nodeType === 'RMRoot' && this.typeFilter.has('Root')) return true;
-    if (nodeType === 'RMTObject' && this.typeFilter.has('Territory')) return true;
-    if (nodeType === 'RMCObject' && this.typeFilter.has('Land')) return true;
-    if (nodeType === 'RMPObject' && this.typeFilter.has('Sector')) return true;
-    return false;
+    return nodeType;
+  }
+
+  isTypeEnabled(node) {
+    const displayType = this.getDisplayType(node);
+    return this.typeFilter.has(displayType);
   }
 
   isCelestialNode(node) {
-    const nodeType = node.nodeType || node.type;
-    return CELESTIAL_TYPES.has(nodeType);
+    const displayType = this.getDisplayType(node);
+    return CELESTIAL_TYPES.has(displayType);
   }
 
   isRelatedToFocus(node) {
@@ -1053,8 +1064,87 @@ export class ViewBounds {
   }
 
   getNodeBoundSize(node) {
-    const bound = node._bound || { x: 1, y: 1, z: 1 };
+    const bound = this.getEffectiveBound(node);
     return Math.max(bound.x || 1, bound.y || 1, bound.z || 1);
+  }
+
+  getEffectiveBound(node) {
+    const bound = node._bound;
+
+    // If node has non-zero bounds, use them
+    if (bound && (bound.x > 0 || bound.y > 0 || bound.z > 0)) {
+      return bound;
+    }
+
+    // Calculate bounds from visible children in world space
+    const result = this.calculateBoundsFromChildren(node, node._worldPos, null);
+    if (!result) {
+      return { x: 1, y: 1, z: 1 };
+    }
+
+    return {
+      x: result.halfX * 2,
+      y: result.halfY * 2,
+      z: result.halfZ * 2
+    };
+  }
+
+  // Calculate bounds from children with optional coordinate transform
+  // If getChildPosAndScale is provided, uses scaled space; otherwise uses world space
+  calculateBoundsFromChildren(node, parentPos, getChildPosAndScale = null) {
+    const key = this._getKey(node.id, node.type);
+    const isExpanded = this.expandedNodes.has(key);
+
+    if (!isExpanded || !node.children || node.children.length === 0) {
+      return null;
+    }
+
+    let maxExtentX = 0, maxExtentY = 0, maxExtentZ = 0;
+    let hasValidChild = false;
+
+    for (const child of node.children) {
+      if (!child._worldPos || !this.isTypeEnabled(child)) continue;
+
+      hasValidChild = true;
+
+      let relX, relY, relZ;
+
+      // Use child's max dimension as radius (sphere-like approximation)
+      // If child has zero bounds, recursively get its effective bounds
+      let childBound = child._bound || { x: 0, y: 0, z: 0 };
+      const hasZeroChildBounds = childBound.x === 0 && childBound.y === 0 && childBound.z === 0;
+      if (hasZeroChildBounds) {
+        childBound = this.getEffectiveBound(child);
+      }
+      let childRadius;
+
+      if (getChildPosAndScale) {
+        // Scaled space (logarithmic) - get scaled position and size
+        const { pos, scale } = getChildPosAndScale(child);
+        relX = pos.x - parentPos.x;
+        relY = pos.y - parentPos.y;
+        relZ = pos.z - parentPos.z;
+        const maxDim = Math.max(childBound.x || 0, childBound.y || 0, childBound.z || 0);
+        childRadius = (maxDim || 1) / 2 * scale;
+      } else {
+        // World space - use positions directly
+        relX = child._worldPos.x - parentPos.x;
+        relY = child._worldPos.y - parentPos.y;
+        relZ = child._worldPos.z - parentPos.z;
+        const maxDim = Math.max(childBound.x || 0, childBound.y || 0, childBound.z || 0);
+        childRadius = maxDim / 2;
+      }
+
+      maxExtentX = Math.max(maxExtentX, Math.abs(relX) + childRadius);
+      maxExtentY = Math.max(maxExtentY, Math.abs(relY) + childRadius);
+      maxExtentZ = Math.max(maxExtentZ, Math.abs(relZ) + childRadius);
+    }
+
+    if (!hasValidChild) {
+      return null;
+    }
+
+    return { halfX: maxExtentX, halfY: maxExtentY, halfZ: maxExtentZ };
   }
 
   calculateLogarithmicPosition(node, focusNode) {

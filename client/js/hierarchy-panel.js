@@ -3,11 +3,7 @@
  * Supports lazy-loading, search filtering, and node selection
  */
 
-const CELESTIAL_TYPES = new Set([
-  'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'BlackHole',
-  'Nebula', 'StarCluster', 'Constellation', 'StarSystem', 'Star',
-  'PlanetSystem', 'Planet', 'Moon', 'Debris', 'Satellite', 'Transport', 'Surface'
-]);
+import { CELESTIAL_NAMES } from '/shared/node-types.js';
 
 export class HierarchyPanel {
   constructor(containerSelector) {
@@ -163,7 +159,7 @@ export class HierarchyPanel {
 
     const icon = document.createElement('span');
     icon.className = 'tree-icon';
-    const isCelestial = CELESTIAL_TYPES.has(nodeData.nodeType);
+    const isCelestial = CELESTIAL_NAMES.has(nodeData.nodeType);
     icon.textContent = isCelestial ? '▲' : '●';
 
     const label = document.createElement('span');

@@ -5,6 +5,7 @@ import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { RP1Client } from './rp1-client.js';
+import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '/shared/node-types.js';
 
 class App {
   constructor() {
@@ -37,15 +38,10 @@ class App {
 
     if (!filterBtn || !dropdown) return;
 
-    // Split types into categories
-    const celestialTypes = new Set([
-      'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'BlackHole',
-      'Nebula', 'StarCluster', 'Constellation', 'StarSystem', 'Star',
-      'PlanetSystem', 'Planet', 'Moon', 'Debris', 'Satellite', 'Transport', 'Surface'
-    ]);
-
-    const terrestrialTypes = NODE_TYPES.filter(t => !celestialTypes.has(t.name));
-    const celestialTypesList = NODE_TYPES.filter(t => celestialTypes.has(t.name));
+    // Split types into categories using shared type definitions
+    const celestialTypesList = NODE_TYPES.filter(t => CELESTIAL_NAMES.has(t.name));
+    const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name));
+    const placementTypesList = NODE_TYPES.filter(t => PLACEMENT_NAMES.has(t.name));
 
     // Helper to create a category
     const createCategory = (name, types) => {
@@ -62,9 +58,19 @@ class App {
 
       types.forEach(type => {
         const label = document.createElement('label');
-        const isCelestial = celestialTypes.has(type.name);
-        const shapeClass = isCelestial ? 'type-triangle' : 'type-dot';
-        const colorStyle = isCelestial ? 'border-bottom-color' : 'background';
+        const isCelestial = CELESTIAL_NAMES.has(type.name);
+        const isPlacement = PLACEMENT_NAMES.has(type.name);
+        let shapeClass, colorStyle;
+        if (isCelestial) {
+          shapeClass = 'type-triangle';
+          colorStyle = 'border-bottom-color';
+        } else if (isPlacement) {
+          shapeClass = 'type-square';
+          colorStyle = 'background';
+        } else {
+          shapeClass = 'type-dot';
+          colorStyle = 'background';
+        }
         label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="${shapeClass}" style="${colorStyle}: var(${type.cssVar})"></span> ${type.name}`;
         items.appendChild(label);
       });
@@ -73,8 +79,9 @@ class App {
       return category;
     };
 
-    dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
     dropdown.appendChild(createCategory('Celestial', celestialTypesList));
+    dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
+    dropdown.appendChild(createCategory('Placement', placementTypesList));
 
     // Toggle dropdown
     filterBtn.addEventListener('click', (e) => {

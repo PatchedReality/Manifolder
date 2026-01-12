@@ -2,42 +2,7 @@
 
 import { io } from 'socket.io-client';
 import axios from 'axios';
-
-// Terrestrial types (used by RMTObject - terrains)
-const TERRESTRIAL_TYPE_MAP = {
-  1: 'Root',
-  2: 'Water',
-  3: 'Land',
-  4: 'Country',
-  5: 'Territory',
-  6: 'State',
-  7: 'County',
-  8: 'City',
-  9: 'Community',
-  10: 'Sector',
-  11: 'Parcel'
-};
-
-// Celestial types (used by RMCObject - containers)
-const CELESTIAL_TYPE_MAP = {
-  1: 'Universe',
-  2: 'Supercluster',
-  3: 'GalaxyCluster',
-  4: 'Galaxy',
-  5: 'BlackHole',
-  6: 'Nebula',
-  7: 'StarCluster',
-  8: 'Constellation',
-  9: 'StarSystem',
-  10: 'Star',
-  11: 'PlanetSystem',
-  12: 'Planet',
-  13: 'Moon',
-  14: 'Debris',
-  15: 'Satellite',
-  16: 'Transport',
-  17: 'Surface'
-};
+import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
 
 export class RP1Proxy {
   constructor(browserWs) {

@@ -19,6 +19,10 @@ const server = createServer(app);
 const clientPath = join(__dirname, '..', 'client');
 app.use(express.static(clientPath));
 
+// Serve shared modules at /shared (accessible to both server and client)
+const sharedPath = join(__dirname, '..', 'shared');
+app.use('/shared', express.static(sharedPath));
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

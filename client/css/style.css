@@ -396,6 +396,12 @@ body {
   flex-shrink: 0;
 }
 
+.type-square {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
 /* Filter category tree */
 .filter-category {
   margin-bottom: 8px;
