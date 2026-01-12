@@ -214,7 +214,9 @@ export class LayoutManager {
     const select = document.getElementById('url-history');
     const input = document.getElementById('url-input');
     const loadBtn = document.getElementById('load-btn');
+    const followLinkBtn = document.getElementById('follow-link-btn');
 
+    this.followLinkUrl = null;
     this.loadUrlHistory();
 
     // Default to most recent URL
@@ -246,6 +248,13 @@ export class LayoutManager {
     input?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         loadBtn?.click();
+      }
+    });
+
+    followLinkBtn?.addEventListener('click', () => {
+      if (this.followLinkUrl) {
+        this.setUrl(this.followLinkUrl);
+        this.dispatchEvent('load', { url: this.followLinkUrl });
       }
     });
   }
@@ -298,6 +307,14 @@ export class LayoutManager {
       input.value = url;
     }
     this.addToUrlHistory(url);
+  }
+
+  setFollowLink(url) {
+    this.followLinkUrl = url;
+    const btn = document.getElementById('follow-link-btn');
+    if (btn) {
+      btn.classList.toggle('hidden', !url);
+    }
   }
 
   truncateUrl(url, maxLength = 50) {

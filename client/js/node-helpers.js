@@ -1,4 +1,16 @@
 /**
+ * Gets MSF reference URL from a node's pResource property.
+ * Returns the URL if it points to an MSF file, null otherwise.
+ */
+export function getMsfReference(node) {
+  const ref = node?.properties?.pResource?.sReference;
+  if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
+    return ref;
+  }
+  return null;
+}
+
+/**
  * Gets the resource URL from a node's pResource property.
  * Returns URLs for JSON scene files or direct GLB/GLTF models.
  * Checks sReference first, then falls back to sName.

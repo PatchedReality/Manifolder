@@ -6,6 +6,7 @@ import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { RP1Client } from './rp1-client.js';
 import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '/shared/node-types.js';
+import { getMsfReference } from './node-helpers.js';
 
 class App {
   constructor() {
@@ -29,6 +30,7 @@ class App {
     this.setupTypeFilter();
 
     this.inspector.clear();
+    this.layout.setFollowLink(null);
     this.layout.setStatus('Disconnected', 'disconnected');
   }
 
@@ -141,6 +143,7 @@ class App {
       const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
       this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
+      this.layout.setFollowLink(getMsfReference(node));
 
       localStorage.setItem('selectedNodeId', node.id);
       localStorage.setItem('selectedNodeType', node.type);
@@ -188,6 +191,7 @@ class App {
       const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
       this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
+      this.layout.setFollowLink(getMsfReference(node));
     });
 
     this.viewGraph.onToggle(node => {
@@ -207,6 +211,7 @@ class App {
       const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
       this.viewResource.setNode(node, expandedDescendants);
       this.inspector.showNode(node);
+      this.layout.setFollowLink(getMsfReference(node));
     });
 
     this.viewBounds.onToggle((node, expanded) => {
@@ -272,6 +277,7 @@ class App {
       this.viewBounds.setData(tree);
       this.viewResource.setResourceBaseUrl(url);
       this.inspector.clear();
+      this.layout.setFollowLink(null);
 
       this.layout.setStatus('Map loaded', 'connected');
 
