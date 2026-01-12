@@ -38,7 +38,7 @@ export function createInfiniteGrid(scene, options = {}) {
 
     void main() {
       float distanceFromCenter = length(vWorldPosition.xz);
-      float fadeAlpha = 1.0 - smoothstep(uFadeDistance * 0.3, uFadeDistance, distanceFromCenter);
+      float fadeAlpha = 1.0 - smoothstep(uFadeDistance * 3.0, uFadeDistance * 4.0, distanceFromCenter);
 
       if (fadeAlpha < 0.01) discard;
 
@@ -54,12 +54,11 @@ export function createInfiniteGrid(scene, options = {}) {
       vec3 majorColor = vec3(0.24, 0.55, 0.63);
 
       float lineAlpha = max(minorLine * 0.3, majorLine * 0.5);
-      float baseAlpha = .8;
+      float baseAlpha = 0.8;
 
       vec3 color = mix(baseColor, mix(minorColor, majorColor, majorLine), lineAlpha > 0.0 ? 1.0 : 0.0);
-      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;  
+      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;
 
-      if (alpha < 0.01) discard;
       gl_FragColor = vec4(color, alpha);
     }
   `;
@@ -132,4 +131,66 @@ export function createStarfield(scene, options = {}) {
   scene.add(stars);
 
   return stars;
+}
+
+/**
+ * Calculates appropriate grid spacing based on a characteristic size
+ * Uses order of magnitude to determine spacing
+ * @param {number} characteristicSize - The characteristic size to base grid on
+ * @returns {Object} { gridSpacing, majorGridSpacing }
+ */
+export function calculateGridSpacing(characteristicSize) {
+  if (!characteristicSize || characteristicSize <= 0) {
+    return {
+      gridSpacing: 10,
+      majorGridSpacing: 100
+    };
+  }
+
+  // Clamp to reasonable range to avoid solid grid (too small) or invisible grid (too large)
+  const clampedSize = Math.max(1, Math.min(100000, characteristicSize));
+  const gridSpacing = Math.pow(10, Math.floor(Math.log10(clampedSize)));
+  const majorGridSpacing = gridSpacing * 10;
+
+  return { gridSpacing, majorGridSpacing };
+}
+
+/**
+ * Calculates characteristic size from node bounds (cube root of volume)
+ * @param {Object} bound - Node bounds { x, y, z } representing half-extents
+ * @returns {number} Characteristic size
+ */
+export function getCharacteristicSize(bound) {
+  if (!bound) {
+    return 0;
+  }
+
+  const fullX = (bound.x || 1) * 2;
+  const fullY = (bound.y || bound.x || 1) * 2;
+  const fullZ = (bound.z || bound.x || 1) * 2;
+
+  return Math.cbrt(fullX * fullY * fullZ);
+}
+
+/**
+ * Updates the grid spacing uniforms for an existing infinite grid
+ * @param {THREE.Mesh} gridMesh - The grid mesh returned by createInfiniteGrid
+ * @param {Object} options - New spacing options
+ */
+export function updateGridSpacing(gridMesh, options = {}) {
+  if (!gridMesh || !gridMesh.material || !gridMesh.material.uniforms) {
+    return;
+  }
+
+  const { gridSpacing, majorGridSpacing, fadeDistance } = options;
+
+  if (gridSpacing !== undefined) {
+    gridMesh.material.uniforms.uGridSpacing.value = gridSpacing;
+  }
+  if (majorGridSpacing !== undefined) {
+    gridMesh.material.uniforms.uMajorGridSpacing.value = majorGridSpacing;
+  }
+  if (fadeDistance !== undefined) {
+    gridMesh.material.uniforms.uFadeDistance.value = fadeDistance;
+  }
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createInfiniteGrid } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid, updateGridSpacing } from './scene-helpers.js';
 
 const NODE_COLORS = {
   RMRoot: 0xffd700,
@@ -664,6 +664,7 @@ export class ViewGraph {
     if (this.graphNodes.length === 0) return;
 
     let minY = Infinity;
+    let maxXZ = 0;
 
     // Update node positions
     this.graphNodes.forEach(node => {
@@ -671,6 +672,8 @@ export class ViewGraph {
       if (mesh) {
         mesh.position.set(node.x, node.y, node.z);
         if (node.y < minY) minY = node.y;
+        const distXZ = Math.sqrt(node.x * node.x + node.z * node.z);
+        if (distXZ > maxXZ) maxXZ = distXZ;
       }
     });
 
@@ -679,6 +682,9 @@ export class ViewGraph {
       // Smoothly follow the bottom (with some padding)
       const targetY = minY - 50;
       this.gridHelper.position.y += (targetY - this.gridHelper.position.y) * 0.1;
+
+      // Update fade distance based on furthest node
+      updateGridSpacing(this.gridHelper, { fadeDistance: Math.max(100, maxXZ) });
     }
 
     // Update link lines
@@ -738,7 +744,7 @@ export class ViewGraph {
 
   selectNode(node) {
     const key = this._getKey(node.id, node.type);
-    
+
     // Remove previous highlight
     if (this.highlightMesh) {
       if (this.highlightMesh.parent) {
@@ -756,13 +762,13 @@ export class ViewGraph {
     if (mesh) {
       // Create a slightly larger wireframe sphere
       const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS * 1.2, 16, 12);
-      const material = new THREE.MeshBasicMaterial({ 
+      const material = new THREE.MeshBasicMaterial({
         color: SELECTION_COLOR,
         wireframe: true,
         transparent: true,
         opacity: 0.5
       });
-      
+
       this.highlightMesh = new THREE.Mesh(geometry, material);
       mesh.add(this.highlightMesh);
     }

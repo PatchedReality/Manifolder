@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createInfiniteGrid } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import {
   NODE_TYPES,
   CELESTIAL_NAMES,
@@ -777,7 +777,46 @@ export class ViewBounds {
       this.focusNode = node;
     }
 
+    if (node) {
+      this.updateGridForNode(node);
+    }
+
     this.rebuildVisibleNodes();
+  }
+
+  updateGridForNode(node) {
+    if (!this.gridHelper) {
+      return;
+    }
+
+    let visualSize;
+
+    if (this.focusNode && this.isCelestialNode(node)) {
+      // Logarithmic mode: use the visual size from calculateLogarithmicSize
+      visualSize = this.calculateLogarithmicSize(node, this.focusNode);
+    } else {
+      // Linear mode: use scaled bounds
+      const bound = this.getEffectiveBound(node);
+      const maxExtent = Math.max(bound.x || 1, bound.y || 1, bound.z || 1) * 2;
+      visualSize = maxExtent * this.scale;
+    }
+
+    const spacing = calculateGridSpacing(visualSize);
+
+    // Calculate fade distance from furthest visible node
+    let maxDistance = 100;
+    this.nodeMeshes.forEach(({ mesh }) => {
+      if (mesh) {
+        const pos = mesh.position;
+        const dist = Math.sqrt(pos.x * pos.x + pos.z * pos.z);
+        if (dist > maxDistance) {
+          maxDistance = dist;
+        }
+      }
+    });
+    spacing.fadeDistance = maxDistance;
+
+    updateGridSpacing(this.gridHelper, spacing);
   }
 
   toggleNode(node) {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createStarfield, createInfiniteGrid } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { getResourceUrl } from './node-helpers.js';
 
 const GLB_CDN_BASE = 'https://cdn.rp1.com/res/glb/tiles/';
@@ -254,6 +254,7 @@ export class ViewResource {
 
       this.centerContentAtOrigin();
       this.fitCameraToContent();
+      this.updateGridFromContent();
       this.setStatus('', '');
     } catch (error) {
       if (requestId === this.loadRequestId) {
@@ -330,6 +331,7 @@ export class ViewResource {
       await this.processResourceData(data);
 
       this.fitCameraToContent();
+      this.updateGridFromContent();
       this.setStatus('', '');
     } catch (error) {
       this.setStatus(`Failed: ${error.message}`, 'error');
@@ -652,5 +654,39 @@ export class ViewResource {
 
   onStatus(callback) {
     this.statusCallbacks.push(callback);
+  }
+
+  updateGridFromContent() {
+    if (!this.gridHelper || !this.contentGroup || this.loadedModels.length === 0) {
+      return;
+    }
+
+    const boundingBox = new THREE.Box3();
+    for (const model of this.loadedModels) {
+      const modelBox = new THREE.Box3().setFromObject(model);
+      if (!modelBox.isEmpty() && isFinite(modelBox.min.x)) {
+        boundingBox.union(modelBox);
+      }
+    }
+
+    if (boundingBox.isEmpty()) {
+      return;
+    }
+
+    const size = new THREE.Vector3();
+    boundingBox.getSize(size);
+    const characteristicSize = Math.cbrt(size.x * size.y * size.z);
+    const spacing = calculateGridSpacing(characteristicSize);
+
+    // Fade distance based on furthest extent from origin
+    const center = new THREE.Vector3();
+    boundingBox.getCenter(center);
+    const maxExtent = Math.max(
+      Math.abs(boundingBox.min.x), Math.abs(boundingBox.max.x),
+      Math.abs(boundingBox.min.z), Math.abs(boundingBox.max.z)
+    );
+    spacing.fadeDistance = maxExtent;
+
+    updateGridSpacing(this.gridHelper, spacing);
   }
 }
