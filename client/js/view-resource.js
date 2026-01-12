@@ -27,6 +27,9 @@ export class ViewResource {
     this.currentResourceUrl = null;
     this.currentNode = null;
     this.isLoading = false;
+    this.loadRequestId = 0;  // Increments on each load to handle race conditions
+
+    this.resourceBaseUrl = '';  // Base URL for loading resources (from MSF server)
 
     this.statusCallbacks = [];
 
@@ -161,25 +164,55 @@ export class ViewResource {
     this.renderer.render(this.scene, this.camera);
   }
 
+  setResourceBaseUrl(msfUrl) {
+    try {
+      const url = new URL(msfUrl);
+      this.resourceBaseUrl = url.origin;
+    } catch (e) {
+      console.warn('Invalid MSF URL for resource base:', msfUrl);
+      this.resourceBaseUrl = '';
+    }
+  }
+
+  _resolveResourceUrl(path) {
+    if (!path) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    if (this.resourceBaseUrl && path.startsWith('/')) {
+      return this.resourceBaseUrl + path;
+    }
+    return path;
+  }
+
   setNode(node, expandedDescendants = []) {
     this.currentNode = node;
 
     const resourcesToLoad = [];
 
-    const nodeUrl = getResourceUrl(node);
-    if (nodeUrl) {
-      resourcesToLoad.push({ url: nodeUrl, transform: null });
+    const nodeResource = getResourceUrl(node);
+    if (nodeResource) {
+      resourcesToLoad.push({
+        url: this._resolveResourceUrl(nodeResource.url),
+        type: nodeResource.type,
+        transform: null
+      });
     }
 
     for (const { node: childNode, cumulativeTransform } of expandedDescendants) {
-      const childUrl = getResourceUrl(childNode);
-      if (childUrl) {
-        resourcesToLoad.push({ url: childUrl, transform: cumulativeTransform });
+      const childResource = getResourceUrl(childNode);
+      if (childResource) {
+        resourcesToLoad.push({
+          url: this._resolveResourceUrl(childResource.url),
+          type: childResource.type,
+          transform: cumulativeTransform
+        });
       }
     }
 
     if (resourcesToLoad.length === 0) {
       this.clearScene();
+      this.currentResourceUrl = null;
       this.setStatus('No resource', '');
       return;
     }
@@ -194,7 +227,8 @@ export class ViewResource {
   }
 
   async loadMultipleResources(resourcesToLoad) {
-    if (this.isLoading) return;
+    // Increment request ID to invalidate any in-progress loads
+    const requestId = ++this.loadRequestId;
     this.isLoading = true;
 
     this.clearScene();
@@ -203,22 +237,63 @@ export class ViewResource {
     this.setStatus(`Loading ${resourcesToLoad.length} resource(s)...`, 'loading');
 
     try {
-      for (const { url, transform } of resourcesToLoad) {
-        await this.loadResourceWithTransform(url, transform);
+      for (const { url, type, transform } of resourcesToLoad) {
+        // Check if this request is still current
+        if (requestId !== this.loadRequestId) return;
+
+        if (type === 'glb') {
+          await this.loadDirectGlb(url, transform, requestId);
+        } else {
+          await this.loadResourceWithTransform(url, transform, requestId);
+        }
       }
+
+      // Final check before updating UI
+      if (requestId !== this.loadRequestId) return;
 
       this.centerContentAtOrigin();
       this.fitCameraToContent();
       this.setStatus('', '');
     } catch (error) {
-      this.setStatus(`Failed: ${error.message}`, 'error');
-      console.error('Resource load error:', error);
+      if (requestId === this.loadRequestId) {
+        this.setStatus(`Failed: ${error.message}`, 'error');
+        console.error('Resource load error:', error);
+      }
     } finally {
-      this.isLoading = false;
+      if (requestId === this.loadRequestId) {
+        this.isLoading = false;
+      }
     }
   }
 
-  async loadResourceWithTransform(url, nodeTransform) {
+  async loadDirectGlb(url, nodeTransform, requestId) {
+    return new Promise((resolve) => {
+      this.gltfLoader.load(
+        url,
+        (gltf) => {
+          // Check if this request is still current before adding to scene
+          if (requestId !== this.loadRequestId) {
+            resolve();
+            return;
+          }
+          const model = gltf.scene;
+          if (nodeTransform) {
+            this.applyNodeTransform(model, nodeTransform);
+          }
+          this.contentGroup.add(model);
+          this.loadedModels.push(model);
+          resolve();
+        },
+        undefined,
+        (error) => {
+          console.warn(`Failed to load GLB ${url}:`, error);
+          resolve();
+        }
+      );
+    });
+  }
+
+  async loadResourceWithTransform(url, nodeTransform, requestId) {
     try {
       const response = await fetch(url);
       if (!response.ok) {
@@ -226,8 +301,11 @@ export class ViewResource {
         return;
       }
 
+      // Check if this request is still current
+      if (requestId !== this.loadRequestId) return;
+
       const data = await response.json();
-      await this.processResourceData(data, nodeTransform);
+      await this.processResourceData(data, nodeTransform, requestId);
     } catch (error) {
       console.warn(`Error loading resource ${url}:`, error);
     }
@@ -260,7 +338,7 @@ export class ViewResource {
     }
   }
 
-  async processResourceData(data, nodeTransform = null) {
+  async processResourceData(data, nodeTransform = null, requestId = null) {
     const blueprint = data?.body?.blueprint;
     if (!blueprint) {
       console.warn('No blueprint in resource data');
@@ -275,6 +353,9 @@ export class ViewResource {
 
     const loadPromises = physicalObjects.map(obj => this.loadPhysicalObject(obj));
     const models = await Promise.all(loadPromises);
+
+    // Check if this request is still current before adding to scene
+    if (requestId !== null && requestId !== this.loadRequestId) return;
 
     models.filter(Boolean).forEach(model => {
       if (nodeTransform) {

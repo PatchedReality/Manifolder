@@ -382,7 +382,7 @@ export class ViewBounds {
 
   _getMsfReference(nodeData) {
     const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && ref.endsWith('.msf')) {
+    if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
       return ref;
     }
     return null;

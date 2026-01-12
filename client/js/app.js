@@ -270,6 +270,7 @@ class App {
       this.hierarchy.setData(tree);
       this.viewGraph.setData(tree);
       this.viewBounds.setData(tree);
+      this.viewResource.setResourceBaseUrl(url);
       this.inspector.clear();
 
       this.layout.setStatus('Map loaded', 'connected');

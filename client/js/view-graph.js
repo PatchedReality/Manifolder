@@ -103,7 +103,7 @@ export class ViewGraph {
   _getMsfReference(nodeData) {
     // Check for pResource.sReference that points to an MSF file
     const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && ref.endsWith('.msf')) {
+    if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
       return ref;
     }
     return null;
