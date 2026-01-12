@@ -133,23 +133,3 @@ export function createStarfield(scene, options = {}) {
 
   return stars;
 }
-
-/**
- * Creates a ground grid
- * @param {THREE.Scene} scene - The scene to add the grid to
- * @param {Object} options - Configuration options
- * @returns {THREE.GridHelper} The grid helper object
- */
-export function createGroundGrid(scene, options = {}) {
-  const {
-    size = 2000,
-    divisions = 400,
-    colorCenterLine = 0x666666,
-    colorGrid = 0x222222
-  } = options;
-
-  const grid = new THREE.GridHelper(size, divisions, colorCenterLine, colorGrid);
-  scene.add(grid);
-
-  return grid;
-}

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createGroundGrid } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid } from './scene-helpers.js';
 import {
   NODE_TYPES,
   CELESTIAL_NAMES,
@@ -114,8 +114,8 @@ export class ViewBounds {
     this.camera.add(cameraLight);
     this.scene.add(this.camera);
 
-    // Ground Grid and Starfield
-    this.gridHelper = createGroundGrid(this.scene);
+    // Infinite Grid and Starfield
+    this.gridHelper = createInfiniteGrid(this.scene);
     this.starfield = createStarfield(this.scene);
 
     this.setupEventListeners();

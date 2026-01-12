@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createGroundGrid } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid } from './scene-helpers.js';
 
 const NODE_COLORS = {
   RMRoot: 0xffd700,
@@ -191,8 +191,8 @@ export class ViewGraph {
     this.camera.add(pointLight); 
     this.scene.add(this.camera);
 
-    // Ground Grid and Starfield
-    this.gridHelper = createGroundGrid(this.scene);
+    // Infinite Grid and Starfield
+    this.gridHelper = createInfiniteGrid(this.scene);
     this.starfield = createStarfield(this.scene);
 
     this.setupEventListeners();
