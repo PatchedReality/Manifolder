@@ -122,10 +122,13 @@ export function createStarfield(scene, options = {}) {
     color,
     size,
     sizeAttenuation: false,
-    fog: false
+    fog: false,
+    depthWrite: false
   });
 
   const stars = new THREE.Points(geometry, material);
+  stars.renderOrder = -1000;
+  stars.frustumCulled = false;
   scene.add(stars);
 
   return stars;

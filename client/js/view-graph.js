@@ -193,7 +193,7 @@ export class ViewGraph {
 
     // Ground Grid and Starfield
     this.gridHelper = createGroundGrid(this.scene);
-    createStarfield(this.scene);
+    this.starfield = createStarfield(this.scene);
 
     this.setupEventListeners();
   }
@@ -707,6 +707,7 @@ export class ViewGraph {
     this.updatePhysics();
     this.updateVisuals();
     this.controls.update();
+    this.starfield.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }
 

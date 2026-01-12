@@ -80,7 +80,7 @@ export class ViewResource {
     this.scene.add(this.camera);
 
     this.gridHelper = createInfiniteGrid(this.scene);
-    createStarfield(this.scene, { radius: 2500 });
+    this.starfield = createStarfield(this.scene, { radius: 2500 });
 
     window.addEventListener('resize', () => this.onWindowResize());
     this.setupEventListeners();
@@ -161,6 +161,7 @@ export class ViewResource {
   animate() {
     requestAnimationFrame(() => this.animate());
     this.controls.update();
+    this.starfield.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
   }
 
