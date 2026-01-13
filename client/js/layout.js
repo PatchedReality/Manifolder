@@ -1,4 +1,8 @@
-const URL_HISTORY_KEY = 'rp1-url-history';
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+const URL_HISTORY_KEY = 'mv-url-history';
 const MAX_URL_HISTORY = 10;
 
 export class LayoutManager {
@@ -383,10 +387,10 @@ export class LayoutManager {
   }
 
   dispatchEvent(name, detail) {
-    window.dispatchEvent(new CustomEvent(`rp1:${name}`, { detail }));
+    window.dispatchEvent(new CustomEvent(`mv:${name}`, { detail }));
   }
 
   onLoad(callback) {
-    window.addEventListener('rp1:load', (e) => callback(e.detail));
+    window.addEventListener('mv:load', (e) => callback(e.detail));
   }
 }

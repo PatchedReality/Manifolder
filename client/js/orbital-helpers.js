@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
 // Orbital mechanics helpers for celestial body positioning
 import * as THREE from 'three';
 

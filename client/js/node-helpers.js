@@ -1,4 +1,8 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * Gets MSF reference URL from a node's pResource property.
  * Returns the URL if it points to an MSF file, null otherwise.
  */

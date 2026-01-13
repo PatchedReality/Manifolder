@@ -1,4 +1,8 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * InspectorPanel - Displays details about the selected map node
  * Shows basic info, transform, bounds, and raw JSON data
  */

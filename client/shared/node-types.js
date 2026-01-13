@@ -1,4 +1,8 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * Shared node type definitions for server and client
  * This is the single source of truth for node type mappings
  */

@@ -1,3 +1,7 @@
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
 import * as THREE from 'three';
 
 /**

@@ -1,10 +1,14 @@
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
 import { LayoutManager } from './layout.js';
 import { HierarchyPanel } from './hierarchy-panel.js';
 import { ViewGraph } from './view-graph.js';
 import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
-import { RP1Client } from './rp1-client.js';
+import { MVClient } from './mv-client.js';
 import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
 
@@ -16,7 +20,7 @@ class App {
     this.viewBounds = new ViewBounds('#viewport-bounds');
     this.viewResource = new ViewResource('#viewport-resource');
     this.inspector = new InspectorPanel('#inspector-content');
-    this.client = new RP1Client();
+    this.client = new MVClient();
 
     this.tree = null;
     this.init();
@@ -289,7 +293,7 @@ class App {
     });
 
     this.client.on('error', (error) => {
-      console.error('RP1 Client error:', error);
+      console.error('MV Client error:', error);
       this.layout.setStatus('Error: ' + error.message, 'disconnected');
     });
 

@@ -1,10 +1,25 @@
 /**
- * RP1Client - Direct browser client for RP1 server communication
- * Connects directly to RP1 servers via Socket.io, no proxy needed
+ * Copyright (c) 2026 Patched Reality, Inc.
+ *
+ * Based upon the following code by © Metaversal Corporation, 2026:
+ *
+ * MVMF.js
+ * MVSB.js
+ * MVIO.js
+ * MVRest.js
+ * MVXP.js
+ * MVRP.js
+ * MVRP_Map.js
+ *
+ */
+
+/**
+ * MVClient - Direct browser client for Metaverse server communication
+ * Connects directly to MV servers via Socket.io, no proxy needed
  */
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
 
-export class RP1Client {
+export class MVClient {
   constructor() {
     this.socket = null;
     this.isConnected = false;
@@ -33,7 +48,6 @@ export class RP1Client {
 
   disconnect() {
     if (this.socket) {
-      console.log('[RP1] Disconnecting from RP1 server');
       this.socket.disconnect();
       this.socket = null;
     }
@@ -47,7 +61,6 @@ export class RP1Client {
 
     try {
       // Step 1: Fetch MSF config
-      console.log(`[RP1] Fetching MSF config from: ${url}`);
       this._emit('status', 'Fetching map config...');
 
       const response = await fetch(url);
@@ -55,8 +68,6 @@ export class RP1Client {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       this.msfConfig = await response.json();
-
-      console.log('[RP1] MSF config:', JSON.stringify(this.msfConfig));
 
       if (!this.msfConfig.map) {
         throw new Error('Invalid MSF config: missing map section');
@@ -66,15 +77,13 @@ export class RP1Client {
       const connectStr = this.msfConfig.map.connect;
       const endpoint = this._parseConnectString(connectStr);
 
-      console.log(`[RP1] Parsed endpoint: ${endpoint}`);
-
       // Step 3: Disconnect from any existing connection
       if (this.isConnected) {
         this.disconnect();
       }
 
       // Step 4: Connect to the map server
-      await this._connectToRP1(endpoint);
+      await this._connectToMV(endpoint);
 
       // Step 5: Fetch the map tree
       const result = await this._getMapTree();
@@ -87,7 +96,6 @@ export class RP1Client {
       return result.tree;
 
     } catch (err) {
-      console.error('[RP1] loadMap error:', err.message);
       this._emit('error', err);
       throw err;
     }
@@ -98,17 +106,13 @@ export class RP1Client {
       throw new Error('Missing node id or type');
     }
 
-    console.log(`[RP1] getNode: id=${id}, nodeType=${nodeType}`);
-
     try {
       const result = await this._getNode(id, nodeType);
 
       if (result.error) {
-        console.log(`[RP1] getNode error:`, result.error);
         throw new Error(result.error);
       }
 
-      console.log(`[RP1] getNode success, node:`, result.node?.name);
       this._emit('nodeData', result.node);
       return result.node;
 
@@ -139,7 +143,6 @@ export class RP1Client {
         try {
           handler(data);
         } catch (error) {
-          console.error(`Error in ${event} handler:`, error);
         }
       });
     }
@@ -147,10 +150,9 @@ export class RP1Client {
 
   // Connection management
 
-  async _connectToRP1(endpoint) {
+  async _connectToMV(endpoint) {
     return new Promise((resolve, reject) => {
       this.endpoint = endpoint || 'wss://hello.rp1.com';
-      console.log(`[RP1] Connecting to ${this.endpoint}...`);
       this._emit('status', `Connecting to ${this.endpoint}...`);
 
       // Use global io from Socket.io CDN
@@ -161,28 +163,21 @@ export class RP1Client {
       });
 
       this.socket.on('connect', () => {
-        console.log('[RP1] Connected to RP1 server');
         this.isConnected = true;
-        this._emit('status', 'Connected to RP1 server');
+        this._emit('status', 'Connected to MV server');
         this._emit('connected');
         resolve();
       });
 
       this.socket.on('connect_error', (err) => {
-        console.error('[RP1] Connection error:', err.message);
         this._emit('error', new Error(`Connection error: ${err.message}`));
         reject(err);
       });
 
       this.socket.on('disconnect', (reason) => {
-        console.log('[RP1] Disconnected:', reason);
         this.isConnected = false;
         this._emit('status', `Disconnected: ${reason}`);
         this._emit('disconnected');
-      });
-
-      this.socket.onAny((eventName, ...args) => {
-        console.log(`[RP1] Event: ${eventName}`, JSON.stringify(args).substring(0, 200));
       });
 
       this.socket.connect();
@@ -205,8 +200,6 @@ export class RP1Client {
       const timeoutId = setTimeout(() => {
         reject(new Error(`Timeout waiting for response to ${event}`));
       }, timeout);
-
-      console.log(`[RP1] Emitting: ${event}`);
 
       this.socket.emit(event, data, (response) => {
         clearTimeout(timeoutId);
@@ -405,8 +398,6 @@ export class RP1Client {
 
     const allChildren = aChild.flat();
 
-    console.log(`[RP1] Container ${node.name} has ${allChildren.length} total children`);
-
     for (const child of allChildren) {
       if (child.twRMCObjectIx !== undefined) {
         node.children.push(this._parseContainerNode(child));
@@ -442,8 +433,6 @@ export class RP1Client {
     };
 
     const allChildren = aChild.flat();
-
-    console.log(`[RP1] Terrain ${node.name} has ${allChildren.length} total children`);
 
     for (const child of allChildren) {
       if (child.twRMCObjectIx !== undefined) {
@@ -482,8 +471,6 @@ export class RP1Client {
 
     const allChildren = aChild.flat();
 
-    console.log(`[RP1] Placeable ${node.name} has ${allChildren.length} total children`);
-
     for (const child of allChildren) {
       if (child.twRMCObjectIx !== undefined) {
         node.children.push(this._parseContainerNode(child));
@@ -518,8 +505,6 @@ export class RP1Client {
     const terrains = aChild[1] || [];
     const placeables = aChild[2] || [];
 
-    console.log(`[RP1] Root has ${containers.length} containers, ${terrains.length} terrains, ${placeables.length} placeables`);
-
     for (const container of containers) {
       root.children.push(this._parseContainerNode(container));
     }
@@ -541,25 +526,21 @@ export class RP1Client {
 
   async _getMapTree() {
     if (!this.isConnected) {
-      return { error: 'Not connected to RP1 server' };
+      return { error: 'Not connected to MV server' };
     }
 
-    console.log('[RP1] Requesting map tree...');
     this._emit('status', 'Loading map tree...');
 
     try {
       const allRoots = [];
 
       for (let rootIx = 1; rootIx <= 10; rootIx++) {
-        console.log(`[RP1] Requesting RMRoot:update for root ${rootIx}...`);
         const rootResponse = await this._emitWithCallback('RMRoot:update', { twRMRootIx: rootIx });
 
         if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-          console.log(`[RP1] No more roots after ${rootIx - 1}`);
           break;
         }
 
-        console.log(`[RP1] RMROOT ${rootIx} response:`, JSON.stringify(rootResponse).substring(0, 300));
         const rootTree = await this._buildTreeFromRoot(rootResponse, rootIx);
         allRoots.push(rootTree);
       }
@@ -584,21 +565,17 @@ export class RP1Client {
         };
       }
 
-      console.log(`[RP1] Map tree built successfully with ${allRoots.length} root(s)`);
       return { tree };
 
     } catch (err) {
-      console.error('[RP1] _getMapTree error:', err.message);
       return { error: err.message };
     }
   }
 
   async _getNode(nodeId, nodeType) {
     if (!this.isConnected) {
-      return { error: 'Not connected to RP1 server' };
+      return { error: 'Not connected to MV server' };
     }
-
-    console.log(`[RP1] Requesting node ${nodeId} (${nodeType})...`);
 
     try {
       let response;
@@ -613,7 +590,6 @@ export class RP1Client {
             }
           } else {
             response = await this._emitWithCallback('RMRoot:update', { twRMRootIx: nodeId });
-            console.log(`[RP1] RMRoot:update response:`, JSON.stringify(response).substring(0, 500));
             if (response && (response.nResult === undefined || response.nResult === 0)) {
               node = await this._buildTreeFromRoot(response, nodeId);
             }
@@ -622,7 +598,6 @@ export class RP1Client {
 
         case 'RMCObject':
           response = await this._emitWithCallback('RMCObject:update', { twRMCObjectIx: nodeId });
-          console.log(`[RP1] RMCObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildContainerNode(response, nodeId);
           }
@@ -630,7 +605,6 @@ export class RP1Client {
 
         case 'RMTObject':
           response = await this._emitWithCallback('RMTObject:update', { twRMTObjectIx: nodeId });
-          console.log(`[RP1] RMTObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildTerrainNode(response, nodeId);
           }
@@ -638,7 +612,6 @@ export class RP1Client {
 
         case 'RMPObject':
           response = await this._emitWithCallback('RMPObject:update', { twRMPObjectIx: nodeId });
-          console.log(`[RP1] RMPObject:update response:`, JSON.stringify(response).substring(0, 500));
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildPlaceableNode(response, nodeId);
           }
@@ -655,7 +628,6 @@ export class RP1Client {
       }
 
     } catch (err) {
-      console.error(`[RP1] _getNode error:`, err.message);
       return { error: err.message };
     }
   }

@@ -1,3 +1,9 @@
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ *
+ *
+ */
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, updateGridSpacing } from './scene-helpers.js';

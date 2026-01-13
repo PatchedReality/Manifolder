@@ -1,4 +1,8 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * HierarchyPanel - Tree view component for displaying map hierarchy
  * Supports lazy-loading, search filtering, and node selection
  */
