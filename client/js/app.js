@@ -23,6 +23,7 @@ class App {
     this.client = new MVClient();
 
     this.tree = null;
+    this.loadingNodes = new Map(); // Track in-flight loads to prevent race conditions
     this.init();
   }
 
@@ -416,24 +417,38 @@ class App {
   }
 
   async loadNodeChildren(node) {
-    try {
-      const nodeData = await this.client.getNode(node.id, node.type);
-      if (nodeData && nodeData.children) {
-        this.hierarchy.setChildren(node, nodeData.children);
-        this.viewGraph.addChildren(node, nodeData.children);
-        this.viewBounds.addChildren(node, nodeData.children);
+    const key = `${node.type}_${node.id}`;
 
-        const selectedNode = this.hierarchy.getSelectedNode();
-        if (selectedNode && selectedNode._uid === node._uid) {
-          const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-          this.viewResource.setNode(node, expandedDescendants);
-        }
-      }
-      this.hierarchy.markNodeLoaded(node);
-    } catch (error) {
-      console.error('Failed to load children:', error);
-      this.hierarchy.markNodeLoaded(node);
+    // If already loading this node, return the existing promise
+    if (this.loadingNodes.has(key)) {
+      return this.loadingNodes.get(key);
     }
+
+    const loadPromise = (async () => {
+      try {
+        const nodeData = await this.client.getNode(node.id, node.type);
+        if (nodeData && nodeData.children) {
+          this.hierarchy.setChildren(node, nodeData.children);
+          this.viewGraph.addChildren(node, nodeData.children);
+          this.viewBounds.addChildren(node, nodeData.children);
+
+          const selectedNode = this.hierarchy.getSelectedNode();
+          if (selectedNode && selectedNode._uid === node._uid) {
+            const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+            this.viewResource.setNode(node, expandedDescendants);
+          }
+        }
+        this.hierarchy.markNodeLoaded(node);
+      } catch (error) {
+        console.error('Failed to load children:', error);
+        this.hierarchy.markNodeLoaded(node);
+      } finally {
+        this.loadingNodes.delete(key);
+      }
+    })();
+
+    this.loadingNodes.set(key, loadPromise);
+    return loadPromise;
   }
 }
 

@@ -543,7 +543,12 @@ export class ViewResource {
     }
 
     this.contentGroup.scale.setScalar(scale);
-    this.contentGroup.position.copy(center).multiplyScalar(-scale);
+    // Position so bottom of bounding box sits at Y=0, centered on X/Z
+    this.contentGroup.position.set(
+      -center.x * scale,
+      -boundingBox.min.y * scale,
+      -center.z * scale
+    );
 
   }
 
@@ -599,7 +604,7 @@ export class ViewResource {
     this.controls.update();
 
     if (this.gridHelper && isFinite(boundingBox.min.y)) {
-      this.gridHelper.position.y = boundingBox.min.y - 5;
+      this.gridHelper.position.y = boundingBox.min.y;
     }
   }
 

@@ -351,18 +351,31 @@ export class ViewBounds {
 
     if (intersects.length === 0) return;
 
+    // Deduplicate intersections - keep only nearest hit per node (ray hits front and back faces)
+    const seen = new Set();
+    const uniqueIntersects = intersects.filter(i => {
+      const nd = i.object.userData.nodeData;
+      if (!nd) return false;
+      const key = `${nd.type}_${nd.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (uniqueIntersects.length === 0) return;
+
     let targetIndex = 0;
 
-    const currentIndex = intersects.findIndex(i => {
+    const currentIndex = uniqueIntersects.findIndex(i => {
       const nd = i.object.userData.nodeData;
       return nd && nd.id === this.selectedId && nd.type === this.selectedType;
     });
 
     if (currentIndex !== -1) {
-      targetIndex = (currentIndex + 1) % intersects.length;
+      targetIndex = (currentIndex + 1) % uniqueIntersects.length;
     }
 
-    const nodeData = intersects[targetIndex].object.userData.nodeData;
+    const nodeData = uniqueIntersects[targetIndex].object.userData.nodeData;
     if (nodeData) {
       this.selectNode(nodeData.id, nodeData.type);
       this.selectCallbacks.forEach(cb => cb(nodeData));
@@ -379,26 +392,39 @@ export class ViewBounds {
     const meshes = Array.from(this.nodeMeshes.values()).map(n => n.mesh);
     const intersects = this.raycaster.intersectObjects(meshes, false);
 
-    if (intersects.length > 0) {
-      const currentIndex = intersects.findIndex(i => {
-        const nd = i.object.userData.nodeData;
-        return nd && nd.id === this.selectedId && nd.type === this.selectedType;
-      });
+    if (intersects.length === 0) return;
 
-      let nodeData;
-      if (currentIndex !== -1) {
-        nodeData = intersects[currentIndex].object.userData.nodeData;
-      } else {
-        nodeData = intersects[0].object.userData.nodeData;
-        if (nodeData) {
-          this.selectNode(nodeData.id, nodeData.type);
-          this.selectCallbacks.forEach(cb => cb(nodeData));
-        }
-      }
+    // Deduplicate intersections - keep only nearest hit per node
+    const seen = new Set();
+    const uniqueIntersects = intersects.filter(i => {
+      const nd = i.object.userData.nodeData;
+      if (!nd) return false;
+      const key = `${nd.type}_${nd.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
+    if (uniqueIntersects.length === 0) return;
+
+    const currentIndex = uniqueIntersects.findIndex(i => {
+      const nd = i.object.userData.nodeData;
+      return nd && nd.id === this.selectedId && nd.type === this.selectedType;
+    });
+
+    let nodeData;
+    if (currentIndex !== -1) {
+      nodeData = uniqueIntersects[currentIndex].object.userData.nodeData;
+    } else {
+      nodeData = uniqueIntersects[0].object.userData.nodeData;
       if (nodeData) {
-        this.zoomToNode(nodeData);
+        this.selectNode(nodeData.id, nodeData.type);
+        this.selectCallbacks.forEach(cb => cb(nodeData));
       }
+    }
+
+    if (nodeData) {
+      this.zoomToNode(nodeData);
     }
   }
 
@@ -1254,6 +1280,8 @@ export class ViewBounds {
       this.scene.add(outline);
     } else {
       // Create a 3D box for non-celestial nodes
+      // For terrestrial objects, Y represents the bottom of the bounding box, so offset up by halfY
+      center.y += halfY;
       geometry = new THREE.BoxGeometry(halfX * 2, halfY * 2, halfZ * 2);
       const material = new THREE.MeshBasicMaterial({
         color: color,
