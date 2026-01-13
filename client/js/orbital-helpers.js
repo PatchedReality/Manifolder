@@ -98,3 +98,37 @@ export function createOrbitPathGeometry(semiMajorAxis, semiMinorAxis, segments =
 
   return new THREE.BufferGeometry().setFromPoints(points);
 }
+
+/**
+ * Extract spin data from a node's properties
+ * Spin is when tmPeriod > 0 but dA = 0 (no orbit, just rotation)
+ * @param {Object} node - The node data
+ * @returns {Object|null} Spin parameters or null if no spin data
+ */
+export function getSpinData(node) {
+  const orbitSpin = node?.properties?.pOrbit_Spin;
+  if (!orbitSpin) return null;
+
+  const { tmPeriod, tmStart, dA } = orbitSpin;
+
+  // Spin is when we have a period but no orbital axis (dA = 0)
+  if (!tmPeriod || tmPeriod === 0) return null;
+  if (dA && dA !== 0) return null; // Has orbit, not just spin
+
+  return {
+    period: tmPeriod * TIME_UNIT_TO_SECONDS,  // in seconds
+    phaseOffset: (tmStart || 0) * TIME_UNIT_TO_SECONDS
+  };
+}
+
+/**
+ * Calculate spin angle at given time
+ * @param {Object} spinData - From getSpinData()
+ * @param {number} time - Simulation time in seconds
+ * @returns {number} Rotation angle in radians around Y axis
+ */
+export function calculateSpinAngle(spinData, time = 0) {
+  const { period, phaseOffset } = spinData;
+  if (period <= 0) return 0;
+  return ((time + phaseOffset) / period) * 2 * Math.PI;
+}

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
-import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry } from './orbital-helpers.js';
+import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry, getSpinData, calculateSpinAngle } from './orbital-helpers.js';
 import {
   NODE_TYPES,
   CELESTIAL_NAMES,
@@ -11,6 +11,9 @@ import {
 
 // Re-export NODE_TYPES for consumers
 export { NODE_TYPES };
+
+// Texture loader for celestial body surfaces
+const textureLoader = new THREE.TextureLoader();
 
 // Build NODE_COLORS lookup from NODE_TYPES
 const NODE_COLORS = {
@@ -32,6 +35,51 @@ const LOG_SCALE_FACTOR = 50;   // Controls visual distance compression
 const FOCUS_VISUAL_SIZE = 100; // Visual size of focus node in scene units
 const GLOBE_RADIUS = 100;
 const POLYGON_OFFSET = 0.5; // Slight offset above sphere surface
+
+/**
+ * Find surface texture URL and spin data for a celestial node
+ * Checks the node itself first, then looks for a Surface child
+ * @param {Object} node - The celestial node (Planet, Star, Moon, etc.)
+ * @returns {Object|null} { url, rotation, spinData } or null if no texture found
+ */
+function getSurfaceTexture(node) {
+  // Helper to check if a string is an image URL
+  const isImageUrl = (ref) => {
+    if (!ref || typeof ref !== 'string') return false;
+    const lower = ref.toLowerCase();
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+           lower.endsWith('.png') || lower.endsWith('.gif') ||
+           lower.endsWith('.webp') || lower.endsWith('.bmp');
+  };
+
+  // Check the node itself first
+  const nodeRef = node.properties?.pResource?.sReference;
+  if (isImageUrl(nodeRef)) {
+    return {
+      url: nodeRef,
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      spinData: getSpinData(node)
+    };
+  }
+
+  // Then check Surface children
+  if (node.children) {
+    for (const child of node.children) {
+      if (child.nodeType === 'Surface') {
+        const ref = child.properties?.pResource?.sReference;
+        if (isImageUrl(ref)) {
+          return {
+            url: ref,
+            rotation: child.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 },
+            spinData: getSpinData(child)
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export class ViewBounds {
   constructor(containerSelector) {
@@ -248,6 +296,8 @@ export class ViewBounds {
     };
 
     const sliderToTimeScale = (value) => {
+      // Treat values close to 0 as paused
+      if (value < 0.5) return 0;
       const idx = Math.round(value);
       return timeScales[idx] || timeScales[4];
     };
@@ -719,6 +769,23 @@ export class ViewBounds {
         orbitLine.position.copy(parentMeshData.mesh.position);
       }
     });
+
+    // Fourth pass: update spin rotations for celestial bodies with spin data
+    this.nodeMeshes.forEach(({ mesh }) => {
+      const surfaceInfo = mesh.userData.surfaceInfo;
+      const baseQuat = mesh.userData.baseQuaternion;
+      if (!surfaceInfo?.spinData || !baseQuat) return;
+
+      // Calculate spin angle at current time
+      const spinAngle = calculateSpinAngle(surfaceInfo.spinData, this.simulationTime);
+
+      // Create spin rotation around Y axis (local up)
+      const spinQuat = new THREE.Quaternion();
+      spinQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), spinAngle);
+
+      // Apply spin on top of base rotation (axial tilt)
+      mesh.quaternion.copy(baseQuat).multiply(spinQuat);
+    });
   }
 
   // Apply quaternion rotation to a 3D point
@@ -851,6 +918,11 @@ export class ViewBounds {
 
     addExpandedChildren(this.tree);
     this.updateGridPosition();
+
+    // Update orbital positions to match current simulation time (even when paused)
+    if (this.simulationTime > 0) {
+      this.updateOrbitalPositions();
+    }
   }
 
   updateGridPosition() {
@@ -1036,17 +1108,64 @@ export class ViewBounds {
       // Create a spheroid (ellipsoid) that fits inside the bounding box
       // SphereGeometry(1) has radius=1, diameter=2, so scale by half-extents to get correct size
       geometry = new THREE.SphereGeometry(1, 32, 24);
-      const material = new THREE.MeshBasicMaterial({
-        color: color,
-        transparent: true,
-        opacity: isSelected ? 0.35 : 0.15,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      });
+
+      // Check for surface texture from Surface child
+      const surfaceInfo = getSurfaceTexture(node);
+      let material;
+
+      if (surfaceInfo) {
+        // Create material that will receive texture
+        material = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: isSelected ? 0.9 : 0.8,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+
+        // Load texture asynchronously
+        textureLoader.load(
+          surfaceInfo.url,
+          (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            material.map = texture;
+            material.needsUpdate = true;
+          },
+          undefined,
+          (err) => console.warn(`Failed to load texture: ${surfaceInfo.url}`, err)
+        );
+      } else {
+        material = new THREE.MeshBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: isSelected ? 0.35 : 0.15,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+      }
 
       mesh = new THREE.Mesh(geometry, material);
       mesh.scale.set(halfX, halfY, halfZ);
-      mesh.quaternion.copy(rotQuat);
+
+      // Apply surface rotation (axial tilt) if we have a texture
+      if (surfaceInfo) {
+        const surfaceQuat = new THREE.Quaternion(
+          surfaceInfo.rotation.x,
+          surfaceInfo.rotation.y,
+          surfaceInfo.rotation.z,
+          surfaceInfo.rotation.w
+        );
+        surfaceQuat.normalize();
+        // Combine world rotation with surface rotation
+        const combinedQuat = rotQuat.clone().multiply(surfaceQuat);
+        mesh.quaternion.copy(combinedQuat);
+        // Store for spin animation
+        mesh.userData.surfaceInfo = surfaceInfo;
+        mesh.userData.baseQuaternion = combinedQuat.clone();
+      } else {
+        mesh.quaternion.copy(rotQuat);
+      }
+
       mesh.position.copy(center);
       mesh.userData.nodeData = node;
       this.scene.add(mesh);
@@ -1301,53 +1420,32 @@ export class ViewBounds {
       if (!targetNode || !targetNode._worldPos) return;
     }
 
-    const worldPos = targetNode._worldPos;
     const bound = this.getEffectiveBound(targetNode);
+    const key = this._getKey(targetNode.id, targetNode.type);
+    const meshData = this.nodeMeshes.get(key);
 
     let targetPos, boxWidth, boxHeight, boxDepth;
-    const isCelestial = this.isCelestialNode(targetNode);
 
-    if (isCelestial) {
-      // Get actual rendered mesh dimensions from scene
-      const key = this._getKey(targetNode.id, targetNode.type);
-      const meshData = this.nodeMeshes.get(key);
+    // Always use current mesh position if available (for animated objects)
+    if (meshData && meshData.mesh) {
+      const mesh = meshData.mesh;
+      targetPos = mesh.position.clone();
 
-      if (meshData && meshData.mesh) {
-        // Use actual mesh scale for accurate zoom
-        // Sphere mesh.scale = half-extents, visual diameter = 2 * scale
-        const mesh = meshData.mesh;
-        targetPos = mesh.position.clone();
+      // SphereGeometry uses scale for size, BoxGeometry has dimensions baked in
+      if (mesh.geometry.type === 'SphereGeometry') {
         boxWidth = mesh.scale.x * 2;
         boxHeight = mesh.scale.y * 2;
         boxDepth = mesh.scale.z * 2;
-        console.log(`[zoomToNode] ${targetNode.name} celestial from mesh: boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
-      } else if (this.focusNode) {
-        // Fallback to calculated values
-        const scaledPos = this.calculateLogarithmicPosition(targetNode, this.focusNode);
-        const scaledSize = this.calculateLogarithmicSize(targetNode, this.focusNode);
-
-        targetPos = new THREE.Vector3(scaledPos.x, scaledPos.y, scaledPos.z);
-
-        const boundMax = Math.max(bound.x || 1, bound.y || bound.x || 1, bound.z || bound.x || 1);
-        boxWidth = scaledSize * (bound.x || 1) / boundMax;
-        boxHeight = scaledSize * (bound.y || bound.x || 1) / boundMax;
-        boxDepth = scaledSize * (bound.z || bound.x || 1) / boundMax;
-        console.log(`[zoomToNode] ${targetNode.name} celestial fallback: scaledSize=${scaledSize} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
       } else {
-        // No focus, use linear scaling
-        const SCALE = this.scale;
-        targetPos = new THREE.Vector3(
-          worldPos.x * SCALE,
-          worldPos.y * SCALE,
-          worldPos.z * SCALE
-        );
-        boxWidth = (bound.x || 1) * SCALE;
-        boxHeight = (bound.y || bound.x || 1) * SCALE;
-        boxDepth = (bound.z || bound.x || 1) * SCALE;
+        const params = mesh.geometry.parameters;
+        boxWidth = params.width || mesh.scale.x * 2;
+        boxHeight = params.height || mesh.scale.y * 2;
+        boxDepth = params.depth || mesh.scale.z * 2;
       }
     } else {
-      // Fall back to linear scaling
+      // Fallback to static position
       const SCALE = this.scale;
+      const worldPos = targetNode._worldPos;
       targetPos = new THREE.Vector3(
         worldPos.x * SCALE,
         worldPos.y * SCALE,
