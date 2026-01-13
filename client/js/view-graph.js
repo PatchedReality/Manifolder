@@ -344,7 +344,6 @@ export class ViewGraph {
     };
 
     traverse(tree);
-    console.log(`Graph built: ${this.graphNodes.length} nodes, ${this.graphLinks.length} links`);
   }
 
   createVisuals() {

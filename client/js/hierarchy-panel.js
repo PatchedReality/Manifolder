@@ -182,6 +182,12 @@ export class HierarchyPanel {
       }
     });
 
+    content.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showContextMenu(nodeKey, e.clientX, e.clientY);
+    });
+
     const children = document.createElement('div');
     children.className = 'tree-children';
     children.style.display = 'none';
@@ -610,6 +616,177 @@ export class HierarchyPanel {
           }
         }
       }
+    }
+  }
+
+  expandChildren(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodes.get(nodeKey);
+    if (!node) {
+      return;
+    }
+
+    this.expandNode(nodeKey);
+
+    const childrenContainer = node.querySelector(':scope > .tree-children');
+    if (!childrenContainer) {
+      return;
+    }
+
+    const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
+    childNodes.forEach(childNode => {
+      const childUid = childNode.dataset.uid;
+      if (childUid) {
+        this.expandNode(`node-${childUid}`);
+      }
+    });
+  }
+
+  expandAllDescendants(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodes.get(nodeKey);
+    if (!node) {
+      return;
+    }
+
+    this.expandNode(nodeKey);
+
+    const childrenContainer = node.querySelector(':scope > .tree-children');
+    if (!childrenContainer) {
+      return;
+    }
+
+    const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
+    childNodes.forEach(childNode => {
+      const childUid = childNode.dataset.uid;
+      if (childUid) {
+        this.expandAllDescendants(`node-${childUid}`);
+      }
+    });
+  }
+
+  collapseAllDescendants(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodes.get(nodeKey);
+    if (!node) {
+      return;
+    }
+
+    const childrenContainer = node.querySelector(':scope > .tree-children');
+    if (childrenContainer) {
+      const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
+      childNodes.forEach(childNode => {
+        const childUid = childNode.dataset.uid;
+        if (childUid) {
+          this.collapseAllDescendants(`node-${childUid}`);
+        }
+      });
+    }
+
+    this.collapseNode(nodeKey);
+  }
+
+  _hasExpandableChildren(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodes.get(nodeKey);
+    if (!node) {
+      return false;
+    }
+
+    const childrenContainer = node.querySelector(':scope > .tree-children');
+    if (!childrenContainer) {
+      return false;
+    }
+
+    return childrenContainer.querySelectorAll(':scope > .tree-node').length > 0;
+  }
+
+  showContextMenu(nodeKey, x, y) {
+    this.hideContextMenu();
+
+    const node = this.nodes.get(nodeKey);
+    if (!node) {
+      return;
+    }
+
+    const hasChildren = this._hasExpandableChildren(nodeKey);
+    const isExpanded = this.isNodeExpanded(nodeKey);
+
+    const menu = document.createElement('div');
+    menu.className = 'tree-context-menu';
+    menu.id = 'tree-context-menu';
+
+    const expandChildrenBtn = document.createElement('button');
+    expandChildrenBtn.className = 'tree-context-menu-item';
+    expandChildrenBtn.textContent = 'Expand Children';
+    expandChildrenBtn.disabled = !hasChildren;
+    expandChildrenBtn.addEventListener('click', () => {
+      this.expandChildren(nodeKey);
+      this.hideContextMenu();
+    });
+
+    const expandAllBtn = document.createElement('button');
+    expandAllBtn.className = 'tree-context-menu-item';
+    expandAllBtn.textContent = 'Expand All';
+    expandAllBtn.disabled = !hasChildren;
+    expandAllBtn.addEventListener('click', () => {
+      this.expandAllDescendants(nodeKey);
+      this.hideContextMenu();
+    });
+
+    const separator = document.createElement('div');
+    separator.className = 'tree-context-menu-separator';
+
+    const collapseAllBtn = document.createElement('button');
+    collapseAllBtn.className = 'tree-context-menu-item';
+    collapseAllBtn.textContent = 'Collapse All';
+    collapseAllBtn.disabled = !isExpanded;
+    collapseAllBtn.addEventListener('click', () => {
+      this.collapseAllDescendants(nodeKey);
+      this.hideContextMenu();
+    });
+
+    menu.appendChild(expandChildrenBtn);
+    menu.appendChild(expandAllBtn);
+    menu.appendChild(separator);
+    menu.appendChild(collapseAllBtn);
+
+    document.body.appendChild(menu);
+
+    const menuRect = menu.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    if (x + menuRect.width > viewportWidth) {
+      x = viewportWidth - menuRect.width - 8;
+    }
+    if (y + menuRect.height > viewportHeight) {
+      y = viewportHeight - menuRect.height - 8;
+    }
+
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+
+    this._contextMenuCloseHandler = (e) => {
+      if (!menu.contains(e.target)) {
+        this.hideContextMenu();
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener('click', this._contextMenuCloseHandler);
+      document.addEventListener('contextmenu', this._contextMenuCloseHandler);
+    }, 0);
+  }
+
+  hideContextMenu() {
+    const menu = document.getElementById('tree-context-menu');
+    if (menu) {
+      menu.remove();
+    }
+    if (this._contextMenuCloseHandler) {
+      document.removeEventListener('click', this._contextMenuCloseHandler);
+      document.removeEventListener('contextmenu', this._contextMenuCloseHandler);
+      this._contextMenuCloseHandler = null;
     }
   }
 }

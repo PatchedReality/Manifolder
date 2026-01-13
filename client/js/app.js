@@ -83,17 +83,34 @@ class App {
       return category;
     };
 
-    // Add Root as standalone at top
+    // Add Root as standalone at top (unchecked by default)
     if (rootType) {
       const rootLabel = document.createElement('label');
       rootLabel.className = 'filter-standalone';
-      rootLabel.innerHTML = `<input type="checkbox" value="Root" checked><span class="type-dot" style="background: var(${rootType.cssVar})"></span> Root`;
+      rootLabel.innerHTML = `<input type="checkbox" value="Root"><span class="type-dot" style="background: var(${rootType.cssVar})"></span> Root`;
       dropdown.appendChild(rootLabel);
     }
 
-    dropdown.appendChild(createCategory('Celestial', celestialTypesList));
+    const celestialCategory = createCategory('Celestial', celestialTypesList);
+
+    // Add Orbits toggle at top of Celestial category items
+    const orbitsLabel = document.createElement('label');
+    orbitsLabel.className = 'filter-orbits-toggle';
+    orbitsLabel.innerHTML = `<input type="checkbox" id="orbits-toggle" checked> Orbits`;
+    const celestialItems = celestialCategory.querySelector('.filter-category-items');
+    celestialItems.insertBefore(orbitsLabel, celestialItems.firstChild);
+
+    dropdown.appendChild(celestialCategory);
     dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
     dropdown.appendChild(createCategory('Placement', placementTypesList));
+
+    // Handle Orbits toggle
+    const orbitsToggle = document.getElementById('orbits-toggle');
+    if (orbitsToggle) {
+      orbitsToggle.addEventListener('change', (e) => {
+        this.viewBounds.setOrbitsVisible(e.target.checked);
+      });
+    }
 
     // Toggle dropdown
     filterBtn.addEventListener('click', (e) => {

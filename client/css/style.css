@@ -427,6 +427,16 @@ body {
   padding: 2px 0 !important;
 }
 
+.filter-orbits-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 !important;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-style: italic;
+}
+
 .filter-standalone {
   display: flex;
   align-items: center;
@@ -624,6 +634,49 @@ body {
   font-style: italic;
   padding: 2px 4px;
   margin-left: 16px;
+}
+
+.tree-context-menu {
+  position: fixed;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 4px 0;
+  z-index: 1000;
+  min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.tree-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-context-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tree-context-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.tree-context-menu-item:disabled:hover {
+  background: none;
+}
+
+.tree-context-menu-separator {
+  height: 1px;
+  background: var(--border-default);
+  margin: 4px 0;
 }
 
 /* Node type colors */
