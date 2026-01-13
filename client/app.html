@@ -28,9 +28,17 @@
 
   <!-- Main panels container -->
   <div id="main-container">
+    <!-- Restore buttons for minimized panels -->
+    <button id="restore-hierarchy" class="panel-restore hidden" title="Show Hierarchy">
+      <span class="panel-icon">╠</span>
+    </button>
+
     <!-- Hierarchy Panel -->
     <div id="hierarchy-panel" class="panel">
-      <div class="panel-header">Hierarchy</div>
+      <div class="panel-header">
+        <span class="panel-title"><span class="panel-icon">╠</span> Hierarchy</span>
+        <button class="panel-minimize" data-panel="hierarchy" title="Minimize">−</button>
+      </div>
       <div class="hierarchy-search-bar">
         <input type="text" id="hierarchy-search" class="search-input" placeholder="Search...">
       </div>
@@ -77,9 +85,17 @@
     <!-- Resize handle -->
     <div class="resize-handle" data-resize="inspector"></div>
 
+    <!-- Restore button for inspector -->
+    <button id="restore-inspector" class="panel-restore hidden" title="Show Inspector">
+      <span class="panel-icon">ℹ</span>
+    </button>
+
     <!-- Inspector Panel -->
     <div id="inspector-panel" class="panel">
-      <div class="panel-header">Inspector</div>
+      <div class="panel-header">
+        <span class="panel-title"><span class="panel-icon">ℹ</span> Inspector</span>
+        <button class="panel-minimize" data-panel="inspector" title="Minimize">−</button>
+      </div>
       <div class="panel-content">
         <div id="inspector-content">
           <div class="inspector-empty">Select an object to inspect</div>

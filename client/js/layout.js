@@ -24,6 +24,7 @@ export class LayoutManager {
     this.setupViewTabs();
     this.setupUrlHistory();
     this.setupKeyboardShortcuts();
+    this.setupPanelMinimize();
   }
 
   setupResizers() {
@@ -99,6 +100,61 @@ export class LayoutManager {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     this.resizing = null;
+  }
+
+  setupPanelMinimize() {
+    // Minimize buttons
+    document.querySelectorAll('.panel-minimize').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const panelName = btn.dataset.panel;
+        this.minimizePanel(panelName);
+      });
+    });
+
+    // Restore buttons
+    document.getElementById('restore-hierarchy')?.addEventListener('click', () => {
+      this.restorePanel('hierarchy');
+    });
+
+    document.getElementById('restore-inspector')?.addEventListener('click', () => {
+      this.restorePanel('inspector');
+    });
+  }
+
+  minimizePanel(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.add('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.remove('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.add('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  restorePanel(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.remove('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.add('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.remove('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
   }
 
   setupViewTabs() {

@@ -192,6 +192,30 @@ export class HierarchyPanel {
       this.showContextMenu(nodeKey, e.clientX, e.clientY);
     });
 
+    // Long-press for mobile context menu
+    let longPressTimer = null;
+    content.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      longPressTimer = setTimeout(() => {
+        e.preventDefault();
+        this.showContextMenu(nodeKey, touch.clientX, touch.clientY);
+      }, 500);
+    }, { passive: false });
+
+    content.addEventListener('touchend', () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    });
+
+    content.addEventListener('touchmove', () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    });
+
     const children = document.createElement('div');
     children.className = 'tree-children';
     children.style.display = 'none';
