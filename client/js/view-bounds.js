@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
+import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry } from './orbital-helpers.js';
 import {
   NODE_TYPES,
   CELESTIAL_NAMES,
@@ -44,6 +45,7 @@ export class ViewBounds {
     this.nodeData = new Map();
     this.nodeParents = new Map();  // Separate map for parent refs to avoid circular JSON
     this.nodeMeshes = new Map();
+    this.orbitPaths = new Map();   // Orbital ellipse line geometries
     this.expandedNodes = new Set();
     this.tree = null;
     this.selectedId = null;
@@ -63,6 +65,11 @@ export class ViewBounds {
 
     // Type filter - all types enabled by default
     this.typeFilter = new Set(NODE_TYPES.map(t => t.name));
+
+    // Animation state for orbital motion
+    this.simulationTime = 0;      // Accumulated time in seconds
+    this.timeScale = 86400;       // Default: 1 day per second (slider position 4)
+    this.lastFrameTime = null;
 
     this.init();
     this.animate();
@@ -222,6 +229,39 @@ export class ViewBounds {
     // ResizeObserver for container size changes
     this.resizeObserver = new ResizeObserver(() => this.onResize());
     this.resizeObserver.observe(this.container);
+
+    // Timescale slider for orbital animation
+    this.setupTimescaleSlider();
+  }
+
+  setupTimescaleSlider() {
+    const slider = document.getElementById('timescale-slider');
+    const label = document.getElementById('timescale-label');
+    if (!slider || !label) return;
+
+    const timeLabels = ['Paused', '1 sec/sec', '1 min/sec', '1 hr/sec', '1 day/sec', '1 wk/sec', '1 mo/sec', '1 yr/sec'];
+    const timeScales = [0, 1, 60, 3600, 86400, 604800, 2592000, 31536000];
+
+    const updateLabel = (value) => {
+      const idx = Math.round(value);
+      label.textContent = timeLabels[idx] || timeLabels[4];
+    };
+
+    const sliderToTimeScale = (value) => {
+      const idx = Math.round(value);
+      return timeScales[idx] || timeScales[4];
+    };
+
+    slider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      this.timeScale = sliderToTimeScale(value);
+      updateLabel(value);
+    });
+
+    // Initialize from slider's default value
+    const initialValue = parseFloat(slider.value);
+    this.timeScale = sliderToTimeScale(initialValue);
+    updateLabel(initialValue);
   }
 
   onResize() {
@@ -301,6 +341,15 @@ export class ViewBounds {
   animate() {
     requestAnimationFrame(() => this.animate());
     this.controls.update();
+
+    // Update orbital animation
+    const now = performance.now();
+    if (this.lastFrameTime !== null && this.timeScale > 0) {
+      const deltaMs = now - this.lastFrameTime;
+      this.simulationTime += (deltaMs / 1000) * this.timeScale;
+      this.updateOrbitalPositions();
+    }
+    this.lastFrameTime = now;
 
     // Hide labels when bounds overflow view, scale when close
     const fovRad = this.camera.fov * Math.PI / 180;
@@ -427,6 +476,249 @@ export class ViewBounds {
       if (label) this.scene.remove(label);
     });
     this.nodeMeshes.clear();
+
+    // Clear orbit paths
+    this.orbitPaths.forEach(orbitLine => {
+      this.scene.remove(orbitLine);
+    });
+    this.orbitPaths.clear();
+  }
+
+  createOrbitPath(node, parentNode) {
+    const orbitData = node._orbitData;
+    if (!orbitData || !parentNode) return null;
+
+    // Get parent's scaled position
+    let parentScaledPos;
+    if (this.focusNode && this.isCelestialNode(parentNode)) {
+      parentScaledPos = this.calculateLogarithmicPosition(parentNode, this.focusNode);
+    } else {
+      const SCALE = this.scale;
+      parentScaledPos = {
+        x: parentNode._worldPos.x * SCALE,
+        y: parentNode._worldPos.y * SCALE,
+        z: parentNode._worldPos.z * SCALE
+      };
+    }
+
+    // Scale orbit semi-axes using same logarithmic formula as positions
+    let scaledA, scaledB;
+    if (this.focusNode) {
+      const refUnit = this.getNodeBoundSize(this.focusNode);
+      const logA = Math.log10(1 + orbitData.semiMajorAxis / refUnit);
+      const logB = Math.log10(1 + orbitData.semiMinorAxis / refUnit);
+      scaledA = logA * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
+      scaledB = logB * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
+    } else {
+      scaledA = orbitData.semiMajorAxis * this.scale;
+      scaledB = orbitData.semiMinorAxis * this.scale;
+    }
+
+    // Create ellipse geometry
+    const geometry = createOrbitPathGeometry(scaledA, scaledB);
+
+    // Get color from node type
+    const typeName = node.nodeType || node.type;
+    const color = NODE_COLORS[typeName] || DEFAULT_COLOR;
+
+    const material = new THREE.LineBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false
+    });
+
+    const orbitLine = new THREE.Line(geometry, material);
+
+    // Apply node's rotation (orbital plane orientation)
+    const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
+    const nodeQuat = new THREE.Quaternion(localRot.x, localRot.y, localRot.z, localRot.w);
+    nodeQuat.normalize();
+
+    // If parent has rotation, compose it with node rotation
+    if (parentNode._worldRot) {
+      const parentQuat = new THREE.Quaternion(
+        parentNode._worldRot.x,
+        parentNode._worldRot.y,
+        parentNode._worldRot.z,
+        parentNode._worldRot.w
+      );
+      parentQuat.normalize();
+      orbitLine.quaternion.copy(parentQuat.multiply(nodeQuat));
+    } else {
+      orbitLine.quaternion.copy(nodeQuat);
+    }
+
+    // Position at parent (focus)
+    orbitLine.position.set(parentScaledPos.x, parentScaledPos.y, parentScaledPos.z);
+
+    this.scene.add(orbitLine);
+
+    console.log(`[createOrbitPath] ${node.name}: a=${orbitData.semiMajorAxis} => scaledA=${scaledA}, parentPos=`, parentScaledPos);
+
+    return orbitLine;
+  }
+
+  updateOrbitalPositions() {
+    // First pass: update positions of orbital bodies
+
+    this.nodeMeshes.forEach(({ mesh }, key) => {
+      const node = mesh.userData.nodeData;
+      if (!node || !node._orbitData) return;
+
+      const orbitData = node._orbitData;
+
+      // Find orbital parent using twParentIx (not tree parent)
+      const orbitalParentId = node.properties?.pObjectHead?.twParentIx;
+      let parentNode = null;
+
+      if (orbitalParentId) {
+        // Search for the orbital parent in nodeData
+        this.nodeData.forEach((n, k) => {
+          if (n.id === orbitalParentId && n.type === 'RMCObject') {
+            parentNode = n;
+          }
+        });
+      }
+
+      // Fallback to tree parent if orbital parent not found
+      if (!parentNode) {
+        parentNode = this.nodeParents.get(key);
+      }
+
+      if (!parentNode) return;
+
+      // Calculate new position at current simulation time
+      const orbitalOffset = calculateOrbitalPosition(orbitData, this.simulationTime);
+
+      // Apply node's rotation (orbital plane orientation)
+      const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
+      const rotatedOrbital = this.rotateByQuaternion(
+        orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
+        localRot.x, localRot.y, localRot.z, localRot.w
+      );
+
+      // Apply parent's world rotation
+      if (parentNode._worldRot) {
+        const worldOrbital = this.rotateByQuaternion(
+          rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
+          parentNode._worldRot.x, parentNode._worldRot.y, parentNode._worldRot.z, parentNode._worldRot.w
+        );
+        rotatedOrbital.x = worldOrbital.x;
+        rotatedOrbital.y = worldOrbital.y;
+        rotatedOrbital.z = worldOrbital.z;
+      }
+
+      // Get parent's current mesh position (may have been updated this frame)
+      const parentKey = this._getKey(parentNode.id, parentNode.type);
+      const parentMeshData = this.nodeMeshes.get(parentKey);
+      let parentScaledPos;
+
+      if (parentMeshData) {
+        parentScaledPos = {
+          x: parentMeshData.mesh.position.x,
+          y: parentMeshData.mesh.position.y,
+          z: parentMeshData.mesh.position.z
+        };
+      } else if (this.focusNode && this.isCelestialNode(parentNode)) {
+        parentScaledPos = this.calculateLogarithmicPosition(parentNode, this.focusNode);
+      } else {
+        const SCALE = this.scale;
+        parentScaledPos = {
+          x: parentNode._worldPos.x * SCALE,
+          y: parentNode._worldPos.y * SCALE,
+          z: parentNode._worldPos.z * SCALE
+        };
+      }
+
+      // Scale orbital offset using same logarithmic formula
+      let scaledOffset;
+      if (this.focusNode) {
+        const refUnit = this.getNodeBoundSize(this.focusNode);
+        const distance = Math.sqrt(
+          rotatedOrbital.x * rotatedOrbital.x +
+          rotatedOrbital.y * rotatedOrbital.y +
+          rotatedOrbital.z * rotatedOrbital.z
+        );
+        if (distance > 0.001) {
+          const logDistance = Math.log10(1 + distance / refUnit);
+          const scaledDistance = logDistance * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
+          const scale = scaledDistance / distance;
+          scaledOffset = {
+            x: rotatedOrbital.x * scale,
+            y: rotatedOrbital.y * scale,
+            z: rotatedOrbital.z * scale
+          };
+        } else {
+          scaledOffset = { x: 0, y: 0, z: 0 };
+        }
+      } else {
+        scaledOffset = {
+          x: rotatedOrbital.x * this.scale,
+          y: rotatedOrbital.y * this.scale,
+          z: rotatedOrbital.z * this.scale
+        };
+      }
+
+      // Update mesh position
+      mesh.position.set(
+        parentScaledPos.x + scaledOffset.x,
+        parentScaledPos.y + scaledOffset.y,
+        parentScaledPos.z + scaledOffset.z
+      );
+
+      // Update outline and label positions
+      const meshData = this.nodeMeshes.get(key);
+      if (meshData.outline) meshData.outline.position.copy(mesh.position);
+      if (meshData.label) meshData.label.position.copy(mesh.position);
+    });
+
+    // Second pass: update non-orbital children of moved parents
+    this.nodeMeshes.forEach(({ mesh, outline, label }, key) => {
+      const node = mesh.userData.nodeData;
+      if (!node || node._orbitData) return; // Skip if has orbital data (already updated)
+
+      const parentNode = this.nodeParents.get(key);
+      if (!parentNode) return;
+
+      const parentKey = this._getKey(parentNode.id, parentNode.type);
+      const parentMeshData = this.nodeMeshes.get(parentKey);
+      if (!parentMeshData) return;
+
+      // Check if any ancestor moved (has orbital data)
+      let ancestor = parentNode;
+      let hasMovingAncestor = false;
+      while (ancestor) {
+        if (ancestor._orbitData) {
+          hasMovingAncestor = true;
+          break;
+        }
+        const ancestorKey = this._getKey(ancestor.id, ancestor.type);
+        ancestor = this.nodeParents.get(ancestorKey);
+      }
+      if (!hasMovingAncestor) return;
+
+      // Position at parent's current position (non-orbital children are centered on parent)
+      mesh.position.copy(parentMeshData.mesh.position);
+      if (outline) outline.position.copy(mesh.position);
+      if (label) label.position.copy(mesh.position);
+    });
+
+    // Third pass: update orbit path positions (centered on parent)
+    this.orbitPaths.forEach((orbitLine, key) => {
+      const node = this.nodeData.get(key);
+      if (!node) return;
+
+      const parentNode = this.nodeParents.get(key);
+      if (!parentNode) return;
+
+      // Get parent's current mesh position
+      const parentKey = this._getKey(parentNode.id, parentNode.type);
+      const parentMeshData = this.nodeMeshes.get(parentKey);
+      if (parentMeshData) {
+        orbitLine.position.copy(parentMeshData.mesh.position);
+      }
+    });
   }
 
   // Apply quaternion rotation to a 3D point
@@ -457,19 +749,56 @@ export class ViewBounds {
     const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
     const bound = node.bound || { x: 0, y: 0, z: 0 };
 
+    // Check for orbital data
+    const orbitData = getOrbitData(node);
+
     let worldPos, worldRot;
 
     if (parentWorldPos && parentWorldRot) {
-      const rotatedPos = this.rotateByQuaternion(
-        localPos.x, localPos.y, localPos.z,
-        parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
-      );
-      worldPos = {
-        x: parentWorldPos.x + rotatedPos.x,
-        y: parentWorldPos.y + rotatedPos.y,
-        z: parentWorldPos.z + rotatedPos.z
-      };
+      // Calculate world rotation first (parent rotation * local rotation)
       worldRot = this.multiplyQuaternions(parentWorldRot, localRot);
+
+      if (orbitData) {
+        // Orbital positioning: calculate position on ellipse at t=0
+        const orbitalOffset = calculateOrbitalPosition(orbitData, 0);
+
+        // The node's rotation defines the orbital plane orientation
+        // Rotate the orbital position by the node's local rotation
+        const rotatedOrbital = this.rotateByQuaternion(
+          orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
+          localRot.x, localRot.y, localRot.z, localRot.w
+        );
+
+        // Then rotate by parent's world rotation to get into world space
+        const worldOrbital = this.rotateByQuaternion(
+          rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
+          parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
+        );
+
+        // Position is parent position + orbital offset (ignoring transform.position for orbital bodies)
+        worldPos = {
+          x: parentWorldPos.x + worldOrbital.x,
+          y: parentWorldPos.y + worldOrbital.y,
+          z: parentWorldPos.z + worldOrbital.z
+        };
+
+        console.log(`[buildNodeData] ${node.name} ORBITAL:`,
+          `orbit a=${orbitData.semiMajorAxis} b=${orbitData.semiMinorAxis}`,
+          `offset=${JSON.stringify(orbitalOffset)}`,
+          `=> worldPos=${JSON.stringify(worldPos)}`
+        );
+      } else {
+        // Standard transform-based positioning
+        const rotatedPos = this.rotateByQuaternion(
+          localPos.x, localPos.y, localPos.z,
+          parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
+        );
+        worldPos = {
+          x: parentWorldPos.x + rotatedPos.x,
+          y: parentWorldPos.y + rotatedPos.y,
+          z: parentWorldPos.z + rotatedPos.z
+        };
+      }
     } else {
       worldPos = { x: localPos.x, y: localPos.y, z: localPos.z };
       worldRot = { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
@@ -481,13 +810,15 @@ export class ViewBounds {
     node._worldPos = worldPos;
     node._worldRot = worldRot;
     node._bound = bound;
+    node._orbitData = orbitData;
 
     // Verify transform accumulation
     console.log(`[buildNodeData] ${node.name}:`,
       `localPos=${JSON.stringify(localPos)}`,
       `parentWorldPos=${parentWorldPos ? JSON.stringify(parentWorldPos) : 'null'}`,
       `=> worldPos=${JSON.stringify(worldPos)}`,
-      `bound=${JSON.stringify(bound)}`
+      `bound=${JSON.stringify(bound)}`,
+      `hasOrbit=${!!orbitData}`
     );
 
     // Store parent ref in separate map to avoid circular JSON
@@ -647,6 +978,17 @@ export class ViewBounds {
     const meshData = this.createBoundingPolygon(node, worldPos, worldRot, bound, isSelected, hasChildren, isExpanded, scaledData);
     if (meshData) {
       this.nodeMeshes.set(key, meshData);
+
+      // Create orbit path if node has orbital data
+      if (node._orbitData) {
+        const parentNode = this.nodeParents.get(key);
+        if (parentNode) {
+          const orbitPath = this.createOrbitPath(node, parentNode);
+          if (orbitPath) {
+            this.orbitPaths.set(key, orbitPath);
+          }
+        }
+      }
     }
   }
 

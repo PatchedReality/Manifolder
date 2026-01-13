@@ -55,6 +55,10 @@
         <div id="viewport-graph" class="viewport"></div>
         <div id="viewport-bounds" class="viewport">
           <div class="bounds-toolbar">
+            <div class="timescale-control">
+              <label>Time: <span id="timescale-label">1 day/sec</span></label>
+              <input type="range" id="timescale-slider" min="0" max="7" value="4" step="1">
+            </div>
             <div class="type-filter">
               <button id="type-filter-btn" class="filter-btn">Filter Types ▼</button>
               <div id="type-filter-dropdown" class="filter-dropdown hidden"></div>

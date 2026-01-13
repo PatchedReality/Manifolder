@@ -231,6 +231,7 @@ export class RP1Proxy {
       id: data.twRMCObjectIx,
       transform: this.parseTransformFromData(data),
       bound: this.parseBoundFromData(data),
+      orbit: this.parseOrbitFromData(data),
       properties: this.extractProperties(data),
       children: [],
       hasChildren: data.nChildren > 0
@@ -304,6 +305,24 @@ export class RP1Proxy {
     };
   }
 
+  parseOrbitFromData(data) {
+    const pOrbit = data.pOrbit_Spin;
+    if (!pOrbit) return null;
+
+    // Skip if no semi-major axis (no orbital data)
+    if (!pOrbit.dA || pOrbit.dA === 0) return null;
+
+    // Time values are in 1/64 second units, convert to seconds
+    const TIME_UNIT_TO_SECONDS = 1 / 64;
+
+    return {
+      period: (pOrbit.tmPeriod || 0) * TIME_UNIT_TO_SECONDS,
+      phaseOffset: (pOrbit.tmOrigin ?? pOrbit.tmStart ?? 0) * TIME_UNIT_TO_SECONDS,
+      semiMajorAxis: pOrbit.dA,
+      semiMinorAxis: pOrbit.dB || pOrbit.dA
+    };
+  }
+
   buildContainerNode(data, id) {
     // Handle :update response format with Parent and aChild
     const parent = data.Parent || data;
@@ -319,6 +338,7 @@ export class RP1Proxy {
       id: parent.twRMCObjectIx || id,
       transform: this.parseTransformFromData(parent),
       bound: this.parseBoundFromData(parent),
+      orbit: this.parseOrbitFromData(parent),
       properties: this.extractProperties(parent),
       children: [],
       hasChildren: false
