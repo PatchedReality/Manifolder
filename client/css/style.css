@@ -94,13 +94,18 @@
 }
 
 /* Base body */
+html, body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 body {
   font-family: var(--font-ui);
   font-size: var(--font-size-base);
   color: var(--text-primary);
   background: var(--bg-base);
   height: 100vh;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   -webkit-font-smoothing: antialiased;
@@ -173,7 +178,8 @@ body {
 #main-container {
   flex: 1;
   display: flex;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* ============================================
@@ -295,11 +301,12 @@ body {
 
 /* Resize handles */
 .resize-handle {
-  width: 4px;
+  width: 8px;
   background: transparent;
   cursor: col-resize;
   flex-shrink: 0;
   transition: background var(--transition-fast);
+  touch-action: none;
 }
 
 .resize-handle:hover,

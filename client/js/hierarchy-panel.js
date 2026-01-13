@@ -803,6 +803,7 @@ export class HierarchyPanel {
     setTimeout(() => {
       document.addEventListener('click', this._contextMenuCloseHandler);
       document.addEventListener('contextmenu', this._contextMenuCloseHandler);
+      document.addEventListener('touchstart', this._contextMenuCloseHandler);
     }, 0);
   }
 
@@ -814,6 +815,7 @@ export class HierarchyPanel {
     if (this._contextMenuCloseHandler) {
       document.removeEventListener('click', this._contextMenuCloseHandler);
       document.removeEventListener('contextmenu', this._contextMenuCloseHandler);
+      document.removeEventListener('touchstart', this._contextMenuCloseHandler);
       this._contextMenuCloseHandler = null;
     }
   }

@@ -32,10 +32,14 @@ export class LayoutManager {
 
     handles.forEach(handle => {
       handle.addEventListener('mousedown', (e) => this.startResize(e, handle));
+      handle.addEventListener('touchstart', (e) => this.startResize(e, handle), { passive: false });
     });
 
     document.addEventListener('mousemove', (e) => this.doResize(e));
     document.addEventListener('mouseup', () => this.stopResize());
+    document.addEventListener('touchmove', (e) => this.doResize(e), { passive: false });
+    document.addEventListener('touchend', () => this.stopResize());
+    document.addEventListener('touchcancel', () => this.stopResize());
   }
 
   startResize(e, handle) {
@@ -54,10 +58,11 @@ export class LayoutManager {
     }
 
     if (panel) {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       this.resizing = {
         panel,
         direction,
-        startX: e.clientX,
+        startX: clientX,
         startWidth: panel.offsetWidth
       };
 
@@ -73,7 +78,8 @@ export class LayoutManager {
     }
 
     const { panel, direction, startX, startWidth } = this.resizing;
-    const deltaX = e.clientX - startX;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const deltaX = clientX - startX;
 
     let newWidth;
     if (direction === 'right') {
