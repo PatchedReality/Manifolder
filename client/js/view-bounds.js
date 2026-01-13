@@ -310,8 +310,20 @@ export class ViewBounds {
     this.nodeMeshes.forEach(({ mesh, label }) => {
       if (label && label.userData.baseScale) {
         const params = mesh.geometry.parameters;
-        const distForHeight = params.height / (2 * tanHalfFov);
-        const distForWidth = params.width / (2 * tanHalfFov * aspect);
+        let visualHeight, visualWidth;
+
+        if (mesh.geometry.type === 'SphereGeometry') {
+          // Sphere uses unit radius scaled by mesh.scale
+          visualHeight = params.radius * 2 * mesh.scale.y;
+          visualWidth = params.radius * 2 * mesh.scale.x;
+        } else {
+          // Box geometry has direct width/height
+          visualHeight = params.height;
+          visualWidth = params.width;
+        }
+
+        const distForHeight = visualHeight / (2 * tanHalfFov);
+        const distForWidth = visualWidth / (2 * tanHalfFov * aspect);
         const minDist = Math.max(distForHeight, distForWidth);
 
         const actualDist = this.camera.position.distanceTo(mesh.position);
@@ -564,7 +576,7 @@ export class ViewBounds {
         const childScaledSize = this.calculateLogarithmicSize(child, focusNode);
         const scale = childOriginalSize > 0.001 ? childScaledSize / childOriginalSize : 1;
         return { pos: childScaledPos, scale };
-      }) : null;
+      }, true) : null;
 
       if (scaledChildBounds) {
         // Use bounds calculated from children's scaled positions
@@ -671,43 +683,83 @@ export class ViewBounds {
     const typeName = this.getDisplayType(node);
     const color = NODE_COLORS[typeName] || DEFAULT_COLOR;
 
-    // Create a 3D box
-    const boxGeometry = new THREE.BoxGeometry(halfX * 2, halfY * 2, halfZ * 2);
-    const boxMaterial = new THREE.MeshBasicMaterial({
-      color: color,
-      transparent: true,
-      opacity: isSelected ? 0.35 : 0.15,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
-
-    const mesh = new THREE.Mesh(boxGeometry, boxMaterial);
+    const isCelestial = this.isCelestialNode(node);
+    let geometry, mesh, outline;
 
     // Apply rotation and position (normalize quaternion to prevent shearing)
     const rotQuat = new THREE.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
     rotQuat.normalize();
-    mesh.quaternion.copy(rotQuat);
-    mesh.position.copy(center);
-    mesh.userData.nodeData = node;
-    this.scene.add(mesh);
 
-    // Create wireframe edges - white when selected, otherwise node color
-    const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
-    const edgeColor = isSelected ? SELECTION_COLOR : color;
-    const edgesMaterial = new THREE.LineBasicMaterial({
-      color: edgeColor,
-      transparent: true,
-      opacity: isSelected ? 1.0 : 0.6
-    });
+    if (isCelestial) {
+      // Create a spheroid (ellipsoid) that fits inside the bounding box
+      // SphereGeometry(1) has radius=1, diameter=2, so scale by half-extents to get correct size
+      geometry = new THREE.SphereGeometry(1, 32, 24);
+      const material = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: isSelected ? 0.35 : 0.15,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
 
-    if (hasChildren && !isExpanded) {
-      edgesMaterial.opacity = 0.4;
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.scale.set(halfX, halfY, halfZ);
+      mesh.quaternion.copy(rotQuat);
+      mesh.position.copy(center);
+      mesh.userData.nodeData = node;
+      this.scene.add(mesh);
+
+      // Create a single ring around the equator
+      const edgeColor = isSelected ? SELECTION_COLOR : color;
+      const ringPoints = [];
+      const ringSegments = 48;
+      for (let i = 0; i <= ringSegments; i++) {
+        const theta = (i / ringSegments) * Math.PI * 2;
+        ringPoints.push(new THREE.Vector3(Math.cos(theta), 0, Math.sin(theta)));
+      }
+      const ringGeometry = new THREE.BufferGeometry().setFromPoints(ringPoints);
+      const ringMaterial = new THREE.LineBasicMaterial({
+        color: edgeColor,
+        transparent: true,
+        opacity: isSelected ? 1.0 : (hasChildren && !isExpanded ? 0.4 : 0.6)
+      });
+
+      outline = new THREE.Line(ringGeometry, ringMaterial);
+      outline.scale.set(halfX, halfY, halfZ);
+      outline.quaternion.copy(rotQuat);
+      outline.position.copy(center);
+      this.scene.add(outline);
+    } else {
+      // Create a 3D box for non-celestial nodes
+      geometry = new THREE.BoxGeometry(halfX * 2, halfY * 2, halfZ * 2);
+      const material = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: isSelected ? 0.35 : 0.15,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.quaternion.copy(rotQuat);
+      mesh.position.copy(center);
+      mesh.userData.nodeData = node;
+      this.scene.add(mesh);
+
+      // Create wireframe edges - white when selected, otherwise node color
+      const edgesGeometry = new THREE.EdgesGeometry(geometry);
+      const edgeColor = isSelected ? SELECTION_COLOR : color;
+      const edgesMaterial = new THREE.LineBasicMaterial({
+        color: edgeColor,
+        transparent: true,
+        opacity: isSelected ? 1.0 : (hasChildren && !isExpanded ? 0.4 : 0.6)
+      });
+
+      outline = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+      outline.quaternion.copy(rotQuat);
+      outline.position.copy(center);
+      this.scene.add(outline);
     }
-
-    const outline = new THREE.LineSegments(edgesGeometry, edgesMaterial);
-    outline.quaternion.copy(rotQuat);
-    outline.position.copy(center);
-    this.scene.add(outline);
 
     // Create text label sprite at center of bounding box
     // Use the two largest dimensions to ensure label is visible regardless of rotation
@@ -913,18 +965,44 @@ export class ViewBounds {
     let targetPos, boxWidth, boxHeight, boxDepth;
     const isCelestial = this.isCelestialNode(targetNode);
 
-    if (isCelestial && this.focusNode) {
-      // Use logarithmic scaling for celestial nodes
-      const scaledPos = this.calculateLogarithmicPosition(targetNode, this.focusNode);
-      const scaledSize = this.calculateLogarithmicSize(targetNode, this.focusNode);
-      const originalSize = this.getNodeBoundSize(targetNode);
-      const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
+    if (isCelestial) {
+      // Get actual rendered mesh dimensions from scene
+      const key = this._getKey(targetNode.id, targetNode.type);
+      const meshData = this.nodeMeshes.get(key);
 
-      targetPos = new THREE.Vector3(scaledPos.x, scaledPos.y, scaledPos.z);
-      boxWidth = (bound.x || 1) * sizeRatio;
-      boxHeight = (bound.y || bound.x || 1) * sizeRatio;
-      boxDepth = (bound.z || bound.x || 1) * sizeRatio;
-      console.log(`[zoomToNode] ${targetNode.name} celestial: scaledPos=`, scaledPos, `scaledSize=${scaledSize} originalSize=${originalSize} sizeRatio=${sizeRatio} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
+      if (meshData && meshData.mesh) {
+        // Use actual mesh scale for accurate zoom
+        // Sphere mesh.scale = half-extents, visual diameter = 2 * scale
+        const mesh = meshData.mesh;
+        targetPos = mesh.position.clone();
+        boxWidth = mesh.scale.x * 2;
+        boxHeight = mesh.scale.y * 2;
+        boxDepth = mesh.scale.z * 2;
+        console.log(`[zoomToNode] ${targetNode.name} celestial from mesh: boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
+      } else if (this.focusNode) {
+        // Fallback to calculated values
+        const scaledPos = this.calculateLogarithmicPosition(targetNode, this.focusNode);
+        const scaledSize = this.calculateLogarithmicSize(targetNode, this.focusNode);
+
+        targetPos = new THREE.Vector3(scaledPos.x, scaledPos.y, scaledPos.z);
+
+        const boundMax = Math.max(bound.x || 1, bound.y || bound.x || 1, bound.z || bound.x || 1);
+        boxWidth = scaledSize * (bound.x || 1) / boundMax;
+        boxHeight = scaledSize * (bound.y || bound.x || 1) / boundMax;
+        boxDepth = scaledSize * (bound.z || bound.x || 1) / boundMax;
+        console.log(`[zoomToNode] ${targetNode.name} celestial fallback: scaledSize=${scaledSize} boxW/H/D=${boxWidth}/${boxHeight}/${boxDepth}`);
+      } else {
+        // No focus, use linear scaling
+        const SCALE = this.scale;
+        targetPos = new THREE.Vector3(
+          worldPos.x * SCALE,
+          worldPos.y * SCALE,
+          worldPos.z * SCALE
+        );
+        boxWidth = (bound.x || 1) * SCALE;
+        boxHeight = (bound.y || bound.x || 1) * SCALE;
+        boxDepth = (bound.z || bound.x || 1) * SCALE;
+      }
     } else {
       // Fall back to linear scaling
       const SCALE = this.scale;
@@ -1135,8 +1213,8 @@ export class ViewBounds {
       return bound;
     }
 
-    // Calculate bounds from visible children in world space
-    const result = this.calculateBoundsFromChildren(node, node._worldPos, null);
+    // Calculate bounds from children in world space (recursive to traverse unexpanded children)
+    const result = this.calculateBoundsFromChildren(node, node._worldPos, null, true);
     if (!result) {
       return { x: 1, y: 1, z: 1 };
     }
@@ -1150,11 +1228,18 @@ export class ViewBounds {
 
   // Calculate bounds from children with optional coordinate transform
   // If getChildPosAndScale is provided, uses scaled space; otherwise uses world space
-  calculateBoundsFromChildren(node, parentPos, getChildPosAndScale = null) {
+  // If recursive is true, traverse children regardless of expansion state (for ancestor bounds)
+  calculateBoundsFromChildren(node, parentPos, getChildPosAndScale = null, recursive = false) {
     const key = this._getKey(node.id, node.type);
     const isExpanded = this.expandedNodes.has(key);
 
-    if (!isExpanded || !node.children || node.children.length === 0) {
+    // For non-recursive calls, require node to be expanded
+    // For recursive calls (ancestor bounds), traverse children regardless
+    if (!recursive && !isExpanded) {
+      return null;
+    }
+
+    if (!node.children || node.children.length === 0) {
       return null;
     }
 

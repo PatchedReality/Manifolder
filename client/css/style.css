@@ -427,6 +427,16 @@ body {
   padding: 2px 0 !important;
 }
 
+.filter-standalone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-weight: 500;
+}
+
 /* Bounds view toolbar */
 .bounds-toolbar {
   position: absolute;

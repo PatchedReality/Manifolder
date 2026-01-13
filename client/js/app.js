@@ -41,8 +41,10 @@ class App {
     if (!filterBtn || !dropdown) return;
 
     // Split types into categories using shared type definitions
+    // Root is standalone at top, not in any category
+    const rootType = NODE_TYPES.find(t => t.name === 'Root');
     const celestialTypesList = NODE_TYPES.filter(t => CELESTIAL_NAMES.has(t.name));
-    const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name));
+    const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name) && t.name !== 'Root');
     const placementTypesList = NODE_TYPES.filter(t => PLACEMENT_NAMES.has(t.name));
 
     // Helper to create a category
@@ -81,6 +83,14 @@ class App {
       return category;
     };
 
+    // Add Root as standalone at top
+    if (rootType) {
+      const rootLabel = document.createElement('label');
+      rootLabel.className = 'filter-standalone';
+      rootLabel.innerHTML = `<input type="checkbox" value="Root" checked><span class="type-dot" style="background: var(${rootType.cssVar})"></span> Root`;
+      dropdown.appendChild(rootLabel);
+    }
+
     dropdown.appendChild(createCategory('Celestial', celestialTypesList));
     dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
     dropdown.appendChild(createCategory('Placement', placementTypesList));
@@ -113,7 +123,7 @@ class App {
       });
     });
 
-    // Handle individual checkbox changes
+    // Handle individual checkbox changes in categories
     dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]').forEach(checkbox => {
       checkbox.addEventListener('change', () => {
         // Update category checkbox state
@@ -127,12 +137,24 @@ class App {
         this.updateTypeFilter(dropdown);
       });
     });
+
+    // Handle standalone checkbox changes (Root)
+    dropdown.querySelectorAll('.filter-standalone input[type="checkbox"]').forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        this.updateTypeFilter(dropdown);
+      });
+    });
   }
 
   updateTypeFilter(dropdown) {
-    const enabledTypes = Array.from(dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]'))
+    // Collect from both category items and standalone checkboxes
+    const categoryTypes = Array.from(dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]'))
       .filter(cb => cb.checked)
       .map(cb => cb.value);
+    const standaloneTypes = Array.from(dropdown.querySelectorAll('.filter-standalone input[type="checkbox"]'))
+      .filter(cb => cb.checked)
+      .map(cb => cb.value);
+    const enabledTypes = [...standaloneTypes, ...categoryTypes];
     this.viewBounds.setTypeFilter(enabledTypes);
   }
 
