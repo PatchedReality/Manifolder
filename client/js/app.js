@@ -5,7 +5,7 @@ import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { RP1Client } from './rp1-client.js';
-import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '/shared/node-types.js';
+import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
 
 class App {
@@ -300,12 +300,6 @@ class App {
 
   async handleLoadMap(url) {
     try {
-      // Auto-connect if not connected
-      if (!this.client.connected) {
-        this.layout.setStatus('Connecting...', 'loading');
-        await this.client.connect();
-      }
-
       this.layout.setStatus('Loading map...', 'loading');
 
       const tree = await this.client.loadMap(url);

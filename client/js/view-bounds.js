@@ -7,7 +7,7 @@ import {
   CELESTIAL_NAMES,
   TERRESTRIAL_NAMES,
   PLACEMENT_NAMES
-} from '/shared/node-types.js';
+} from '../shared/node-types.js';
 
 // Re-export NODE_TYPES for consumers
 export { NODE_TYPES };

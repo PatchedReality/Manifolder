@@ -3,7 +3,7 @@
  * Supports lazy-loading, search filtering, and node selection
  */
 
-import { CELESTIAL_NAMES } from '/shared/node-types.js';
+import { CELESTIAL_NAMES } from '../shared/node-types.js';
 
 export class HierarchyPanel {
   constructor(containerSelector) {

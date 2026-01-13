@@ -278,10 +278,15 @@ export class LayoutManager {
   }
 
   getUrlHistory() {
+    const defaultUrls = [
+      'https://cdn2.rp1.com/config/enter.msf',
+      'https://cdn2.rp1.com/config/earth.msf'
+    ];
     try {
-      return JSON.parse(localStorage.getItem(URL_HISTORY_KEY)) || [];
+      const stored = JSON.parse(localStorage.getItem(URL_HISTORY_KEY));
+      return stored && stored.length > 0 ? stored : defaultUrls;
     } catch {
-      return [];
+      return defaultUrls;
     }
   }
 
