@@ -126,8 +126,14 @@ export class ViewBounds {
     this.timeScale = 86400;       // Default: 1 day per second (slider position 4)
     this.lastFrameTime = null;
 
+    this.animationFrameId = null;
+    this.disposed = false;
+    this.initialized = false;
+
     this.init();
-    this.animate();
+    if (this.initialized) {
+      this.animate();
+    }
   }
 
   init() {
@@ -162,18 +168,18 @@ export class ViewBounds {
     this.controls.minDistance = 0.1;
     this.controls.maxDistance = 500000;
 
-    // Lights
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
-    hemiLight.position.set(0, 200, 0);
-    this.scene.add(hemiLight);
+    // Lights (store for disposal)
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    this.hemiLight.position.set(0, 200, 0);
+    this.scene.add(this.hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(100, 200, 100);
-    this.scene.add(dirLight);
+    this.dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    this.dirLight.position.set(100, 200, 100);
+    this.scene.add(this.dirLight);
 
     // Camera-attached fill light
-    const cameraLight = new THREE.PointLight(0xffffff, 0.5);
-    this.camera.add(cameraLight);
+    this.cameraLight = new THREE.PointLight(0xffffff, 0.5);
+    this.camera.add(this.cameraLight);
     this.scene.add(this.camera);
 
     // Infinite Grid and Starfield
@@ -181,6 +187,7 @@ export class ViewBounds {
     this.starfield = createStarfield(this.scene);
 
     this.setupEventListeners();
+    this.initialized = true;
   }
 
   createGlobe() {
@@ -264,11 +271,9 @@ export class ViewBounds {
   }
 
   setupEventListeners() {
-    window.addEventListener('resize', () => this.onResize());
-
-    // Use click delay to distinguish single vs double click
-    this.clickTimeout = null;
-    this.renderer.domElement.addEventListener('click', (e) => {
+    // Store bound handlers for cleanup
+    this.boundResizeHandler = () => this.onResize();
+    this.boundClickHandler = (e) => {
       if (this.clickTimeout) {
         clearTimeout(this.clickTimeout);
         this.clickTimeout = null;
@@ -279,7 +284,11 @@ export class ViewBounds {
           this.onClick(e);
         }, 250);
       }
-    });
+    };
+
+    window.addEventListener('resize', this.boundResizeHandler);
+    this.clickTimeout = null;
+    this.renderer.domElement.addEventListener('click', this.boundClickHandler);
 
     // ResizeObserver for container size changes
     this.resizeObserver = new ResizeObserver(() => this.onResize());
@@ -429,7 +438,9 @@ export class ViewBounds {
   }
 
   animate() {
-    requestAnimationFrame(() => this.animate());
+    if (this.disposed) return;
+
+    this.animationFrameId = requestAnimationFrame(() => this.animate());
     this.controls.update();
 
     // Update orbital animation
@@ -1888,5 +1899,88 @@ export class ViewBounds {
     const focusSize = this.getNodeBoundSize(focusNode);
     const nodeSize = this.getNodeBoundSize(node);
     return nodeSize > focusSize * 10;
+  }
+
+  dispose() {
+    this.disposed = true;
+
+    // Stop animation loop
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Clear any pending click timeout
+    if (this.clickTimeout) {
+      clearTimeout(this.clickTimeout);
+      this.clickTimeout = null;
+    }
+
+    // Remove event listeners
+    window.removeEventListener('resize', this.boundResizeHandler);
+    if (this.renderer?.domElement) {
+      this.renderer.domElement.removeEventListener('click', this.boundClickHandler);
+    }
+
+    // Disconnect ResizeObserver
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
+
+    // Clear scene content (dispose geometry/materials)
+    this.nodeMeshes.forEach(({ mesh, outline, label }) => {
+      this.scene.remove(mesh);
+      mesh.geometry?.dispose();
+      if (mesh.material) {
+        if (mesh.material.map) mesh.material.map.dispose();
+        mesh.material.dispose();
+      }
+      if (outline) {
+        this.scene.remove(outline);
+        outline.geometry?.dispose();
+        outline.material?.dispose();
+      }
+      if (label) {
+        this.scene.remove(label);
+        if (label.material?.map) label.material.map.dispose();
+        label.material?.dispose();
+      }
+    });
+    this.nodeMeshes.clear();
+
+    // Clear orbit paths
+    this.orbitPaths.forEach(orbitLine => {
+      this.scene.remove(orbitLine);
+      orbitLine.geometry?.dispose();
+      orbitLine.material?.dispose();
+    });
+    this.orbitPaths.clear();
+
+    // Dispose globe if exists
+    if (this.globe) {
+      this.scene.remove(this.globe);
+      this.globe.geometry?.dispose();
+      this.globe.material?.dispose();
+    }
+
+    // Dispose scene helpers
+    if (this.starfield) {
+      this.starfield.geometry?.dispose();
+      this.starfield.material?.dispose();
+    }
+    if (this.gridHelper) {
+      this.gridHelper.geometry?.dispose();
+      this.gridHelper.material?.dispose();
+    }
+
+    // Dispose lights
+    if (this.hemiLight) this.hemiLight.dispose();
+    if (this.dirLight) this.dirLight.dispose();
+    if (this.cameraLight) this.cameraLight.dispose();
+
+    // Dispose controls and renderer
+    if (this.controls) this.controls.dispose();
+    if (this.renderer) this.renderer.dispose();
   }
 }

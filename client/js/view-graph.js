@@ -84,8 +84,15 @@ export class ViewGraph {
     this.selectedId = null;
     this.highlightMesh = null;
 
+    this.animationFrameId = null;
+    this.cameraAnimationId = null;
+    this.disposed = false;
+    this.initialized = false;
+
     this.init();
-    this.animate();
+    if (this.initialized) {
+      this.animate();
+    }
   }
 
   _getKey(id, type) {
@@ -151,7 +158,7 @@ export class ViewGraph {
 
   init() {
     if (!this.container) {
-      console.error('View3D: Container not found');
+      console.error('ViewGraph: Container not found');
       return;
     }
 
@@ -181,49 +188,52 @@ export class ViewGraph {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
 
-    // Lights
-    // Hemisphere light for nice gradient ambient
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
-    hemiLight.position.set(0, 200, 0);
-    this.scene.add(hemiLight);
+    // Lights (store for disposal)
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    this.hemiLight.position.set(0, 200, 0);
+    this.scene.add(this.hemiLight);
 
-    // Main directional light (sun-like)
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(100, 200, 100);
-    this.scene.add(dirLight);
+    this.dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    this.dirLight.position.set(100, 200, 100);
+    this.scene.add(this.dirLight);
 
-    // Fill light attached to camera
-    const pointLight = new THREE.PointLight(0xffffff, 0.5);
-    this.camera.add(pointLight); 
+    this.cameraLight = new THREE.PointLight(0xffffff, 0.5);
+    this.camera.add(this.cameraLight);
     this.scene.add(this.camera);
+
+    // Shared geometry for nodes (disposed once in dispose())
+    this.nodeGeometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
 
     // Infinite Grid and Starfield
     this.gridHelper = createInfiniteGrid(this.scene);
     this.starfield = createStarfield(this.scene);
 
     this.setupEventListeners();
+    this.initialized = true;
   }
 
   setupEventListeners() {
-    window.addEventListener('resize', () => this.onWindowResize());
-    
-    // Use pointerdown/up to distinguish clicks from drags
+    // Store bound handlers for cleanup
+    this.boundResizeHandler = () => this.onWindowResize();
+    this.boundDblClickHandler = (e) => this.onDoubleClick(e);
+
+    // Track pointer position for click vs drag detection
     let downX, downY;
-    this.renderer.domElement.addEventListener('pointerdown', (e) => {
+    this.boundPointerDownHandler = (e) => {
       downX = e.clientX;
       downY = e.clientY;
-    });
-    
-    this.renderer.domElement.addEventListener('pointerup', (e) => {
+    };
+    this.boundPointerUpHandler = (e) => {
       const dist = Math.sqrt(Math.pow(e.clientX - downX, 2) + Math.pow(e.clientY - downY, 2));
-      if (dist < 5) { // Threshold for click vs drag
+      if (dist < 5) {
         this.onClick(e);
       }
-    });
+    };
 
-    this.renderer.domElement.addEventListener('dblclick', (e) => {
-      this.onDoubleClick(e);
-    });
+    window.addEventListener('resize', this.boundResizeHandler);
+    this.renderer.domElement.addEventListener('pointerdown', this.boundPointerDownHandler);
+    this.renderer.domElement.addEventListener('pointerup', this.boundPointerUpHandler);
+    this.renderer.domElement.addEventListener('dblclick', this.boundDblClickHandler);
   }
 
   onDoubleClick(event) {
@@ -265,12 +275,20 @@ export class ViewGraph {
   }
 
   animateCamera(targetMesh, direction, distance) {
+    // Cancel any existing camera animation
+    if (this.cameraAnimationId) {
+      cancelAnimationFrame(this.cameraAnimationId);
+      this.cameraAnimationId = null;
+    }
+
     const startPos = this.camera.position.clone();
     const startLookAt = this.controls.target.clone();
     const duration = 1500;
     const startTime = performance.now();
 
     const animate = (currentTime) => {
+      if (this.disposed) return;
+
       const elapsed = currentTime - startTime;
       const progress = Math.min(elapsed / duration, 1);
       const eased = this.easeInOutQuart(progress);
@@ -284,11 +302,13 @@ export class ViewGraph {
       this.controls.update();
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        this.cameraAnimationId = requestAnimationFrame(animate);
+      } else {
+        this.cameraAnimationId = null;
       }
     };
 
-    requestAnimationFrame(animate);
+    this.cameraAnimationId = requestAnimationFrame(animate);
   }
 
   easeInOutQuart(t) {
@@ -353,12 +373,10 @@ export class ViewGraph {
   }
 
   createVisuals() {
-    const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
-
     this.graphNodes.forEach((node, index) => {
       const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
       const material = this._createNodeMaterial(node.data, color);
-      const mesh = new THREE.Mesh(geometry, material);
+      const mesh = new THREE.Mesh(this.nodeGeometry, material);
       
       mesh.userData = { 
         id: node.id,
@@ -427,11 +445,10 @@ export class ViewGraph {
         target: nodeIndex
       });
 
-      // Create mesh
-      const geometry = new THREE.SphereGeometry(DEFAULT_NODE_RADIUS, 16, 12);
+      // Create mesh (use shared geometry)
       const color = NODE_COLORS[child.nodeType] || NODE_COLORS[child.type] || 0x888888;
       const material = this._createNodeMaterial(child, color);
-      const mesh = new THREE.Mesh(geometry, material);
+      const mesh = new THREE.Mesh(this.nodeGeometry, material);
       
       mesh.userData = { 
         id: child.id,
@@ -556,6 +573,8 @@ export class ViewGraph {
   }
 
   clearScene() {
+    if (!this.initialized) return;
+
     if (this.highlightMesh) {
       if (this.highlightMesh.parent) {
         this.highlightMesh.parent.remove(this.highlightMesh);
@@ -567,8 +586,13 @@ export class ViewGraph {
 
     this.nodeMeshes.forEach(mesh => {
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
+      // Don't dispose geometry - it's shared (this.nodeGeometry)
+      // Dispose material and any label sprites
       mesh.material.dispose();
+      mesh.children.forEach(child => {
+        if (child.material?.map) child.material.map.dispose();
+        if (child.material) child.material.dispose();
+      });
     });
     this.nodeMeshes.clear();
 
@@ -578,8 +602,10 @@ export class ViewGraph {
       this.linkLines.material.dispose();
       this.linkLines = null;
     }
-    
+
     this.selectedId = null;
+    this.graphNodes = [];
+    this.graphLinks = [];
   }
 
   updatePhysics() {
@@ -713,7 +739,9 @@ export class ViewGraph {
   }
 
   animate() {
-    requestAnimationFrame(() => this.animate());
+    if (this.disposed) return;
+
+    this.animationFrameId = requestAnimationFrame(() => this.animate());
 
     this.updatePhysics();
     this.updateVisuals();
@@ -851,7 +879,56 @@ export class ViewGraph {
     sprite.center.set(0.5, 0); 
     sprite.position.y = DEFAULT_NODE_RADIUS + 0.5;
     sprite.renderOrder = 1;
-    
+
     return sprite;
+  }
+
+  dispose() {
+    this.disposed = true;
+
+    // Stop animation loops
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    if (this.cameraAnimationId) {
+      cancelAnimationFrame(this.cameraAnimationId);
+      this.cameraAnimationId = null;
+    }
+
+    // Remove event listeners
+    window.removeEventListener('resize', this.boundResizeHandler);
+    if (this.renderer?.domElement) {
+      this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDownHandler);
+      this.renderer.domElement.removeEventListener('pointerup', this.boundPointerUpHandler);
+      this.renderer.domElement.removeEventListener('dblclick', this.boundDblClickHandler);
+    }
+
+    // Clear scene content
+    this.clearScene();
+
+    // Dispose shared geometry
+    if (this.nodeGeometry) {
+      this.nodeGeometry.dispose();
+    }
+
+    // Dispose scene helpers
+    if (this.starfield) {
+      this.starfield.geometry?.dispose();
+      this.starfield.material?.dispose();
+    }
+    if (this.gridHelper) {
+      this.gridHelper.geometry?.dispose();
+      this.gridHelper.material?.dispose();
+    }
+
+    // Dispose lights
+    if (this.hemiLight) this.hemiLight.dispose();
+    if (this.dirLight) this.dirLight.dispose();
+    if (this.cameraLight) this.cameraLight.dispose();
+
+    // Dispose controls and renderer
+    if (this.controls) this.controls.dispose();
+    if (this.renderer) this.renderer.dispose();
   }
 }
