@@ -300,10 +300,14 @@ export class HierarchyPanel {
       children.forEach(child => {
         const lookupKey = `${child.type}_${child.id}`;
         if (this.pendingExpandedKeys.has(lookupKey)) {
+          this.pendingExpandedKeys.delete(lookupKey);
           const childKey = this._nodeKey(child);
           this.expandNode(childKey);
         }
       });
+      if (this.pendingExpandedKeys.size === 0) {
+        this.pendingExpandedKeys = null;
+      }
     }
   }
 

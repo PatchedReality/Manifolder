@@ -257,6 +257,9 @@ class App {
 
     this.hierarchy.onExpand(node => {
       this.loadNodeChildren(node);
+      this.stateManager.updateSection('hierarchy', {
+        expandedNodeIds: this.hierarchy.getExpandedNodeKeys()
+      });
     });
   }
 

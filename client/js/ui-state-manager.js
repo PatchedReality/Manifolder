@@ -64,7 +64,6 @@ export class UIStateManager {
   }
 
   resetAndReload() {
-    this.save = () => {};
     this.state = this.cloneDefaults();
     localStorage.removeItem(UI_STATE_KEY);
     localStorage.removeItem('selectedNodeId');

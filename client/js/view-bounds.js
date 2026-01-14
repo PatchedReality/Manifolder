@@ -2005,7 +2005,6 @@ export class ViewBounds {
 
     if (state.typeFilter && Array.isArray(state.typeFilter)) {
       this.typeFilter = new Set(state.typeFilter);
-      this.syncTypeFilterCheckboxes();
     }
 
     if (typeof state.timeScaleIndex === 'number') {
