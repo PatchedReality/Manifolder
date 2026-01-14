@@ -11,19 +11,21 @@ import { InspectorPanel } from './inspector-panel.js';
 import { MVClient } from './mv-client.js';
 import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
+import { UIStateManager } from './ui-state-manager.js';
 
 class App {
   constructor() {
-    this.layout = new LayoutManager();
+    this.stateManager = new UIStateManager();
+    this.layout = new LayoutManager(this.stateManager);
     this.hierarchy = new HierarchyPanel('#hierarchy-tree');
     this.viewGraph = new ViewGraph('#viewport-graph');
-    this.viewBounds = new ViewBounds('#viewport-bounds');
+    this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager);
     this.viewResource = new ViewResource('#viewport-resource');
-    this.inspector = new InspectorPanel('#inspector-content');
+    this.inspector = new InspectorPanel('#inspector-content', this.stateManager);
     this.client = new MVClient();
 
     this.tree = null;
-    this.loadingNodes = new Map(); // Track in-flight loads to prevent race conditions
+    this.loadingNodes = new Map();
     this.init();
   }
 
@@ -33,10 +35,19 @@ class App {
     this.setupLayoutEvents();
     this.setupClientEvents();
     this.setupTypeFilter();
+    this.setupResetButton();
 
+    this.layout.restoreState();
     this.inspector.clear();
     this.layout.setFollowLink(null);
     this.layout.setStatus('Disconnected', 'disconnected');
+  }
+
+  setupResetButton() {
+    const resetBtn = document.getElementById('reset-view-btn');
+    resetBtn?.addEventListener('click', () => {
+      this.stateManager.resetAndReload();
+    });
   }
 
   setupTypeFilter() {
@@ -109,6 +120,16 @@ class App {
     dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
     dropdown.appendChild(createCategory('Placement', placementTypesList));
 
+    // Add reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'filter-reset-btn';
+    resetBtn.textContent = 'Reset to Defaults';
+    resetBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.viewBounds.resetTypeFilter();
+    });
+    dropdown.appendChild(resetBtn);
+
     // Handle Orbits toggle
     const orbitsToggle = document.getElementById('orbits-toggle');
     if (orbitsToggle) {
@@ -166,6 +187,14 @@ class App {
         this.updateTypeFilter(dropdown);
       });
     });
+
+    // Sync checkboxes with restored state
+    this.viewBounds.syncTypeFilterCheckboxes();
+
+    // Sync orbits checkbox separately (excluded from type filter sync)
+    if (orbitsToggle) {
+      orbitsToggle.checked = this.viewBounds.orbitsVisible;
+    }
   }
 
   updateTypeFilter(dropdown) {
@@ -220,6 +249,10 @@ class App {
       this.viewGraph.selectNode(node);
       this.viewGraph.zoomToNode(node);
       this.viewBounds.zoomToNode(node);
+
+      this.stateManager.updateSection('hierarchy', {
+        expandedNodeIds: this.hierarchy.getExpandedNodeKeys()
+      });
     });
 
     this.hierarchy.onExpand(node => {
@@ -320,20 +353,29 @@ class App {
       this.layout.setStatus('Map loaded', 'connected');
 
       if (tree) {
-        // Expand all nodes at top 3 levels
-        const expandLevel = (nodes, depth) => {
-          if (depth > 3 || !nodes) return;
-          nodes.forEach(node => {
-            this.hierarchy.expandNode(node);
-            if (node.children && node.children.length > 0) {
-              expandLevel(node.children, depth + 1);
-            }
-          });
-        };
+        // Check for saved hierarchy state
+        const hierarchyState = this.stateManager.getSection('hierarchy');
+        const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
-        this.hierarchy.expandNode(tree);
-        if (tree.children) {
-          expandLevel(tree.children, 2);
+        if (!hasSavedExpanded) {
+          // No saved state - expand top 3 levels by default
+          const expandLevel = (nodes, depth) => {
+            if (depth > 3 || !nodes) return;
+            nodes.forEach(node => {
+              this.hierarchy.expandNode(node);
+              if (node.children && node.children.length > 0) {
+                expandLevel(node.children, depth + 1);
+              }
+            });
+          };
+
+          this.hierarchy.expandNode(tree);
+          if (tree.children) {
+            expandLevel(tree.children, 2);
+          }
+        } else {
+          // Restore saved expanded nodes
+          this.hierarchy.expandNodesByKeys(hierarchyState.expandedNodeIds);
         }
 
         // Try to restore previously selected node via path

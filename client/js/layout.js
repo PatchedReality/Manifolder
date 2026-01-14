@@ -6,7 +6,8 @@ const URL_HISTORY_KEY = 'mv-url-history';
 const MAX_URL_HISTORY = 10;
 
 export class LayoutManager {
-  constructor() {
+  constructor(stateManager) {
+    this.stateManager = stateManager;
     this.panels = {
       hierarchy: document.getElementById('hierarchy-panel'),
       viewport: document.getElementById('viewport-panel'),
@@ -106,6 +107,7 @@ export class LayoutManager {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     this.resizing = null;
+    this.saveState();
   }
 
   setupPanelMinimize() {
@@ -143,6 +145,7 @@ export class LayoutManager {
     }
 
     window.dispatchEvent(new Event('resize'));
+    this.saveState();
   }
 
   restorePanel(panelName) {
@@ -161,6 +164,7 @@ export class LayoutManager {
     }
 
     window.dispatchEvent(new Event('resize'));
+    this.saveState();
   }
 
   setupViewTabs() {
@@ -195,6 +199,7 @@ export class LayoutManager {
 
         this.updateViewToggles();
         this.updateViewDisplay();
+        this.saveState();
       });
     });
 
@@ -454,5 +459,68 @@ export class LayoutManager {
 
   onLoad(callback) {
     window.addEventListener('mv:load', (e) => callback(e.detail));
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+    this.stateManager.updateSection('layout', {
+      hierarchyWidth: this.panels.hierarchy.offsetWidth,
+      inspectorWidth: this.panels.inspector.offsetWidth,
+      hierarchyMinimized: this.panels.hierarchy.classList.contains('minimized'),
+      inspectorMinimized: this.panels.inspector.classList.contains('minimized'),
+      graphEnabled: this.graphEnabled,
+      boundsEnabled: this.boundsEnabled,
+      resourceEnabled: this.resourceEnabled
+    });
+  }
+
+  restoreState() {
+    if (!this.stateManager) return;
+    const state = this.stateManager.getSection('layout');
+
+    if (state.hierarchyWidth) {
+      this.panels.hierarchy.style.width = state.hierarchyWidth + 'px';
+    }
+    if (state.inspectorWidth) {
+      this.panels.inspector.style.width = state.inspectorWidth + 'px';
+    }
+
+    if (state.hierarchyMinimized) {
+      this.minimizePanelWithoutSave('hierarchy');
+    }
+    if (state.inspectorMinimized) {
+      this.minimizePanelWithoutSave('inspector');
+    }
+
+    if (typeof state.graphEnabled === 'boolean') {
+      this.graphEnabled = state.graphEnabled;
+    }
+    if (typeof state.boundsEnabled === 'boolean') {
+      this.boundsEnabled = state.boundsEnabled;
+    }
+    if (typeof state.resourceEnabled === 'boolean') {
+      this.resourceEnabled = state.resourceEnabled;
+    }
+
+    this.updateViewToggles();
+    this.updateViewDisplay();
+  }
+
+  minimizePanelWithoutSave(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.add('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.remove('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.add('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
   }
 }

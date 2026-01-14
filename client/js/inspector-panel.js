@@ -47,12 +47,29 @@ const TYPE_COLORS = {
 };
 
 export class InspectorPanel {
-  constructor(containerSelector) {
+  constructor(containerSelector, stateManager) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
     this.currentNode = null;
     this.showRawJson = false;
     this.showResource = false;
     this.resourceCache = new Map();
+    this.restoreState();
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+    this.stateManager.updateSection('inspector', {
+      showRawJson: this.showRawJson,
+      showResource: this.showResource
+    });
+  }
+
+  restoreState() {
+    if (!this.stateManager) return;
+    const state = this.stateManager.getSection('inspector');
+    this.showRawJson = state.showRawJson || false;
+    this.showResource = state.showResource || false;
   }
 
   showNode(nodeData) {
@@ -199,6 +216,7 @@ export class InspectorPanel {
       toggleBtn.innerHTML = this.showRawJson ? '▼' : '▶';
       toggleBtn.title = this.showRawJson ? 'Hide JSON' : 'Show JSON';
       rawDiv.classList.toggle('expanded', this.showRawJson);
+      this.saveState();
     };
 
     toggleBtn.addEventListener('click', toggleJson);
@@ -266,6 +284,7 @@ export class InspectorPanel {
       toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
       toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
       resourceDiv.classList.toggle('expanded', this.showResource);
+      this.saveState();
     };
 
     toggleBtn.addEventListener('click', toggleResource);

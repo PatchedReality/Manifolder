@@ -86,8 +86,9 @@ function getSurfaceTexture(node) {
 }
 
 export class ViewBounds {
-  constructor(containerSelector) {
+  constructor(containerSelector, stateManager) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
@@ -95,14 +96,15 @@ export class ViewBounds {
     this.globe = null;
 
     this.nodeData = new Map();
-    this.nodeParents = new Map();  // Separate map for parent refs to avoid circular JSON
+    this.nodeParents = new Map();
     this.nodeMeshes = new Map();
-    this.orbitPaths = new Map();   // Orbital ellipse line geometries
+    this.orbitPaths = new Map();
     this.expandedNodes = new Set();
+    this.pendingExpandedNodes = null;
     this.tree = null;
     this.selectedId = null;
     this.selectedType = null;
-    this.focusNode = null;  // Celestial node that defines current scale reference
+    this.focusNode = null;
 
     this.selectCallbacks = [];
     this.toggleCallbacks = [];
@@ -111,19 +113,15 @@ export class ViewBounds {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
-    // Dynamic scale (calculated from scene bounds)
     this.scale = 1;
     this.scaleCalculated = false;
 
-    // Type filter - all types enabled by default except Root
     this.typeFilter = new Set(NODE_TYPES.filter(t => t.name !== 'Root').map(t => t.name));
 
-    // Orbits visibility
     this.orbitsVisible = true;
 
-    // Animation state for orbital motion
-    this.simulationTime = 0;      // Accumulated time in seconds
-    this.timeScale = 86400;       // Default: 1 day per second (slider position 4)
+    this.simulationTime = 0;
+    this.timeScale = 86400;
     this.lastFrameTime = null;
 
     this.animationFrameId = null;
@@ -131,6 +129,7 @@ export class ViewBounds {
     this.initialized = false;
 
     this.init();
+    this.restoreState();
     if (this.initialized) {
       this.animate();
     }
@@ -322,6 +321,7 @@ export class ViewBounds {
       const value = parseFloat(e.target.value);
       this.timeScale = sliderToTimeScale(value);
       updateLabel(value);
+      this.saveState();
     });
 
     // Initialize from slider's default value
@@ -335,6 +335,7 @@ export class ViewBounds {
     this.orbitPaths.forEach(orbitLine => {
       orbitLine.visible = visible;
     });
+    this.saveState();
   }
 
   onResize() {
@@ -513,6 +514,30 @@ export class ViewBounds {
       this.buildNodeData(tree);
       this.calculateDynamicScale();
       this.expandedNodes.add(this._getKey(tree.id, tree.type));
+
+      if (this.pendingExpandedNodes && this.pendingExpandedNodes.size > 0) {
+        this.pendingExpandedNodes.forEach(key => {
+          if (this.nodeData.has(key)) {
+            this.expandedNodes.add(key);
+          }
+        });
+        this.pendingExpandedNodes = null;
+      }
+
+      if (this.pendingSelectedId && this.pendingSelectedType) {
+        const key = this._getKey(this.pendingSelectedId, this.pendingSelectedType);
+        const node = this.nodeData.get(key);
+        if (node) {
+          this.selectedId = this.pendingSelectedId;
+          this.selectedType = this.pendingSelectedType;
+          if (this.isCelestialNode(node)) {
+            this.focusNode = node;
+          }
+        }
+        this.pendingSelectedId = null;
+        this.pendingSelectedType = null;
+      }
+
       this.rebuildVisibleNodes();
       this.fitToView();
     }
@@ -1053,6 +1078,9 @@ export class ViewBounds {
   addVisibleNode(node) {
     const key = this._getKey(node.id, node.type);
 
+    // Skip nodes without world position data (not yet processed by buildNodeData)
+    if (!node._worldPos) return;
+
     // Create orbit path even for filtered nodes (orbit should still be visible)
     if (node._orbitData && !this.orbitPaths.has(key)) {
       const parentNode = this.nodeParents.get(key);
@@ -1415,6 +1443,7 @@ export class ViewBounds {
     }
 
     this.rebuildVisibleNodes();
+    this.saveState();
   }
 
   updateGridForNode(node) {
@@ -1464,6 +1493,7 @@ export class ViewBounds {
 
     this.rebuildVisibleNodes();
     this.toggleCallbacks.forEach(cb => cb(node, !wasExpanded));
+    this.saveState();
   }
 
   expandNode(node) {
@@ -1471,6 +1501,7 @@ export class ViewBounds {
     if (!this.expandedNodes.has(key)) {
       this.expandedNodes.add(key);
       this.rebuildVisibleNodes();
+      this.saveState();
     }
   }
 
@@ -1479,6 +1510,7 @@ export class ViewBounds {
     if (this.expandedNodes.has(key)) {
       this.expandedNodes.delete(key);
       this.rebuildVisibleNodes();
+      this.saveState();
     }
   }
 
@@ -1680,6 +1712,49 @@ export class ViewBounds {
   setTypeFilter(enabledTypes) {
     this.typeFilter = new Set(enabledTypes);
     this.rebuildVisibleNodes();
+    this.saveState();
+  }
+
+  syncTypeFilterCheckboxes() {
+    const dropdown = document.getElementById('type-filter-dropdown');
+    if (!dropdown) return;
+
+    // Sync individual type checkboxes (exclude orbits toggle which has no value)
+    dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]:not(#orbits-toggle), .filter-standalone input[type="checkbox"]').forEach(checkbox => {
+      checkbox.checked = this.typeFilter.has(checkbox.value);
+    });
+
+    // Update category checkbox states (checked/indeterminate)
+    dropdown.querySelectorAll('.filter-category').forEach(category => {
+      const categoryCheckbox = category.querySelector('input[data-category]');
+      const childCheckboxes = category.querySelectorAll('.filter-category-items input[type="checkbox"]:not(#orbits-toggle)');
+      if (categoryCheckbox && childCheckboxes.length > 0) {
+        const allChecked = Array.from(childCheckboxes).every(cb => cb.checked);
+        const someChecked = Array.from(childCheckboxes).some(cb => cb.checked);
+        categoryCheckbox.checked = allChecked;
+        categoryCheckbox.indeterminate = someChecked && !allChecked;
+      }
+    });
+  }
+
+  resetTypeFilter() {
+    this.typeFilter = new Set(NODE_TYPES.filter(t => t.name !== 'Root').map(t => t.name));
+    this.orbitsVisible = true;
+    this.syncTypeFilterCheckboxes();
+
+    // Reset orbits checkbox
+    const orbitsToggle = document.getElementById('orbits-toggle');
+    if (orbitsToggle) {
+      orbitsToggle.checked = true;
+    }
+
+    // Update orbit visibility
+    this.orbitPaths.forEach(orbitLine => {
+      orbitLine.visible = true;
+    });
+
+    this.rebuildVisibleNodes();
+    this.saveState();
   }
 
   getDisplayType(node) {
@@ -1899,6 +1974,66 @@ export class ViewBounds {
     const focusSize = this.getNodeBoundSize(focusNode);
     const nodeSize = this.getNodeBoundSize(node);
     return nodeSize > focusSize * 10;
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+
+    const expandedIds = Array.from(this.expandedNodes);
+    const typeFilterArray = Array.from(this.typeFilter);
+
+    const slider = document.getElementById('timescale-slider');
+    const timeScaleIndex = slider ? parseInt(slider.value) : 4;
+
+    this.stateManager.updateSection('viewBounds', {
+      expandedNodeIds: expandedIds,
+      typeFilter: typeFilterArray,
+      timeScaleIndex: timeScaleIndex,
+      orbitsVisible: this.orbitsVisible,
+      selectedId: this.selectedId,
+      selectedType: this.selectedType
+    });
+  }
+
+  restoreState() {
+    if (!this.stateManager) return;
+    const state = this.stateManager.getSection('viewBounds');
+
+    if (state.expandedNodeIds && Array.isArray(state.expandedNodeIds)) {
+      this.pendingExpandedNodes = new Set(state.expandedNodeIds);
+    }
+
+    if (state.typeFilter && Array.isArray(state.typeFilter)) {
+      this.typeFilter = new Set(state.typeFilter);
+      this.syncTypeFilterCheckboxes();
+    }
+
+    if (typeof state.timeScaleIndex === 'number') {
+      const slider = document.getElementById('timescale-slider');
+      const label = document.getElementById('timescale-label');
+      if (slider) {
+        slider.value = state.timeScaleIndex;
+        const timeLabels = ['Paused', '1 sec/sec', '1 min/sec', '1 hr/sec', '1 day/sec', '1 wk/sec', '1 mo/sec', '1 yr/sec'];
+        const timeScales = [0, 1, 60, 3600, 86400, 604800, 2592000, 31536000];
+        this.timeScale = timeScales[state.timeScaleIndex] || 86400;
+        if (label) {
+          label.textContent = timeLabels[state.timeScaleIndex] || '1 day/sec';
+        }
+      }
+    }
+
+    if (typeof state.orbitsVisible === 'boolean') {
+      this.orbitsVisible = state.orbitsVisible;
+      const orbitsToggle = document.getElementById('orbits-toggle');
+      if (orbitsToggle) {
+        orbitsToggle.checked = state.orbitsVisible;
+      }
+    }
+
+    if (state.selectedId && state.selectedType) {
+      this.pendingSelectedId = state.selectedId;
+      this.pendingSelectedType = state.selectedType;
+    }
   }
 
   dispose() {

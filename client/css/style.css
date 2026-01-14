@@ -524,6 +524,25 @@ body {
   font-weight: 500;
 }
 
+.filter-reset-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.filter-reset-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
 /* Bounds view toolbar */
 .bounds-toolbar {
   position: absolute;

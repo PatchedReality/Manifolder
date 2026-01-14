@@ -17,6 +17,7 @@ export class HierarchyPanel {
     this.nodes = new Map();
     this.nodeData = new Map();
     this.loadedNodes = new Set();
+    this.pendingExpandedKeys = null;
 
     this.selectCallbacks = [];
     this.expandCallbacks = [];
@@ -131,6 +132,7 @@ export class HierarchyPanel {
     this.nodes.clear();
     this.nodeData.clear();
     this.loadedNodes.clear();
+    this.pendingExpandedKeys = null;
     this.selectedNode = null;
     this._nextId = 1;
   }
@@ -292,6 +294,17 @@ export class HierarchyPanel {
       const childElement = this.createNodeElement(child);
       childrenContainer.appendChild(childElement);
     });
+
+    // Check for pending expanded nodes and expand them
+    if (this.pendingExpandedKeys && this.pendingExpandedKeys.size > 0) {
+      children.forEach(child => {
+        const lookupKey = `${child.type}_${child.id}`;
+        if (this.pendingExpandedKeys.has(lookupKey)) {
+          const childKey = this._nodeKey(child);
+          this.expandNode(childKey);
+        }
+      });
+    }
   }
 
   selectNode(nodeOrKey) {
@@ -489,6 +502,29 @@ export class HierarchyPanel {
 
     const children = node.querySelector(':scope > .tree-children');
     return children && children.style.display !== 'none';
+  }
+
+  getExpandedNodeKeys() {
+    const keys = [];
+    this.nodeData.forEach((nodeData, nodeKey) => {
+      if (this.isNodeExpanded(nodeKey)) {
+        keys.push(`${nodeData.type}_${nodeData.id}`);
+      }
+    });
+    return keys;
+  }
+
+  expandNodesByKeys(keys) {
+    if (!keys || keys.length === 0) return;
+
+    this.pendingExpandedKeys = new Set(keys);
+
+    this.nodeData.forEach((nodeData, nodeKey) => {
+      const lookupKey = `${nodeData.type}_${nodeData.id}`;
+      if (this.pendingExpandedKeys.has(lookupKey)) {
+        this.expandNode(nodeKey);
+      }
+    });
   }
 
   getExpandedDescendants(nodeOrKey) {
