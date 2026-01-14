@@ -756,17 +756,12 @@ export class HierarchyPanel {
 
   _hasExpandableChildren(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
-    const node = this.nodes.get(nodeKey);
-    if (!node) {
+    const nodeData = this.nodeData.get(nodeKey);
+    if (!nodeData) {
       return false;
     }
 
-    const childrenContainer = node.querySelector(':scope > .tree-children');
-    if (!childrenContainer) {
-      return false;
-    }
-
-    return childrenContainer.querySelectorAll(':scope > .tree-node').length > 0;
+    return nodeData.hasChildren || (nodeData.children && nodeData.children.length > 0);
   }
 
   showContextMenu(nodeKey, x, y) {

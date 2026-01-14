@@ -338,6 +338,9 @@ export class ViewResource {
           }
           this.contentGroup.add(model);
           this.loadedModels.push(model);
+          if (this.loadedModels.length === 1) {
+            this.centerContentAtOrigin();
+          }
           resolve();
         },
         undefined,
@@ -421,6 +424,9 @@ export class ViewResource {
           }
           this.contentGroup.add(model);
           this.loadedModels.push(model);
+          if (this.loadedModels.length === 1) {
+            this.centerContentAtOrigin();
+          }
         }
       }
       return;
@@ -444,6 +450,9 @@ export class ViewResource {
       }
       this.contentGroup.add(result);
       this.loadedModels.push(result);
+      if (this.loadedModels.length === 1) {
+        this.centerContentAtOrigin();
+      }
     }
   }
 
@@ -866,7 +875,6 @@ export class ViewResource {
     }
 
     this.contentGroup.scale.setScalar(scale);
-    // Position so bottom of bounding box sits at Y=0, centered on X/Z
     this.contentGroup.position.set(
       -center.x * scale,
       -boundingBox.min.y * scale,
