@@ -216,7 +216,7 @@ export class HierarchyPanel {
         clearTimeout(longPressTimer);
         longPressTimer = null;
       }
-    });
+    }, { passive: true });
 
     const children = document.createElement('div');
     children.className = 'tree-children';
@@ -282,12 +282,14 @@ export class HierarchyPanel {
       parentNodeData.hasChildren = children && children.length > 0;
     }
 
-    // Hide toggle if no children
+    // Hide toggle and collapse if no children
     const toggle = parentElement.querySelector(':scope > .tree-node-content > .tree-toggle');
-    if (toggle) {
-      if (!children || children.length === 0) {
+    if (!children || children.length === 0) {
+      if (toggle) {
         toggle.textContent = '';
       }
+      childrenContainer.style.display = 'none';
+      return;
     }
 
     this._sortChildren(children).forEach(child => {
@@ -377,17 +379,25 @@ export class HierarchyPanel {
       return;
     }
 
+    const nodeData = this.nodeData.get(nodeKey);
+    const isLoaded = this.loadedNodes.has(nodeKey);
+    const hasChildren = nodeData && (nodeData.hasChildren || (nodeData.children && nodeData.children.length > 0));
+
+    // Don't expand if already loaded with no children
+    if (isLoaded && !hasChildren) {
+      return;
+    }
+
     if (toggle) {
       toggle.textContent = '▼';
     }
     children.style.display = 'block';
-    
-    const nodeData = this.nodeData.get(nodeKey);
+
     if (nodeData) {
       this.toggleCallbacks.forEach(callback => callback(nodeData, true));
     }
 
-    if (!this.loadedNodes.has(nodeKey)) {
+    if (!isLoaded) {
       const loading = document.createElement('div');
       loading.className = 'tree-loading';
       loading.textContent = 'Loading...';
@@ -396,7 +406,6 @@ export class HierarchyPanel {
       loading.style.padding = '2px 4px';
       children.appendChild(loading);
 
-      const nodeData = this.nodeData.get(nodeKey);
       if (nodeData) {
         this.expandCallbacks.forEach(callback => callback(nodeData));
       }
@@ -754,16 +763,6 @@ export class HierarchyPanel {
     this.collapseNode(nodeKey);
   }
 
-  _hasExpandableChildren(nodeOrKey) {
-    const nodeKey = this._nodeKey(nodeOrKey);
-    const nodeData = this.nodeData.get(nodeKey);
-    if (!nodeData) {
-      return false;
-    }
-
-    return nodeData.hasChildren || (nodeData.children && nodeData.children.length > 0);
-  }
-
   showContextMenu(nodeKey, x, y) {
     this.hideContextMenu();
 
@@ -772,9 +771,6 @@ export class HierarchyPanel {
       return;
     }
 
-    const hasChildren = this._hasExpandableChildren(nodeKey);
-    const isExpanded = this.isNodeExpanded(nodeKey);
-
     const menu = document.createElement('div');
     menu.className = 'tree-context-menu';
     menu.id = 'tree-context-menu';
@@ -782,7 +778,6 @@ export class HierarchyPanel {
     const expandChildrenBtn = document.createElement('button');
     expandChildrenBtn.className = 'tree-context-menu-item';
     expandChildrenBtn.textContent = 'Expand Children';
-    expandChildrenBtn.disabled = !hasChildren;
     expandChildrenBtn.addEventListener('click', () => {
       this.expandChildren(nodeKey);
       this.hideContextMenu();
@@ -791,7 +786,6 @@ export class HierarchyPanel {
     const expandAllBtn = document.createElement('button');
     expandAllBtn.className = 'tree-context-menu-item';
     expandAllBtn.textContent = 'Expand All';
-    expandAllBtn.disabled = !hasChildren;
     expandAllBtn.addEventListener('click', () => {
       this.expandAllDescendants(nodeKey);
       this.hideContextMenu();
@@ -803,7 +797,6 @@ export class HierarchyPanel {
     const collapseAllBtn = document.createElement('button');
     collapseAllBtn.className = 'tree-context-menu-item';
     collapseAllBtn.textContent = 'Collapse All';
-    collapseAllBtn.disabled = !isExpanded;
     collapseAllBtn.addEventListener('click', () => {
       this.collapseAllDescendants(nodeKey);
       this.hideContextMenu();
