@@ -80,7 +80,8 @@ export class NodeFactory {
       transform: null,
       bound: null,
       children: [],
-      hasChildren: false
+      hasChildren: false,
+      rawData: data
     };
 
     const allChildren = [...(aChild[0] || []), ...(aChild[1] || []), ...(aChild[2] || [])];
@@ -111,7 +112,8 @@ export class NodeFactory {
       orbit: type === 'RMCObject' ? this.parseOrbit(parent.pOrbit_Spin) : null,
       properties: this.#extractProperties(parent),
       children: [],
-      hasChildren: false
+      hasChildren: false,
+      rawData: data
     };
 
     if (type === 'RMPObject' && parent.sAssetUrl) {
@@ -151,7 +153,8 @@ export class NodeFactory {
         bound: this.parseBound(child.pBound),
         properties: this.#extractProperties(child),
         children: [],
-        hasChildren: child.nChildren > 0
+        hasChildren: child.nChildren > 0,
+        rawData: child
       };
 
       if (config.hasOrbit) {

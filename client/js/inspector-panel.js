@@ -7,7 +7,7 @@
  * Shows basic info, transform, bounds, and raw JSON data
  */
 
-import { getResourceUrl } from './node-helpers.js';
+import { getResourceUrl, resolveResourceUrl } from './node-helpers.js';
 
 const TYPE_COLORS = {
   RMRoot: 'var(--node-rmroot)',
@@ -93,7 +93,6 @@ export class InspectorPanel {
     }
 
     this.currentNode = null;
-    this.showRawJson = false;
     this.container.innerHTML = '<div class="inspector-empty">Select an object to inspect</div>';
   }
 
@@ -203,11 +202,12 @@ export class InspectorPanel {
     copyBtn.title = 'Copy to clipboard';
     copyBtn.innerHTML = '&#128203;';
 
-    const jsonText = JSON.stringify(node, null, 2);
+    const jsonText = JSON.stringify(node.rawData || node, null, 2);
+    const linkedHtml = this._linkifyRawJson(jsonText);
 
     const content = document.createElement('pre');
     content.className = 'inspector-raw-content';
-    content.textContent = jsonText;
+    content.innerHTML = linkedHtml;
     content.style.display = this.showRawJson ? 'block' : 'none';
 
     const toggleJson = () => {
@@ -273,6 +273,15 @@ export class InspectorPanel {
     copyBtn.title = 'Copy to clipboard';
     copyBtn.innerHTML = '&#128203;';
 
+    const urlHeader = document.createElement('div');
+    urlHeader.className = 'inspector-resource-url';
+    const urlLink = document.createElement('a');
+    urlLink.href = resourceUrl;
+    urlLink.target = '_blank';
+    urlLink.textContent = resourceUrl;
+    urlHeader.appendChild(urlLink);
+    urlHeader.style.display = this.showResource ? 'block' : 'none';
+
     const content = document.createElement('pre');
     content.className = 'inspector-raw-content';
     content.textContent = 'Loading...';
@@ -280,6 +289,7 @@ export class InspectorPanel {
 
     const toggleResource = () => {
       this.showResource = !this.showResource;
+      urlHeader.style.display = this.showResource ? 'block' : 'none';
       content.style.display = this.showResource ? 'block' : 'none';
       toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
       toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
@@ -307,6 +317,7 @@ export class InspectorPanel {
     header.appendChild(copyBtn);
 
     resourceDiv.appendChild(header);
+    resourceDiv.appendChild(urlHeader);
     resourceDiv.appendChild(content);
     this.container.appendChild(resourceDiv);
 
@@ -317,7 +328,7 @@ export class InspectorPanel {
   async _loadResource(url, contentElement) {
     // Check cache first
     if (this.resourceCache.has(url)) {
-      contentElement.textContent = this.resourceCache.get(url);
+      contentElement.innerHTML = this.resourceCache.get(url);
       return;
     }
 
@@ -328,11 +339,48 @@ export class InspectorPanel {
       }
       const json = await response.json();
       const jsonText = JSON.stringify(json, null, 2);
-      this.resourceCache.set(url, jsonText);
-      contentElement.textContent = jsonText;
+      const linkedHtml = this._linkifyResourceJson(jsonText, url);
+      this.resourceCache.set(url, linkedHtml);
+      contentElement.innerHTML = linkedHtml;
     } catch (err) {
       contentElement.textContent = `Failed to load: ${err.message}`;
     }
+  }
+
+  _linkifyResourceJson(jsonText, baseUrl) {
+    const baseDir = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
+    const escaped = jsonText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    return escaped.replace(
+      /"file":\s*"([^"]+)"/g,
+      (match, filename) => {
+        const fullUrl = baseDir + filename;
+        return `"file": "<a href="${fullUrl}" target="_blank" class="inspector-file-link">${filename}</a>"`;
+      }
+    );
+  }
+
+  _linkifyRawJson(jsonText) {
+    const escaped = jsonText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Match "sName" or "sReference": "filename.ext" patterns (files without action:// prefix)
+    return escaped.replace(
+      /"(sName|sReference)":\s*"([^"]+\.[a-zA-Z0-9]+)"/g,
+      (match, key, filename) => {
+        // Skip if it's a protocol (action://, http://, etc.)
+        if (filename.includes('://')) {
+          return match;
+        }
+        const fullUrl = resolveResourceUrl(filename);
+        return `"${key}": "<a href="${fullUrl}" target="_blank" class="inspector-file-link">${filename}</a>"`;
+      }
+    );
   }
 
   _createSection(title) {

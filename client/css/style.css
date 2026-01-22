@@ -4,6 +4,7 @@
 
 :root {
   /* Background layers (darkest to lightest) */
+  --bg-sunken: #141414;
   --bg-base: #1a1a1a;
   --bg-panel: #252525;
   --bg-raised: #2d2d2d;
@@ -19,6 +20,7 @@
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0a0;
   --text-muted: #707070;
+  --text-link: #4a9eff;
 
   /* Accent (selection, focus) */
   --accent: #4a9eff;
@@ -958,6 +960,35 @@ body {
   flex: 1;
   min-height: 0;
   margin: 0;
+}
+
+.inspector-resource-url {
+  background: var(--bg-sunken);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  border-bottom: 1px solid var(--border-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-resource-url a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+.inspector-resource-url a:hover {
+  text-decoration: underline;
+}
+
+.inspector-file-link {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+.inspector-file-link:hover {
+  text-decoration: underline;
 }
 
 /* ============================================
