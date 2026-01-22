@@ -382,4 +382,141 @@ export class MVClient {
       return { error: err.message };
     }
   }
+
+  async searchNodes(searchText) {
+    if (!this.isConnected || !searchText) {
+      return { matches: [], paths: [], unavailable: [] };
+    }
+
+    const results = { matches: [], paths: [], unavailable: [] };
+
+    // Find ALL root child indices for search scopes (query all roots like _getMapTree)
+    const rmcObjectIndices = [];
+    const rmtObjectIndices = [];
+
+    try {
+      for (let rootIx = 1; rootIx <= 10; rootIx++) {
+        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+        pIAction.pRequest.twRMRootIx = rootIx;
+
+        const rootResponse = await new Promise((resolve) => {
+          pIAction.Send(this, function(pIAction) {
+            resolve(pIAction.pResponse);
+          });
+        });
+
+        if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
+          break;
+        }
+
+        if (rootResponse.aChild && rootResponse.aChild.length > 0) {
+          for (const childArray of rootResponse.aChild) {
+            if (Array.isArray(childArray)) {
+              for (const child of childArray) {
+                if (child.twRMCObjectIx) {
+                  rmcObjectIndices.push(child.twRMCObjectIx);
+                }
+                if (child.twRMTObjectIx) {
+                  rmtObjectIndices.push(child.twRMTObjectIx);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      return results;
+    }
+
+    const searchPromises = [];
+
+    // Search ALL RMCObject (celestial) scopes
+    for (const objectIx of rmcObjectIndices) {
+      searchPromises.push(this._searchObjectType('RMCObject', objectIx, searchText));
+    }
+
+    // Search ALL RMTObject (terrestrial) scopes
+    for (const objectIx of rmtObjectIndices) {
+      searchPromises.push(this._searchObjectType('RMTObject', objectIx, searchText));
+    }
+
+    const searchResults = await Promise.all(searchPromises);
+    const unavailableTypes = new Set();
+
+    for (const result of searchResults) {
+      results.matches.push(...result.matches);
+      results.paths.push(...result.paths);
+      if (result.unavailable) {
+        unavailableTypes.add(result.unavailable);
+      }
+    }
+
+    results.unavailable = [...unavailableTypes];
+    return results;
+  }
+
+  async _searchObjectType(objectType, objectIx, searchText) {
+    const matches = [];
+    const paths = [];
+
+    try {
+      const actionType = objectType === 'RMCObject'
+        ? MV.MVRP.Map.IO_RMCOBJECT.apAction.SEARCH
+        : MV.MVRP.Map.IO_RMTOBJECT.apAction.SEARCH;
+
+      const pIAction = this.pClient.Request(actionType);
+
+      if (objectType === 'RMCObject') {
+        pIAction.pRequest.twRMCObjectIx = objectIx;
+      } else {
+        pIAction.pRequest.twRMTObjectIx = objectIx;
+      }
+      pIAction.pRequest.dX = 0;
+      pIAction.pRequest.dY = 0;
+      pIAction.pRequest.dZ = 0;
+      pIAction.pRequest.sText = searchText.toLowerCase();
+
+      const response = await new Promise((resolve) => {
+        pIAction.Send(this, function(pIAction) {
+          resolve(pIAction.pResponse);
+        });
+      });
+
+      // Server returns nResult: -1 for unimplemented search (e.g., RMTObject)
+      if (response.nResult === -1) {
+        return { matches, paths, unavailable: objectType };
+      }
+
+      if (response.aResultSet && response.aResultSet.length > 0) {
+        // aResultSet[0] = direct matches
+        if (response.aResultSet[0] && Array.isArray(response.aResultSet[0])) {
+          for (const match of response.aResultSet[0]) {
+            matches.push({
+              id: match.ObjectHead_twObjectIx,
+              name: match.Name_wsRMCObjectId || match.Name_wsRMTObjectId,
+              type: objectType,
+              nodeType: match.Type_bType
+            });
+          }
+        }
+
+        // aResultSet[1] = ancestry paths
+        if (response.aResultSet[1] && Array.isArray(response.aResultSet[1])) {
+          for (const ancestor of response.aResultSet[1]) {
+            paths.push({
+              id: ancestor.ObjectHead_twObjectIx,
+              name: ancestor.Name_wsRMCObjectId || ancestor.Name_wsRMTObjectId,
+              type: objectType,
+              nodeType: ancestor.Type_bType,
+              ancestorDepth: ancestor.nAncestor
+            });
+          }
+        }
+      }
+    } catch (err) {
+      // Silently fail individual searches
+    }
+
+    return { matches, paths };
+  }
 }

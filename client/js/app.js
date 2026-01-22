@@ -36,6 +36,7 @@ class App {
     this.setupClientEvents();
     this.setupTypeFilter();
     this.setupResetButton();
+    this.setupAsyncSearch();
 
     this.layout.restoreState();
     this.inspector.clear();
@@ -47,6 +48,77 @@ class App {
     const resetBtn = document.getElementById('reset-view-btn');
     resetBtn?.addEventListener('click', () => {
       this.stateManager.resetAndReload();
+    });
+  }
+
+  setupAsyncSearch() {
+    const searchInput = document.getElementById('hierarchy-search');
+    const clearBtn = document.getElementById('hierarchy-search-clear');
+    const searchStatus = document.getElementById('search-status');
+    if (!searchInput) return;
+
+    let asyncDebounceTimer;
+
+    const clearSearch = () => {
+      searchInput.value = '';
+      clearBtn?.classList.remove('visible');
+      if (searchStatus) searchStatus.textContent = '';
+      this.hierarchy.filterNodes('');
+    };
+
+    const updateClearButton = () => {
+      if (searchInput.value) {
+        clearBtn?.classList.add('visible');
+      } else {
+        clearBtn?.classList.remove('visible');
+      }
+    };
+
+    const updateSearchStatus = (unavailable) => {
+      if (!searchStatus) return;
+      if (unavailable && unavailable.length > 0) {
+        searchStatus.textContent = 'Server search unavailable';
+      } else {
+        searchStatus.textContent = '';
+      }
+    };
+
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(asyncDebounceTimer);
+      updateClearButton();
+
+      const searchText = e.target.value.trim();
+
+      if (!searchText || searchText.length < 2) {
+        if (!searchText) {
+          this.hierarchy.filterNodes('');
+          updateSearchStatus([]);
+        }
+        return;
+      }
+
+      asyncDebounceTimer = setTimeout(async () => {
+        if (!this.client.connected) return;
+
+        const results = await this.client.searchNodes(searchText);
+
+        updateSearchStatus(results.unavailable);
+
+        if (results.matches.length > 0 || results.paths.length > 0) {
+          await this.hierarchy.revealSearchResults(results, (node) => this.loadNodeChildren(node));
+        }
+      }, 300);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        clearSearch();
+      }
+    });
+
+    clearBtn?.addEventListener('click', () => {
+      clearSearch();
+      searchInput.focus();
     });
   }
 

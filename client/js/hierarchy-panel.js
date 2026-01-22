@@ -446,6 +446,9 @@ export class HierarchyPanel {
 
     let parent = node.parentElement?.closest('.tree-node');
     while (parent) {
+      // Unhide the parent node (in case it was hidden by filter)
+      parent.classList.remove('hidden');
+
       const children = parent.querySelector(':scope > .tree-children');
       const toggle = parent.querySelector(':scope > .tree-node-content > .tree-toggle');
 
@@ -846,5 +849,96 @@ export class HierarchyPanel {
       document.removeEventListener('touchstart', this._contextMenuCloseHandler);
       this._contextMenuCloseHandler = null;
     }
+  }
+
+  async revealSearchResults(results, loadNodeCallback) {
+    if (!results || (results.matches.length === 0 && results.paths.length === 0)) {
+      return;
+    }
+
+    // Build set of all node keys that should be visible
+    const visibleKeys = new Set();
+    const matchKeys = new Set();
+
+    // Sort paths by ancestor depth (highest first = closest to root), deduplicate
+    const seenIds = new Set();
+    const sortedPaths = [...results.paths]
+      .sort((a, b) => b.ancestorDepth - a.ancestorDepth)
+      .filter(p => {
+        const key = `${p.type}_${p.id}`;
+        if (seenIds.has(key)) return false;
+        seenIds.add(key);
+        return true;
+      });
+
+    // Expand ancestors in order (root to leaf), loading children as needed
+    for (const ancestor of sortedPaths) {
+      const existingNode = this._findNodeByTypeAndId(ancestor.type, ancestor.id);
+
+      if (existingNode) {
+        const nodeKey = this._nodeKey(existingNode);
+        visibleKeys.add(nodeKey);
+
+        const isLoaded = this.loadedNodes.has(nodeKey);
+
+        if (!isLoaded && loadNodeCallback) {
+          this.expandNode(nodeKey);
+          await loadNodeCallback(existingNode);
+        } else {
+          this.expandNode(nodeKey);
+        }
+      }
+    }
+
+    // Collect match node keys
+    for (const match of results.matches) {
+      const matchNode = this._findNodeByTypeAndId(match.type, match.id);
+      if (matchNode) {
+        const nodeKey = this._nodeKey(matchNode);
+        visibleKeys.add(nodeKey);
+        matchKeys.add(nodeKey);
+        this.addParentsToSet(nodeKey, visibleKeys);
+      }
+    }
+
+    // Hide all nodes not in visibleKeys, show and highlight those that are
+    this.nodes.forEach((element, nodeKey) => {
+      element.classList.remove('search-match');
+
+      if (visibleKeys.has(nodeKey)) {
+        element.classList.remove('hidden');
+        if (matchKeys.has(nodeKey)) {
+          element.classList.add('search-match');
+        }
+      } else {
+        element.classList.add('hidden');
+      }
+    });
+
+    // Expand to first match and scroll into view
+    if (results.matches.length > 0) {
+      const firstMatch = results.matches[0];
+      const firstNode = this._findNodeByTypeAndId(firstMatch.type, firstMatch.id);
+      if (firstNode) {
+        const nodeKey = this._nodeKey(firstNode);
+        this.expandToNode(nodeKey);
+        const element = this.nodes.get(nodeKey);
+        if (element) {
+          const content = element.querySelector(':scope > .tree-node-content');
+          if (content) {
+            content.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+      }
+    }
+  }
+
+  _findNodeByTypeAndId(type, id) {
+    for (const [nodeKey, nodeData] of this.nodeData) {
+      if (nodeData.type === type && nodeData.id === id) {
+        return nodeData;
+      }
+    }
+    return null;
   }
 }

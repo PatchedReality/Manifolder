@@ -655,8 +655,43 @@ body {
   flex-shrink: 0;
 }
 
+.hierarchy-search-bar-inner {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--border-radius);
+}
+
 .search-input {
   width: 100%;
+  padding-right: 24px;
+}
+
+.search-clear {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.search-clear.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.search-clear:hover {
+  color: var(--text-primary);
 }
 
 #hierarchy-tree {
@@ -1028,6 +1063,15 @@ body {
 #status-message.loading::before {
   background: var(--status-loading);
   animation: pulse 1s infinite;
+}
+
+#search-status {
+  color: var(--text-warning, #e0a000);
+  margin-left: var(--spacing-md);
+}
+
+#search-status:empty {
+  display: none;
 }
 
 @keyframes pulse {

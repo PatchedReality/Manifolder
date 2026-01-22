@@ -369,16 +369,21 @@ export class InspectorPanel {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    // Match "sName" or "sReference": "filename.ext" patterns (files without action:// prefix)
+    // Match "sName" or "sReference": "filename.ext" patterns
     return escaped.replace(
       /"(sName|sReference)":\s*"([^"]+\.[a-zA-Z0-9]+)"/g,
-      (match, key, filename) => {
-        // Skip if it's a protocol (action://, http://, etc.)
-        if (filename.includes('://')) {
+      (match, key, value) => {
+        // Skip action:// protocol (linkify the actual resource names, not the protocol)
+        if (value.startsWith('action://')) {
           return match;
         }
-        const fullUrl = resolveResourceUrl(filename);
-        return `"${key}": "<a href="${fullUrl}" target="_blank" class="inspector-file-link">${filename}</a>"`;
+        // Full URLs link directly
+        if (value.startsWith('http://') || value.startsWith('https://')) {
+          return `"${key}": "<a href="${value}" target="_blank" class="inspector-file-link">${value}</a>"`;
+        }
+        // Relative paths get resolved
+        const fullUrl = resolveResourceUrl(value);
+        return `"${key}": "<a href="${fullUrl}" target="_blank" class="inspector-file-link">${value}</a>"`;
       }
     );
   }

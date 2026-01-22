@@ -41,7 +41,10 @@
         <button class="panel-minimize" data-panel="hierarchy" title="Minimize">−</button>
       </div>
       <div class="hierarchy-search-bar">
-        <input type="text" id="hierarchy-search" class="search-input" placeholder="Search...">
+        <div class="hierarchy-search-bar-inner">
+          <input type="text" id="hierarchy-search" class="search-input" placeholder="Search...">
+          <button id="hierarchy-search-clear" class="search-clear" title="Clear (Esc)">×</button>
+        </div>
       </div>
       <div class="panel-content">
         <div id="hierarchy-tree"></div>
@@ -108,6 +111,7 @@
   <!-- Status bar -->
   <div id="status-bar">
     <span id="status-message">Disconnected</span>
+    <span id="search-status"></span>
   </div>
 
   <script type="importmap">

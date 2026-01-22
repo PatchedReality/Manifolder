@@ -2014,7 +2014,7 @@ export class ViewBounds {
         slider.value = state.timeScaleIndex;
         const timeLabels = ['Paused', '1 sec/sec', '1 min/sec', '1 hr/sec', '1 day/sec', '1 wk/sec', '1 mo/sec', '1 yr/sec'];
         const timeScales = [0, 1, 60, 3600, 86400, 604800, 2592000, 31536000];
-        this.timeScale = timeScales[state.timeScaleIndex] || 86400;
+        this.timeScale = timeScales[state.timeScaleIndex] ?? 86400;
         if (label) {
           label.textContent = timeLabels[state.timeScaleIndex] || '1 day/sec';
         }
