@@ -17,7 +17,7 @@
  * MVClient - Direct browser client for Metaverse server communication
  * Uses lib/rp1 libraries for Socket.io communication
  */
-import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
+import { NodeFactory } from './node-factory.js';
 
 export class MVClient {
   static _initialized = false;
@@ -229,285 +229,8 @@ export class MVClient {
     });
   }
 
-  _resolveNodeType(data, defaultType) {
-    let bType = data.bType;
-    if (bType === undefined && data.pType) {
-      bType = data.pType.bType;
-    }
-
-    if (bType === undefined && data.properties) {
-      bType = data.properties.bType;
-    }
-
-    if (bType !== undefined) {
-      if (defaultType === 'RMCObject' && CELESTIAL_TYPE_MAP[bType]) {
-        return CELESTIAL_TYPE_MAP[bType];
-      }
-      if (defaultType === 'RMTObject' && TERRESTRIAL_TYPE_MAP[bType]) {
-        return TERRESTRIAL_TYPE_MAP[bType];
-      }
-    }
-
-    return defaultType;
-  }
-
-  _extractProperties(data) {
-    const props = { ...data };
-    const ignored = [
-      'twRMRootIx', 'twRMCObjectIx', 'twRMTObjectIx', 'twRMPObjectIx',
-      'pName', 'pTransform', 'pBound', 'vPosition', 'qRotation', 'vScale',
-      'aChild', 'children', 'aRMTObjectIx', 'Parent', 'nChildren',
-      'sName', 'sAssetUrl'
-    ];
-
-    ignored.forEach(key => delete props[key]);
-    return props;
-  }
-
-  _parseTransformFromData(data) {
-    const pTransform = data.pTransform;
-    if (!pTransform) return null;
-
-    return {
-      position: {
-        x: pTransform.Position?.[0] || 0,
-        y: pTransform.Position?.[1] || 0,
-        z: pTransform.Position?.[2] || 0
-      },
-      rotation: {
-        x: pTransform.Rotation?.[0] || 0,
-        y: pTransform.Rotation?.[1] || 0,
-        z: pTransform.Rotation?.[2] || 0,
-        w: pTransform.Rotation?.[3] || 1
-      },
-      scale: {
-        x: pTransform.Scale?.[0] || 1,
-        y: pTransform.Scale?.[1] || 1,
-        z: pTransform.Scale?.[2] || 1
-      }
-    };
-  }
-
-  _parseBoundFromData(data) {
-    const pBound = data.pBound;
-    if (!pBound || !pBound.Max) return null;
-
-    return {
-      x: pBound.Max[0] || 0,
-      y: pBound.Max[1] || 0,
-      z: pBound.Max[2] || 0
-    };
-  }
-
-  _parseOrbitFromData(data) {
-    const pOrbit = data.pOrbit_Spin;
-    if (!pOrbit) return null;
-
-    if (!pOrbit.dA || pOrbit.dA === 0) return null;
-
-    const TIME_UNIT_TO_SECONDS = 1 / 64;
-
-    return {
-      period: (pOrbit.tmPeriod || 0) * TIME_UNIT_TO_SECONDS,
-      phaseOffset: (pOrbit.tmOrigin ?? pOrbit.tmStart ?? 0) * TIME_UNIT_TO_SECONDS,
-      semiMajorAxis: pOrbit.dA,
-      semiMinorAxis: pOrbit.dB || pOrbit.dA
-    };
-  }
-
-  _parseContainerNode(data) {
-    const nodeType = this._resolveNodeType(data, 'RMCObject');
-    return {
-      name: data.pName?.wsRMCObjectId || `Container ${data.twRMCObjectIx}`,
-      type: 'RMCObject',
-      nodeType: nodeType,
-      class: data.sClass,
-      id: data.twRMCObjectIx,
-      transform: this._parseTransformFromData(data),
-      bound: this._parseBoundFromData(data),
-      orbit: this._parseOrbitFromData(data),
-      properties: this._extractProperties(data),
-      children: [],
-      hasChildren: data.nChildren > 0
-    };
-  }
-
-  _parseTerrainNode(data) {
-    const nodeType = this._resolveNodeType(data, 'RMTObject');
-    return {
-      name: data.pName?.wsRMTObjectId || `Terrain ${data.twRMTObjectIx}`,
-      type: 'RMTObject',
-      nodeType: nodeType,
-      class: data.sClass,
-      id: data.twRMTObjectIx,
-      transform: this._parseTransformFromData(data),
-      bound: this._parseBoundFromData(data),
-      properties: this._extractProperties(data),
-      children: [],
-      hasChildren: data.nChildren > 0
-    };
-  }
-
-  _parsePlaceableNode(data) {
-    const nodeType = this._resolveNodeType(data, 'RMPObject');
-    return {
-      name: data.pName?.wsRMPObjectId || `Placeable ${data.twRMPObjectIx}`,
-      type: 'RMPObject',
-      nodeType: nodeType,
-      class: data.sClass,
-      id: data.twRMPObjectIx,
-      transform: this._parseTransformFromData(data),
-      bound: this._parseBoundFromData(data),
-      properties: this._extractProperties(data),
-      children: [],
-      hasChildren: data.nChildren > 0
-    };
-  }
-
-  _buildContainerNode(data, id) {
-    const parent = data.Parent || data;
-    const aChild = data.aChild || [];
-
-    const nodeType = this._resolveNodeType(parent, 'RMCObject');
-
-    const node = {
-      name: parent.pName?.wsRMCObjectId || parent.sName || `Container ${id}`,
-      type: 'RMCObject',
-      nodeType: nodeType,
-      class: parent.sClass,
-      id: parent.twRMCObjectIx || id,
-      transform: this._parseTransformFromData(parent),
-      bound: this._parseBoundFromData(parent),
-      orbit: this._parseOrbitFromData(parent),
-      properties: this._extractProperties(parent),
-      children: [],
-      hasChildren: false
-    };
-
-    const allChildren = aChild.flat();
-
-    for (const child of allChildren) {
-      if (child.twRMCObjectIx !== undefined) {
-        node.children.push(this._parseContainerNode(child));
-      } else if (child.twRMTObjectIx !== undefined) {
-        node.children.push(this._parseTerrainNode(child));
-      } else if (child.twRMPObjectIx !== undefined) {
-        node.children.push(this._parsePlaceableNode(child));
-      }
-    }
-
-    node.hasChildren = node.children.length > 0 || parent.nChildren > 0;
-
-    return node;
-  }
-
-  _buildTerrainNode(data, id) {
-    const parent = data.Parent || data;
-    const aChild = data.aChild || [];
-
-    const nodeType = this._resolveNodeType(parent, 'RMTObject');
-
-    const node = {
-      name: parent.pName?.wsRMTObjectId || parent.sName || `Terrain ${id}`,
-      type: 'RMTObject',
-      nodeType: nodeType,
-      class: parent.sClass,
-      id: parent.twRMTObjectIx || id,
-      transform: this._parseTransformFromData(parent),
-      bound: this._parseBoundFromData(parent),
-      properties: this._extractProperties(parent),
-      children: [],
-      hasChildren: false
-    };
-
-    const allChildren = aChild.flat();
-
-    for (const child of allChildren) {
-      if (child.twRMCObjectIx !== undefined) {
-        node.children.push(this._parseContainerNode(child));
-      } else if (child.twRMTObjectIx !== undefined) {
-        node.children.push(this._parseTerrainNode(child));
-      } else if (child.twRMPObjectIx !== undefined) {
-        node.children.push(this._parsePlaceableNode(child));
-      }
-    }
-
-    node.hasChildren = node.children.length > 0 || parent.nChildren > 0;
-
-    return node;
-  }
-
-  _buildPlaceableNode(data, id) {
-    const parent = data.Parent || data;
-    const aChild = data.aChild || [];
-
-    const nodeType = this._resolveNodeType(parent, 'RMPObject');
-
-    const node = {
-      name: parent.pName?.wsRMPObjectId || parent.sName || `Placeable ${id}`,
-      type: 'RMPObject',
-      nodeType: nodeType,
-      class: parent.sClass,
-      id: parent.twRMPObjectIx || id,
-      transform: this._parseTransformFromData(parent),
-      bound: this._parseBoundFromData(parent),
-      assetUrl: parent.sAssetUrl,
-      properties: this._extractProperties(parent),
-      children: [],
-      hasChildren: false
-    };
-
-    const allChildren = aChild.flat();
-
-    for (const child of allChildren) {
-      if (child.twRMCObjectIx !== undefined) {
-        node.children.push(this._parseContainerNode(child));
-      } else if (child.twRMTObjectIx !== undefined) {
-        node.children.push(this._parseTerrainNode(child));
-      } else if (child.twRMPObjectIx !== undefined) {
-        node.children.push(this._parsePlaceableNode(child));
-      }
-    }
-
-    node.hasChildren = node.children.length > 0 || parent.nChildren > 0;
-
-    return node;
-  }
-
   async _buildTreeFromRoot(rootData, rootIx = 1) {
-    const parent = rootData.Parent || rootData;
-    const aChild = rootData.aChild || [];
-
-    const root = {
-      name: parent.pName?.wsRMRootId || `Root ${rootIx}`,
-      type: 'RMRoot',
-      nodeType: 'Root',
-      id: parent.twRMRootIx || rootIx,
-      transform: null,
-      bound: null,
-      children: [],
-      hasChildren: false
-    };
-
-    const containers = aChild[0] || [];
-    const terrains = aChild[1] || [];
-    const placeables = aChild[2] || [];
-
-    for (const container of containers) {
-      root.children.push(this._parseContainerNode(container));
-    }
-
-    for (const terrain of terrains) {
-      root.children.push(this._parseTerrainNode(terrain));
-    }
-
-    for (const placeable of placeables) {
-      root.children.push(this._parsePlaceableNode(placeable));
-    }
-
-    root.hasChildren = root.children.length > 0;
-
-    return root;
+    return NodeFactory.createNode('RMRoot', rootData, rootIx);
   }
 
   async _getMapTree() {
@@ -608,7 +331,7 @@ export class MVClient {
           });
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = this._buildContainerNode(response, nodeId);
+            node = NodeFactory.createNode('RMCObject', response, nodeId);
           }
           break;
         }
@@ -624,7 +347,7 @@ export class MVClient {
           });
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = this._buildTerrainNode(response, nodeId);
+            node = NodeFactory.createNode('RMTObject', response, nodeId);
           }
           break;
         }
@@ -640,7 +363,7 @@ export class MVClient {
           });
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = this._buildPlaceableNode(response, nodeId);
+            node = NodeFactory.createNode('RMPObject', response, nodeId);
           }
           break;
         }
