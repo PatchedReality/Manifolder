@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2026 Patched Reality, Inc.
  *
- * Based upon the following code by © Metaversal Corporation, 2026:
+ * Uses lib/rp1 libraries by © Metaversal Corporation, 2026:
  *
  * MVMF.js
  * MVSB.js
@@ -15,16 +15,36 @@
 
 /**
  * MVClient - Direct browser client for Metaverse server communication
- * Connects directly to MV servers via Socket.io, no proxy needed
+ * Uses lib/rp1 libraries for Socket.io communication
  */
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
 
 export class MVClient {
+  static _initialized = false;
+
+  static _initializePlugins() {
+    if (MVClient._initialized) return;
+
+    MV.MVMF.Core.Plugin_Open('MVMF');
+    MV.MVMF.Core.Plugin_Open('MVSB');
+    MV.MVMF.Core.Plugin_Open('MVXP');
+    MV.MVMF.Core.Plugin_Open('MVRest');
+    MV.MVMF.Core.Plugin_Open('MVIO');
+    MV.MVMF.Core.Plugin_Open('MVRP');
+    MV.MVMF.Core.Plugin_Open('MVRP_Dev');
+    MV.MVMF.Core.Plugin_Open('MVRP_Map');
+
+    MVClient._initialized = true;
+  }
+
   constructor() {
-    this.socket = null;
+    MVClient._initializePlugins();
+
+    this.msf = null;
+    this.pLnG = null;
+    this.pClient = null;
     this.isConnected = false;
     this.msfConfig = null;
-    this.endpoint = null;
 
     this.callbacks = {
       connected: [],
@@ -36,21 +56,21 @@ export class MVClient {
     };
   }
 
-  // Public API - kept for compatibility
   get connected() {
     return this.isConnected;
   }
 
   connect() {
-    // No-op - connection happens in loadMap()
     return Promise.resolve();
   }
 
   disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
+    if (this.msf) {
+      this.msf.Detach(this);
+      this.msf = this.msf.destructor();
     }
+    this.pLnG = null;
+    this.pClient = null;
     this.isConnected = false;
   }
 
@@ -60,44 +80,85 @@ export class MVClient {
     }
 
     try {
-      // Step 1: Fetch MSF config
-      this._emit('status', 'Fetching map config...');
+      this._emit('status', 'Loading map config...');
 
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      this.msfConfig = await response.json();
-
-      if (!this.msfConfig.map) {
-        throw new Error('Invalid MSF config: missing map section');
-      }
-
-      // Step 2: Parse connect string to get endpoint
-      const connectStr = this.msfConfig.map.connect;
-      const endpoint = this._parseConnectString(connectStr);
-
-      // Step 3: Disconnect from any existing connection
       if (this.isConnected) {
         this.disconnect();
       }
 
-      // Step 4: Connect to the map server
-      await this._connectToMV(endpoint);
+      return new Promise((resolve, reject) => {
+        this._pendingResolve = resolve;
+        this._pendingReject = reject;
 
-      // Step 5: Fetch the map tree
-      const result = await this._getMapTree();
-
-      if (result.error) {
-        throw new Error(result.error);
-      }
-
-      this._emit('mapData', result.tree);
-      return result.tree;
+        this.msf = new MV.MVRP.MSF(url, MV.MVRP.MSF.eMETHOD.GET);
+        this.msf.Attach(this);
+      });
 
     } catch (err) {
       this._emit('error', err);
       throw err;
+    }
+  }
+
+  onReadyState(pNotice) {
+    if (pNotice.pCreator !== this.msf) {
+      return;
+    }
+
+    const state = this.msf.ReadyState();
+
+    if (state === MV.MVRP.MSF.eSTATE.FAILED) {
+      const err = new Error(this.msf.XHRError || 'Failed to load MSF config');
+      this._emit('error', err);
+      if (this._pendingReject) {
+        this._pendingReject(err);
+        this._pendingResolve = null;
+        this._pendingReject = null;
+      }
+      return;
+    }
+
+    if (state >= MV.MVRP.MSF.eSTATE.READY_LOGGEDOUT) {
+      this.msfConfig = this.msf.pMSFConfig;
+      this.pLnG = this.msf.GetLnG('map');
+
+      if (!this.pLnG) {
+        const err = new Error('No map service available in MSF config');
+        this._emit('error', err);
+        if (this._pendingReject) {
+          this._pendingReject(err);
+          this._pendingResolve = null;
+          this._pendingReject = null;
+        }
+        return;
+      }
+
+      this.pClient = this.pLnG.pClient;
+      this.isConnected = true;
+
+      this._emit('status', `Connected to ${this.pClient.sEndPoint}`);
+      this._emit('connected');
+
+      this._getMapTree()
+        .then(result => {
+          if (result.error) {
+            throw new Error(result.error);
+          }
+          this._emit('mapData', result.tree);
+          if (this._pendingResolve) {
+            this._pendingResolve(result.tree);
+            this._pendingResolve = null;
+            this._pendingReject = null;
+          }
+        })
+        .catch(err => {
+          this._emit('error', err);
+          if (this._pendingReject) {
+            this._pendingReject(err);
+            this._pendingResolve = null;
+            this._pendingReject = null;
+          }
+        });
     }
   }
 
@@ -148,92 +209,25 @@ export class MVClient {
     }
   }
 
-  // Connection management
-
-  async _connectToMV(endpoint) {
+  _sendRequest(action, timeout = 30000) {
     return new Promise((resolve, reject) => {
-      this.endpoint = endpoint || 'wss://hello.rp1.com';
-      this._emit('status', `Connecting to ${this.endpoint}...`);
-
-      // Use global io from Socket.io CDN
-      this.socket = io(this.endpoint, {
-        transports: ['websocket'],
-        autoConnect: false,
-        reconnection: false
-      });
-
-      this.socket.on('connect', () => {
-        this.isConnected = true;
-        this._emit('status', 'Connected to MV server');
-        this._emit('connected');
-        resolve();
-      });
-
-      this.socket.on('connect_error', (err) => {
-        this._emit('error', new Error(`Connection error: ${err.message}`));
-        reject(err);
-      });
-
-      this.socket.on('disconnect', (reason) => {
-        this.isConnected = false;
-        this._emit('status', `Disconnected: ${reason}`);
-        this._emit('disconnected');
-      });
-
-      this.socket.connect();
-
-      setTimeout(() => {
-        if (!this.isConnected) {
-          reject(new Error('Connection timeout'));
-        }
-      }, 10000);
-    });
-  }
-
-  async _emitWithCallback(event, data, timeout = 30000) {
-    return new Promise((resolve, reject) => {
-      if (!this.socket || !this.isConnected) {
+      if (!this.pClient || !this.isConnected) {
         reject(new Error('Not connected'));
         return;
       }
 
+      const pIAction = this.pClient.Request(action);
+
       const timeoutId = setTimeout(() => {
-        reject(new Error(`Timeout waiting for response to ${event}`));
+        reject(new Error(`Timeout waiting for response to ${action.sAction}`));
       }, timeout);
 
-      this.socket.emit(event, data, (response) => {
+      pIAction.Send(this, function(pIAction) {
         clearTimeout(timeoutId);
-        resolve(response);
+        resolve(pIAction.pResponse);
       });
     });
   }
-
-  // MSF parsing
-
-  _parseConnectString(connectStr) {
-    const params = {};
-    if (connectStr) {
-      connectStr.split(';').forEach(part => {
-        const [key, value] = part.split('=');
-        if (key && value) {
-          params[key.trim()] = value.trim();
-        }
-      });
-    }
-
-    const server = params.server || 'hello.rp1.com:443';
-    const secure = params.secure === 'true';
-    const protocol = secure ? 'wss' : 'ws';
-
-    let host = server;
-    if (server.endsWith(':443') && secure) {
-      host = server.replace(':443', '');
-    }
-
-    return `${protocol}://${host}`;
-  }
-
-  // Node type resolution
 
   _resolveNodeType(data, defaultType) {
     let bType = data.bType;
@@ -256,8 +250,6 @@ export class MVClient {
 
     return defaultType;
   }
-
-  // Data extraction
 
   _extractProperties(data) {
     const props = { ...data };
@@ -323,8 +315,6 @@ export class MVClient {
     };
   }
 
-  // Node parsing (shallow, no children loaded)
-
   _parseContainerNode(data) {
     const nodeType = this._resolveNodeType(data, 'RMCObject');
     return {
@@ -373,8 +363,6 @@ export class MVClient {
       hasChildren: data.nChildren > 0
     };
   }
-
-  // Node building (with children)
 
   _buildContainerNode(data, id) {
     const parent = data.Parent || data;
@@ -522,8 +510,6 @@ export class MVClient {
     return root;
   }
 
-  // Data fetching
-
   async _getMapTree() {
     if (!this.isConnected) {
       return { error: 'Not connected to MV server' };
@@ -535,7 +521,14 @@ export class MVClient {
       const allRoots = [];
 
       for (let rootIx = 1; rootIx <= 10; rootIx++) {
-        const rootResponse = await this._emitWithCallback('RMRoot:update', { twRMRootIx: rootIx });
+        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+        pIAction.pRequest.twRMRootIx = rootIx;
+
+        const rootResponse = await new Promise((resolve) => {
+          pIAction.Send(this, function(pIAction) {
+            resolve(pIAction.pResponse);
+          });
+        });
 
         if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
           break;
@@ -589,33 +582,68 @@ export class MVClient {
               node = result.tree;
             }
           } else {
-            response = await this._emitWithCallback('RMRoot:update', { twRMRootIx: nodeId });
+            const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+            pIAction.pRequest.twRMRootIx = nodeId;
+
+            response = await new Promise((resolve) => {
+              pIAction.Send(this, function(pIAction) {
+                resolve(pIAction.pResponse);
+              });
+            });
+
             if (response && (response.nResult === undefined || response.nResult === 0)) {
               node = await this._buildTreeFromRoot(response, nodeId);
             }
           }
           break;
 
-        case 'RMCObject':
-          response = await this._emitWithCallback('RMCObject:update', { twRMCObjectIx: nodeId });
+        case 'RMCObject': {
+          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMCOBJECT.apAction.UPDATE);
+          pIAction.pRequest.twRMCObjectIx = nodeId;
+
+          response = await new Promise((resolve) => {
+            pIAction.Send(this, function(pIAction) {
+              resolve(pIAction.pResponse);
+            });
+          });
+
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildContainerNode(response, nodeId);
           }
           break;
+        }
 
-        case 'RMTObject':
-          response = await this._emitWithCallback('RMTObject:update', { twRMTObjectIx: nodeId });
+        case 'RMTObject': {
+          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMTOBJECT.apAction.UPDATE);
+          pIAction.pRequest.twRMTObjectIx = nodeId;
+
+          response = await new Promise((resolve) => {
+            pIAction.Send(this, function(pIAction) {
+              resolve(pIAction.pResponse);
+            });
+          });
+
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildTerrainNode(response, nodeId);
           }
           break;
+        }
 
-        case 'RMPObject':
-          response = await this._emitWithCallback('RMPObject:update', { twRMPObjectIx: nodeId });
+        case 'RMPObject': {
+          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMPOBJECT.apAction.UPDATE);
+          pIAction.pRequest.twRMPObjectIx = nodeId;
+
+          response = await new Promise((resolve) => {
+            pIAction.Send(this, function(pIAction) {
+              resolve(pIAction.pResponse);
+            });
+          });
+
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = this._buildPlaceableNode(response, nodeId);
           }
           break;
+        }
 
         default:
           return { error: `Unknown node type: ${nodeType}` };
