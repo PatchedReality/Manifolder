@@ -121,13 +121,14 @@ class App {
   }
 
   async checkUrlForSharedState() {
-    const hash = window.location.hash;
+    const targetWindow = window.top !== window ? window.top : window;
+    const hash = targetWindow.location.hash;
     if (!hash || !hash.startsWith('#b=')) return;
 
     const state = this.bookmarkManager.decodeStateFromUrl(hash);
     if (!state) return;
 
-    history.replaceState(null, '', window.location.pathname + window.location.search);
+    targetWindow.history.replaceState(null, '', targetWindow.location.pathname + targetWindow.location.search);
 
     await this.bookmarkManager.applyState(state, this);
   }
