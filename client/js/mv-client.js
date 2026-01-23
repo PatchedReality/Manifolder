@@ -18,6 +18,7 @@
  * Uses lib/rp1 libraries for Socket.io communication
  */
 import { NodeFactory } from './node-factory.js';
+import { setResourceBaseUrl } from './node-helpers.js';
 
 export class MVClient {
   static _initialized = false;
@@ -120,6 +121,10 @@ export class MVClient {
 
     if (state >= MV.MVRP.MSF.eSTATE.READY_LOGGEDOUT) {
       this.msfConfig = this.msf.pMSFConfig;
+
+      const rootUrl = this.msf.GetMapRootUrl();
+      setResourceBaseUrl(rootUrl);
+
       this.pLnG = this.msf.GetLnG('map');
 
       if (!this.pLnG) {

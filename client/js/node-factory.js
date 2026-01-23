@@ -8,9 +8,6 @@
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP } from '../shared/node-types.js';
 import { resolveResourceUrl } from './node-helpers.js';
 
-const CDN_RES_BASE = 'https://cdn.rp1.com/res/';
-const ACTION_PATH = 'action/';
-
 export class NodeFactory {
   static parseTransform(pTransform) {
     if (!pTransform) return null;
@@ -234,7 +231,7 @@ export class NodeFactory {
       if (ref.startsWith('action://') && name && typeof name === 'string') {
         const nameLower = name.toLowerCase();
         if (nameLower.endsWith('.json') && !name.startsWith('http://') && !name.startsWith('https://')) {
-          return CDN_RES_BASE + ACTION_PATH + name;
+          return resolveResourceUrl('action://' + name);
         }
       }
     }

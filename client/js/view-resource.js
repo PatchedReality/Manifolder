@@ -43,8 +43,6 @@ export class ViewResource {
     this.isLoading = false;
     this.loadRequestId = 0;  // Increments on each load to handle race conditions
 
-    this.resourceBaseUrl = '';  // Base URL for loading resources (from MSF server)
-
     this.statusCallbacks = [];
 
     this.animationFrameId = null;
@@ -246,16 +244,6 @@ export class ViewResource {
         const angle = speed * delta * (Math.PI / 180);  // Convert degrees/sec to radians
         target.rotateOnAxis(axis, angle);
       }
-    }
-  }
-
-  setResourceBaseUrl(msfUrl) {
-    try {
-      const url = new URL(msfUrl);
-      this.resourceBaseUrl = url.origin;
-    } catch (e) {
-      console.warn('Invalid MSF URL for resource base:', msfUrl);
-      this.resourceBaseUrl = '';
     }
   }
 
