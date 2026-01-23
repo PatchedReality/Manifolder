@@ -1112,7 +1112,6 @@ export class ViewResource {
     });
     this.loadedModels = [];
     this.contentGroup = null;
-    this.currentResourceUrl = null;
     this.rotators = [];
 
     // Clean up video elements and HLS instances

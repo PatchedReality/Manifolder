@@ -730,8 +730,12 @@ class App {
     this.hierarchy.selectNode(currentNode);
     this.viewBounds.selectNode(currentNode.id, currentNode.type);
     this.viewBounds.zoomToNode(currentNode);
+    this.inspector.showNode(currentNode);
+
     setTimeout(() => {
       this.viewGraph.zoomToNode(currentNode);
+      const expandedDescendants = this.hierarchy.getExpandedDescendants(currentNode);
+      this.viewResource.setNode(currentNode, expandedDescendants);
     }, 100);
   }
 
