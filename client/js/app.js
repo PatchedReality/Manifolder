@@ -40,11 +40,14 @@ class App {
     this.setupResetButton();
     this.setupAsyncSearch();
     this.setupBookmarks();
+    this.setupShareButton();
 
     this.layout.restoreState();
     this.inspector.clear();
     this.layout.setFollowLink(null);
     this.layout.setStatus('Disconnected', 'disconnected');
+
+    this.checkUrlForSharedState();
   }
 
   setupResetButton() {
@@ -82,6 +85,51 @@ class App {
     dropdown.addEventListener('click', (e) => {
       e.stopPropagation();
     });
+  }
+
+  setupShareButton() {
+    const shareBtn = document.getElementById('share-btn');
+    const toast = document.getElementById('share-toast');
+
+    if (!shareBtn) return;
+
+    shareBtn.addEventListener('click', async () => {
+      const url = this.bookmarkManager.encodeStateToUrl();
+
+      try {
+        await navigator.clipboard.writeText(url);
+        this.showShareToast(toast);
+      } catch (e) {
+        console.warn('Failed to copy to clipboard:', e);
+        prompt('Copy this link:', url);
+      }
+    });
+  }
+
+  showShareToast(toast) {
+    if (!toast) return;
+
+    toast.classList.remove('hidden');
+    toast.classList.add('visible');
+
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 300);
+    }, 2000);
+  }
+
+  async checkUrlForSharedState() {
+    const hash = window.location.hash;
+    if (!hash || !hash.startsWith('#b=')) return;
+
+    const state = this.bookmarkManager.decodeStateFromUrl(hash);
+    if (!state) return;
+
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+
+    await this.bookmarkManager.applyState(state, this);
   }
 
   renderBookmarkList(container) {

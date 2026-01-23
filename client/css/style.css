@@ -1313,3 +1313,38 @@ button:disabled {
   border-radius: 2px;
   outline: none;
 }
+
+/* ============================================
+   SHARE BUTTON & TOAST
+   ============================================ */
+#share-btn {
+  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+}
+
+.share-toast {
+  position: fixed;
+  top: 50px;
+  right: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: var(--font-size-sm);
+  z-index: 2000;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.share-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.share-toast.hidden {
+  display: none;
+}

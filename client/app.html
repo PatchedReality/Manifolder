@@ -27,6 +27,7 @@
     </div>
     <div class="toolbar-section bookmark-section">
       <button id="add-bookmark-btn" title="Bookmark current view">★</button>
+      <button id="share-btn" title="Copy shareable link to clipboard">Share</button>
       <div class="bookmark-dropdown-wrapper">
         <button id="bookmarks-btn" title="Bookmarks">Bookmarks ▼</button>
         <div id="bookmark-dropdown" class="bookmark-dropdown hidden">
@@ -35,6 +36,7 @@
         </div>
       </div>
     </div>
+    <div id="share-toast" class="share-toast hidden">Link copied to clipboard</div>
   </div>
 
   <!-- Main panels container -->
@@ -133,6 +135,9 @@
     }
   }
   </script>
+  <!-- Compression library for URL sharing -->
+  <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+
   <!-- lib/mvmf libraries (order matters) -->
   <script src="../lib/mvmf/MVMF.js"></script>
   <script src="../lib/mvmf/MVSB.js"></script>
