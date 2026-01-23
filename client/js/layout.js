@@ -291,8 +291,13 @@ export class LayoutManager {
     this.loadUrlHistory();
 
     // Use saved mapUrl from state, or fall back to most recent URL in history
-    // Skip auto-load if there's a shared URL hash - let checkUrlForSharedState handle it
-    const hasSharedUrl = (window.top?.location?.hash || window.location.hash).startsWith('#b=');
+    // Skip auto-load if there's a shared URL param - let checkUrlForSharedState handle it
+    let hasSharedUrl = false;
+    try {
+      hasSharedUrl = (window.top.location.search || window.location.search).includes('loc=');
+    } catch (e) {
+      hasSharedUrl = window.location.search.includes('loc=');
+    }
     if (!hasSharedUrl) {
       const navState = this.stateManager?.getSection('navigation');
       const savedUrl = navState?.mapUrl;

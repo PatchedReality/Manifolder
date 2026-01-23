@@ -141,19 +141,26 @@ export class BookmarkManager {
     const json = JSON.stringify(minimal);
     const compressed = pako.deflate(json);
     const base64 = this.toBase64Url(compressed);
-    const baseUrl = window.top !== window ? window.top.location.href : window.location.href;
+    let baseUrl;
+    try {
+      baseUrl = window.top.location.href;
+    } catch (e) {
+      baseUrl = window.location.href;
+    }
     const url = new URL(baseUrl);
-    url.hash = `b=${base64}`;
+    url.hash = '';
+    url.searchParams.set('loc', base64);
     return url.toString();
   }
 
-  decodeStateFromUrl(hash) {
-    if (!hash || !hash.startsWith('#b=')) {
+  decodeStateFromUrl(search) {
+    const params = new URLSearchParams(search);
+    const base64 = params.get('loc');
+    if (!base64) {
       return null;
     }
 
     try {
-      const base64 = hash.slice(3);
       const compressed = this.fromBase64Url(base64);
       const json = pako.inflate(compressed, { to: 'string' });
       const minimal = JSON.parse(json);

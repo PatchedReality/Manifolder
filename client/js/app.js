@@ -48,18 +48,6 @@ class App {
     this.layout.setStatus('Disconnected', 'disconnected');
 
     this.checkUrlForSharedState();
-
-    try {
-      const targetWindow = window.top !== window ? window.top : window;
-      targetWindow.addEventListener('hashchange', () => {
-        this.checkUrlForSharedState();
-      });
-    } catch (e) {
-      // Cross-origin - fall back to current window
-      window.addEventListener('hashchange', () => {
-        this.checkUrlForSharedState();
-      });
-    }
   }
 
   setupResetButton() {
@@ -133,14 +121,21 @@ class App {
   }
 
   async checkUrlForSharedState() {
-    const targetWindow = window.top !== window ? window.top : window;
-    const hash = targetWindow.location.hash;
-    if (!hash || !hash.startsWith('#b=')) return;
+    let search, targetWindow;
+    try {
+      targetWindow = window.top;
+      search = targetWindow.location.search;
+    } catch (e) {
+      targetWindow = window;
+      search = window.location.search;
+    }
 
-    const state = this.bookmarkManager.decodeStateFromUrl(hash);
+    if (!search || !search.includes('loc=')) return;
+
+    const state = this.bookmarkManager.decodeStateFromUrl(search);
     if (!state) return;
 
-    targetWindow.history.replaceState(null, '', targetWindow.location.pathname + targetWindow.location.search);
+    targetWindow.history.replaceState(null, '', targetWindow.location.pathname);
 
     await this.bookmarkManager.applyState(state, this);
   }
