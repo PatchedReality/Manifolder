@@ -102,20 +102,22 @@ export class UIStateManager {
     // Defer heavy work to next tick so click handler returns immediately
     await new Promise(r => setTimeout(r, 0));
 
-    const mapChanged = newUrl && newUrl !== currentUrl;
-
     const layoutState = snapshot.layout || {};
     const viewBoundsState = snapshot.viewBounds || {};
 
     app.layout.restoreStateValues(layoutState);
     app.viewBounds.restoreState(viewBoundsState);
 
-    if (mapChanged) {
+    if (newUrl && (newUrl !== currentUrl || !app.tree)) {
       document.getElementById('url-input').value = newUrl;
       await app.handleLoadMap(newUrl);
     }
 
     app.layout.restoreStateUI(layoutState);
+
+    if (!app.tree) {
+      return false;
+    }
 
     if (snapshot.hierarchy?.expandedNodeIds?.length > 0) {
       app.hierarchy.expandNodesByKeys(snapshot.hierarchy.expandedNodeIds);

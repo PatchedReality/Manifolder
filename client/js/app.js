@@ -675,7 +675,8 @@ class App {
   }
 
   async restoreNodePath(path) {
-    if (!path || path.length === 0 || !this.tree) {
+    if (!this.tree) return;
+    if (!path || path.length === 0) {
       this.hierarchy.selectNode(this.tree);
       return;
     }
