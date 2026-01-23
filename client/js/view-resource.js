@@ -7,6 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import Hls from 'hls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
 
@@ -27,6 +28,8 @@ export class ViewResource {
     this.loadedModels = [];
     this.contentGroup = null;
     this.rotators = [];  // Active rotator animations
+    this.videoPlanes = [];  // Video meshes for click-to-play
+    this.hlsInstances = [];  // HLS.js instances for cleanup
     this.clock = new THREE.Clock();
 
     this.metadataCache = new Map();
@@ -109,6 +112,7 @@ export class ViewResource {
     // Store bound handlers for cleanup
     this.boundResizeHandler = () => this.onWindowResize();
     this.boundDblClickHandler = (e) => this.onDoubleClick(e);
+    this.boundClickHandler = (e) => this.onClick(e);
 
     window.addEventListener('resize', this.boundResizeHandler);
     this.setupEventListeners();
@@ -117,6 +121,31 @@ export class ViewResource {
 
   setupEventListeners() {
     this.renderer.domElement.addEventListener('dblclick', this.boundDblClickHandler);
+    this.renderer.domElement.addEventListener('click', this.boundClickHandler);
+  }
+
+  onClick(event) {
+    if (this.videoPlanes.length === 0) return;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersects = this.raycaster.intersectObjects(this.videoPlanes, false);
+
+    if (intersects.length > 0) {
+      const mesh = intersects[0].object;
+      const video = mesh.userData.video;
+      if (video) {
+        if (video.paused) {
+          video.muted = false;
+          video.play();
+        } else {
+          video.pause();
+        }
+      }
+    }
   }
 
   onDoubleClick(event) {
@@ -324,6 +353,22 @@ export class ViewResource {
     }
     this.loadedModels = [];
     this.rotators = [];
+
+    // Clean up video elements from cancelled load
+    for (const mesh of this.videoPlanes) {
+      const video = mesh.userData.video;
+      if (video) {
+        video.pause();
+        video.src = '';
+        video.load();
+      }
+    }
+    this.videoPlanes = [];
+
+    for (const hls of this.hlsInstances) {
+      hls.destroy();
+    }
+    this.hlsInstances = [];
   }
 
   async loadDirectGlb(url, nodeTransform, requestId) {
@@ -611,11 +656,15 @@ export class ViewResource {
       return this.loadTextSprite(resourceName, transform, objectBounds, requestId);
     }
 
+    // Handle video planes
+    if (resourceReference === 'action://video.json') {
+      return this.loadVideoPlane(resourceName, transform, objectBounds, requestId);
+    }
+
     // Skip non-visual action types (behavioral, UI, sync components)
     const nonVisualActions = [
       'action://collider.json',
       'action://interior.json',
-      'action://video.json',
       'action://testswitch.json',
       'action://player_controller.json',
       'action://activity.json',
@@ -799,6 +848,87 @@ export class ViewResource {
     light.applyMatrix4(transform);
 
     return light;
+  }
+
+  async loadVideoPlane(resourceName, transform, objectBounds, requestId = null) {
+    let videoUrl = null;
+
+    if (resourceName) {
+      try {
+        const url = resolveResourceUrl('action://' + resourceName);
+        const response = await fetch(url);
+        if (requestId !== null && requestId !== this.loadRequestId) return null;
+        if (response.ok) {
+          const data = await response.json();
+          const sources = data?.body?.streamConfig?.sources;
+          if (sources && sources.length > 0) {
+            videoUrl = sources[0];
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed to load video params: ${resourceName}`);
+      }
+    }
+
+    if (!videoUrl) {
+      console.warn('No video URL found in video config');
+      return null;
+    }
+
+    // Create video element
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.loop = true;
+    video.muted = true;
+    video.playsInline = true;
+
+    // Handle HLS streams
+    const isHls = videoUrl.toLowerCase().includes('.m3u8');
+    if (isHls && Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(videoUrl);
+      hls.attachMedia(video);
+      this.hlsInstances.push(hls);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS support
+      video.src = videoUrl;
+    } else {
+      video.src = videoUrl;
+    }
+
+    // Create video texture
+    const texture = new THREE.VideoTexture(video);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    // Create 1x1 plane, node's scale handles final size
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      side: THREE.DoubleSide
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.video = video;
+    mesh.userData.isVideoPlane = true;
+
+    // Adjust width to video's aspect ratio when metadata loads
+    video.addEventListener('loadedmetadata', () => {
+      if (video.videoWidth && video.videoHeight) {
+        const aspect = video.videoWidth / video.videoHeight;
+        mesh.geometry.dispose();
+        mesh.geometry = new THREE.PlaneGeometry(aspect, 1);
+      }
+    }, { once: true });
+
+    // Apply transform
+    mesh.applyMatrix4(transform);
+
+    // Track for click handling
+    this.videoPlanes.push(mesh);
+
+    return mesh;
   }
 
   async loadMetadata(metadataRef) {
@@ -985,6 +1115,22 @@ export class ViewResource {
     this.currentResourceUrl = null;
     this.rotators = [];
 
+    // Clean up video elements and HLS instances
+    for (const mesh of this.videoPlanes) {
+      const video = mesh.userData.video;
+      if (video) {
+        video.pause();
+        video.src = '';
+        video.load();
+      }
+    }
+    this.videoPlanes = [];
+
+    for (const hls of this.hlsInstances) {
+      hls.destroy();
+    }
+    this.hlsInstances = [];
+
     // Clear and dispose cached GLB scenes
     for (const [, cachedScene] of this.glbCache) {
       cachedScene.traverse((child) => {
@@ -1037,6 +1183,7 @@ export class ViewResource {
     window.removeEventListener('resize', this.boundResizeHandler);
     if (this.renderer?.domElement) {
       this.renderer.domElement.removeEventListener('dblclick', this.boundDblClickHandler);
+      this.renderer.domElement.removeEventListener('click', this.boundClickHandler);
     }
 
     // Clear scene content
