@@ -5,7 +5,11 @@
  * See docs/NODE_FACTORY_PLAN.md for architecture details
  */
 
-import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
+import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP } from '../shared/node-types.js';
+import { resolveResourceUrl } from './node-helpers.js';
+
+const CDN_RES_BASE = 'https://cdn.rp1.com/res/';
+const ACTION_PATH = 'action/';
 
 export class NodeFactory {
   static parseTransform(pTransform) {
@@ -111,6 +115,7 @@ export class NodeFactory {
       bound: this.parseBound(parent.pBound),
       orbit: type === 'RMCObject' ? this.parseOrbit(parent.pOrbit_Spin) : null,
       properties: this.#extractProperties(parent),
+      resourceUrl: this.#getResourceUrl(parent.pResource),
       children: [],
       hasChildren: false,
       rawData: data
@@ -152,6 +157,7 @@ export class NodeFactory {
         transform: this.parseTransform(child.pTransform),
         bound: this.parseBound(child.pBound),
         properties: this.#extractProperties(child),
+        resourceUrl: this.#getResourceUrl(child.pResource),
         children: [],
         hasChildren: child.nChildren > 0,
         rawData: child
@@ -202,5 +208,125 @@ export class NodeFactory {
 
     ignored.forEach(key => delete props[key]);
     return props;
+  }
+
+  static #getResourceUrl(pResource) {
+    if (!pResource) return null;
+
+    const ref = pResource.sReference;
+    const name = pResource.sName;
+
+    if (ref && typeof ref === 'string') {
+      const lower = ref.toLowerCase();
+
+      if (lower.endsWith('.json') && (ref.startsWith('http://') || ref.startsWith('https://'))) {
+        return ref;
+      }
+
+      if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+        return resolveResourceUrl(ref);
+      }
+
+      if (lower.endsWith('.json') && !ref.startsWith('action://')) {
+        return resolveResourceUrl(ref);
+      }
+
+      if (ref.startsWith('action://') && name && typeof name === 'string') {
+        const nameLower = name.toLowerCase();
+        if (nameLower.endsWith('.json') && !name.startsWith('http://') && !name.startsWith('https://')) {
+          return CDN_RES_BASE + ACTION_PATH + name;
+        }
+      }
+    }
+
+    if (name && typeof name === 'string') {
+      const lower = name.toLowerCase();
+      if (lower.endsWith('.json') && (name.startsWith('http://') || name.startsWith('https://'))) {
+        return name;
+      }
+    }
+
+    return null;
+  }
+
+  static async getResourceData(node) {
+    if (!node.resourceUrl) return null;
+    if (node._resourceData !== undefined) return node._resourceData;
+    if (node._resourceLoading) return node._resourceLoading;
+
+    node._resourceLoading = this.#fetchAndProcessResource(node.resourceUrl);
+    try {
+      node._resourceData = await node._resourceLoading;
+    } catch {
+      node._resourceData = null;
+    }
+    node._resourceLoading = null;
+    return node._resourceData;
+  }
+
+  static async #fetchAndProcessResource(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
+    return this.#processResourceJson(json, url);
+  }
+
+  static #processResourceJson(json, resourceUrl) {
+    const baseDir = resourceUrl.substring(0, resourceUrl.lastIndexOf('/') + 1);
+
+    if (json.lods || json.LODs) {
+      return this.#processMetadataResource(json, baseDir);
+    }
+
+    if (json.body?.blueprint) {
+      return this.#processBlueprintResource(json);
+    }
+
+    return json;
+  }
+
+  static #processMetadataResource(json, baseDir) {
+    const result = { ...json };
+    const lods = result.lods || result.LODs;
+
+    if (lods) {
+      const processedLods = lods.map(lod => {
+        if (typeof lod === 'string') {
+          return { file: lod, _url: baseDir + lod };
+        }
+        if (lod.file) {
+          return { ...lod, _url: baseDir + lod.file };
+        }
+        return lod;
+      });
+      if (result.lods) result.lods = processedLods;
+      if (result.LODs) result.LODs = processedLods;
+    }
+
+    return result;
+  }
+
+  static #processBlueprintResource(json) {
+    const result = JSON.parse(JSON.stringify(json));
+
+    const hasFileExtension = (str) => /\.[a-zA-Z0-9]+$/.test(str);
+
+    const processNode = (node) => {
+      if (node.resourceReference && !node.resourceReference.startsWith('action://')) {
+        node._resourceReferenceUrl = resolveResourceUrl(node.resourceReference);
+      }
+      if (node.resourceName && hasFileExtension(node.resourceName)) {
+        node._resourceNameUrl = resolveResourceUrl('action://' + node.resourceName);
+      }
+      if (node.children) {
+        node.children.forEach(processNode);
+      }
+    };
+
+    if (result.body?.blueprint) {
+      processNode(result.body.blueprint);
+    }
+
+    return result;
   }
 }

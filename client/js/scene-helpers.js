@@ -160,23 +160,6 @@ export function calculateGridSpacing(characteristicSize) {
 }
 
 /**
- * Calculates characteristic size from node bounds (cube root of volume)
- * @param {Object} bound - Node bounds { x, y, z } representing half-extents
- * @returns {number} Characteristic size
- */
-export function getCharacteristicSize(bound) {
-  if (!bound) {
-    return 0;
-  }
-
-  const fullX = (bound.x || 1) * 2;
-  const fullY = (bound.y || bound.x || 1) * 2;
-  const fullZ = (bound.z || bound.x || 1) * 2;
-
-  return Math.cbrt(fullX * fullY * fullZ);
-}
-
-/**
  * Updates the grid spacing uniforms for an existing infinite grid
  * @param {THREE.Mesh} gridMesh - The grid mesh returned by createInfiniteGrid
  * @param {Object} options - New spacing options

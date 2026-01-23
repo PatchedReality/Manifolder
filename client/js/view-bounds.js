@@ -305,16 +305,15 @@ export class ViewBounds {
     const timeLabels = ['Paused', '1 sec/sec', '1 min/sec', '1 hr/sec', '1 day/sec', '1 wk/sec', '1 mo/sec', '1 yr/sec'];
     const timeScales = [0, 1, 60, 3600, 86400, 604800, 2592000, 31536000];
 
+    const clampIndex = (value) => Math.max(0, Math.min(timeLabels.length - 1, Math.round(value)));
+
     const updateLabel = (value) => {
-      const idx = Math.round(value);
-      label.textContent = timeLabels[idx] || timeLabels[4];
+      label.textContent = timeLabels[clampIndex(value)];
     };
 
     const sliderToTimeScale = (value) => {
-      // Treat values close to 0 as paused
       if (value < 0.5) return 0;
-      const idx = Math.round(value);
-      return timeScales[idx] || timeScales[4];
+      return timeScales[clampIndex(value)];
     };
 
     slider.addEventListener('input', (e) => {
@@ -583,14 +582,6 @@ export class ViewBounds {
 
   _getKey(id, type) {
     return `${type}_${id}`;
-  }
-
-  _getMsfReference(nodeData) {
-    const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
-      return ref;
-    }
-    return null;
   }
 
   clearNodes() {
@@ -1254,6 +1245,10 @@ export class ViewBounds {
         textureLoader.load(
           surfaceInfo.url,
           (texture) => {
+                    if (!mesh.parent) {
+              texture.dispose();
+              return;
+            }
             texture.colorSpace = THREE.SRGBColorSpace;
             material.map = texture;
             material.needsUpdate = true;
@@ -2091,30 +2086,22 @@ export class ViewBounds {
     });
     this.orbitPaths.clear();
 
-    // Dispose globe if exists
-    if (this.globe) {
-      this.scene.remove(this.globe);
-      this.globe.geometry?.dispose();
-      this.globe.material?.dispose();
-    }
-
-    // Dispose scene helpers
-    if (this.starfield) {
-      this.starfield.geometry?.dispose();
-      this.starfield.material?.dispose();
-    }
-    if (this.gridHelper) {
-      this.gridHelper.geometry?.dispose();
-      this.gridHelper.material?.dispose();
+    // Dispose globe, starfield, and grid
+    for (const obj of [this.globe, this.starfield, this.gridHelper]) {
+      if (obj) {
+        this.scene.remove(obj);
+        obj.geometry?.dispose();
+        obj.material?.dispose();
+      }
     }
 
     // Dispose lights
-    if (this.hemiLight) this.hemiLight.dispose();
-    if (this.dirLight) this.dirLight.dispose();
-    if (this.cameraLight) this.cameraLight.dispose();
+    for (const light of [this.hemiLight, this.dirLight, this.cameraLight]) {
+      light?.dispose();
+    }
 
     // Dispose controls and renderer
-    if (this.controls) this.controls.dispose();
-    if (this.renderer) this.renderer.dispose();
+    this.controls?.dispose();
+    this.renderer?.dispose();
   }
 }

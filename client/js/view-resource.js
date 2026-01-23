@@ -8,7 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
-import { getResourceUrl, resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl } from './node-helpers.js';
 
 export class ViewResource {
   constructor(containerSelector) {
@@ -230,35 +230,22 @@ export class ViewResource {
     }
   }
 
-  _resolveResourceUrl(path) {
-    if (!path) return null;
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
-    if (this.resourceBaseUrl && path.startsWith('/')) {
-      return this.resourceBaseUrl + path;
-    }
-    return path;
-  }
-
   setNode(node, expandedDescendants = []) {
     this.currentNode = node;
 
     const resourcesToLoad = [];
 
-    const nodeResourceUrl = getResourceUrl(node);
-    if (nodeResourceUrl) {
+    if (node.resourceUrl) {
       resourcesToLoad.push({
-        url: nodeResourceUrl,
+        url: node.resourceUrl,
         transform: null
       });
     }
 
     for (const { node: childNode, cumulativeTransform } of expandedDescendants) {
-      const childResourceUrl = getResourceUrl(childNode);
-      if (childResourceUrl) {
+      if (childNode.resourceUrl) {
         resourcesToLoad.push({
-          url: childResourceUrl,
+          url: childNode.resourceUrl,
           transform: cumulativeTransform
         });
       }
@@ -290,10 +277,15 @@ export class ViewResource {
     this.scene.add(this.contentGroup);
     this.setStatus(`Loading ${resourcesToLoad.length} resource(s)...`, 'loading');
 
+    const isCancelled = () => requestId !== this.loadRequestId;
+
     try {
       for (const { url, transform } of resourcesToLoad) {
         // Check if this request is still current
-        if (requestId !== this.loadRequestId) return;
+        if (isCancelled()) {
+          this.cleanupCancelledLoad();
+          return;
+        }
 
         const lower = url.toLowerCase();
         if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
@@ -304,7 +296,10 @@ export class ViewResource {
       }
 
       // Final check before updating UI
-      if (requestId !== this.loadRequestId) return;
+      if (isCancelled()) {
+        this.cleanupCancelledLoad();
+        return;
+      }
 
       this.centerContentAtOrigin();
       this.fitCameraToContent();
@@ -322,13 +317,22 @@ export class ViewResource {
     }
   }
 
+  cleanupCancelledLoad() {
+    if (this.contentGroup) {
+      this.scene.remove(this.contentGroup);
+      this.contentGroup = null;
+    }
+    this.loadedModels = [];
+    this.rotators = [];
+  }
+
   async loadDirectGlb(url, nodeTransform, requestId) {
     return new Promise((resolve) => {
       this.gltfLoader.load(
         url,
         (gltf) => {
           // Check if this request is still current before adding to scene
-          if (requestId !== this.loadRequestId) {
+          if (requestId !== this.loadRequestId || !this.contentGroup) {
             resolve();
             return;
           }
@@ -418,7 +422,7 @@ export class ViewResource {
       const glbName = typeof lod0 === 'string' ? lod0 : lod0.file || lod0.name;
       if (glbName) {
         const model = await this.loadGlb(glbName, requestId);
-        if (model && (requestId === null || requestId === this.loadRequestId)) {
+        if (model && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
           }
@@ -444,7 +448,7 @@ export class ViewResource {
 
     // Process blueprint recursively to preserve group hierarchy (needed for rotators)
     const result = await this.processBlueprintNode(blueprint, requestId);
-    if (result && (requestId === null || requestId === this.loadRequestId)) {
+    if (result && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
       if (nodeTransform) {
         this.applyNodeTransform(result, nodeTransform);
       }
@@ -553,7 +557,14 @@ export class ViewResource {
       // Check if request is still current after fetch
       if (requestId !== null && requestId !== this.loadRequestId) return;
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseErr) {
+        console.warn(`Invalid JSON in rotator params: ${resourceName}`);
+        return;
+      }
+
       const axisArray = data?.body?.axis || [0, 1, 0];
       const speed = data?.body?.rotSpeed || 10;
 
@@ -1032,38 +1043,23 @@ export class ViewResource {
     this.clearScene();
 
     // Dispose scene helpers
-    if (this.starfield) {
-      this.starfield.geometry?.dispose();
-      this.starfield.material?.dispose();
-    }
-    if (this.gridHelper) {
-      this.gridHelper.geometry?.dispose();
-      this.gridHelper.material?.dispose();
+    for (const obj of [this.starfield, this.gridHelper]) {
+      if (obj) {
+        obj.geometry?.dispose();
+        obj.material?.dispose();
+      }
     }
 
     // Dispose lights
-    if (this.hemiLight) this.hemiLight.dispose();
-    if (this.keyLight) this.keyLight.dispose();
-    if (this.rimLight) this.rimLight.dispose();
-    if (this.cameraLight) this.cameraLight.dispose();
-
-    // Dispose loaders
-    if (this.dracoLoader) {
-      this.dracoLoader.dispose();
-    }
-    if (this.ktx2Loader) {
-      this.ktx2Loader.dispose();
+    for (const light of [this.hemiLight, this.keyLight, this.rimLight, this.cameraLight]) {
+      light?.dispose();
     }
 
-    // Dispose controls
-    if (this.controls) {
-      this.controls.dispose();
-    }
-
-    // Dispose renderer
-    if (this.renderer) {
-      this.renderer.dispose();
-    }
+    // Dispose loaders, controls, and renderer
+    this.dracoLoader?.dispose();
+    this.ktx2Loader?.dispose();
+    this.controls?.dispose();
+    this.renderer?.dispose();
   }
 
   setStatus(message, state = '') {

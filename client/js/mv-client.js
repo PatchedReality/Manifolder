@@ -199,27 +199,28 @@ export class MVClient {
   }
 
   _emit(event, data) {
-    if (this.callbacks[event]) {
-      this.callbacks[event].forEach(handler => {
-        try {
-          handler(data);
-        } catch (error) {
-        }
-      });
-    }
+    this.callbacks[event]?.forEach(handler => {
+      try {
+        handler(data);
+      } catch {
+        // Handler errors should not propagate
+      }
+    });
   }
 
   _sendRequest(action, timeout = 30000) {
+    if (!this.pClient || !this.isConnected) {
+      return Promise.reject(new Error('Not connected'));
+    }
+
+    const pIAction = this.pClient.Request(action);
+    return this._sendAction(pIAction, timeout);
+  }
+
+  _sendAction(pIAction, timeout = 30000) {
     return new Promise((resolve, reject) => {
-      if (!this.pClient || !this.isConnected) {
-        reject(new Error('Not connected'));
-        return;
-      }
-
-      const pIAction = this.pClient.Request(action);
-
       const timeoutId = setTimeout(() => {
-        reject(new Error(`Timeout waiting for response to ${action.sAction}`));
+        reject(new Error('Request timeout'));
       }, timeout);
 
       pIAction.Send(this, function(pIAction) {
@@ -229,7 +230,7 @@ export class MVClient {
     });
   }
 
-  async _buildTreeFromRoot(rootData, rootIx = 1) {
+  _buildTreeFromRoot(rootData, rootIx = 1) {
     return NodeFactory.createNode('RMRoot', rootData, rootIx);
   }
 
@@ -247,17 +248,13 @@ export class MVClient {
         const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
         pIAction.pRequest.twRMRootIx = rootIx;
 
-        const rootResponse = await new Promise((resolve) => {
-          pIAction.Send(this, function(pIAction) {
-            resolve(pIAction.pResponse);
-          });
-        });
+        const rootResponse = await this._sendAction(pIAction);
 
         if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
           break;
         }
 
-        const rootTree = await this._buildTreeFromRoot(rootResponse, rootIx);
+        const rootTree = this._buildTreeFromRoot(rootResponse, rootIx);
         allRoots.push(rootTree);
       }
 
@@ -308,14 +305,10 @@ export class MVClient {
             const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
             pIAction.pRequest.twRMRootIx = nodeId;
 
-            response = await new Promise((resolve) => {
-              pIAction.Send(this, function(pIAction) {
-                resolve(pIAction.pResponse);
-              });
-            });
+            response = await this._sendAction(pIAction);
 
             if (response && (response.nResult === undefined || response.nResult === 0)) {
-              node = await this._buildTreeFromRoot(response, nodeId);
+              node = this._buildTreeFromRoot(response, nodeId);
             }
           }
           break;
@@ -324,11 +317,7 @@ export class MVClient {
           const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMCOBJECT.apAction.UPDATE);
           pIAction.pRequest.twRMCObjectIx = nodeId;
 
-          response = await new Promise((resolve) => {
-            pIAction.Send(this, function(pIAction) {
-              resolve(pIAction.pResponse);
-            });
-          });
+          response = await this._sendAction(pIAction);
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = NodeFactory.createNode('RMCObject', response, nodeId);
@@ -340,11 +329,7 @@ export class MVClient {
           const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMTOBJECT.apAction.UPDATE);
           pIAction.pRequest.twRMTObjectIx = nodeId;
 
-          response = await new Promise((resolve) => {
-            pIAction.Send(this, function(pIAction) {
-              resolve(pIAction.pResponse);
-            });
-          });
+          response = await this._sendAction(pIAction);
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = NodeFactory.createNode('RMTObject', response, nodeId);
@@ -356,11 +341,7 @@ export class MVClient {
           const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMPOBJECT.apAction.UPDATE);
           pIAction.pRequest.twRMPObjectIx = nodeId;
 
-          response = await new Promise((resolve) => {
-            pIAction.Send(this, function(pIAction) {
-              resolve(pIAction.pResponse);
-            });
-          });
+          response = await this._sendAction(pIAction);
 
           if (response && (response.nResult === undefined || response.nResult === 0)) {
             node = NodeFactory.createNode('RMPObject', response, nodeId);
@@ -399,11 +380,7 @@ export class MVClient {
         const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
         pIAction.pRequest.twRMRootIx = rootIx;
 
-        const rootResponse = await new Promise((resolve) => {
-          pIAction.Send(this, function(pIAction) {
-            resolve(pIAction.pResponse);
-          });
-        });
+        const rootResponse = await this._sendAction(pIAction);
 
         if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
           break;
@@ -476,11 +453,7 @@ export class MVClient {
       pIAction.pRequest.dZ = 0;
       pIAction.pRequest.sText = searchText.toLowerCase();
 
-      const response = await new Promise((resolve) => {
-        pIAction.Send(this, function(pIAction) {
-          resolve(pIAction.pResponse);
-        });
-      });
+      const response = await this._sendAction(pIAction);
 
       // Server returns nResult: -1 for unimplemented search (e.g., RMTObject)
       if (response.nResult === -1) {

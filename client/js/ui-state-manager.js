@@ -69,7 +69,6 @@ export class UIStateManager {
     localStorage.removeItem('selectedNodeId');
     localStorage.removeItem('selectedNodeType');
     localStorage.removeItem('selectedNodePath');
-    window.dispatchEvent(new CustomEvent('mv:state-reset'));
     window.location.reload();
   }
 

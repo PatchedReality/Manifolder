@@ -58,29 +58,23 @@ class App {
     if (!searchInput) return;
 
     let asyncDebounceTimer;
+    let currentSearchId = 0;
 
     const clearSearch = () => {
       searchInput.value = '';
       clearBtn?.classList.remove('visible');
       if (searchStatus) searchStatus.textContent = '';
+      currentSearchId++;
       this.hierarchy.clearSearchFilter();
     };
 
     const updateClearButton = () => {
-      if (searchInput.value) {
-        clearBtn?.classList.add('visible');
-      } else {
-        clearBtn?.classList.remove('visible');
-      }
+      clearBtn?.classList.toggle('visible', !!searchInput.value);
     };
 
     const updateSearchStatus = (unavailable) => {
       if (!searchStatus) return;
-      if (unavailable && unavailable.length > 0) {
-        searchStatus.textContent = 'Server search unavailable';
-      } else {
-        searchStatus.textContent = '';
-      }
+      searchStatus.textContent = unavailable?.length > 0 ? 'Server search unavailable' : '';
     };
 
     searchInput.addEventListener('input', (e) => {
@@ -91,6 +85,7 @@ class App {
 
       if (!searchText || searchText.length < 2) {
         if (!searchText) {
+          currentSearchId++;
           this.hierarchy.clearSearchFilter();
           updateSearchStatus([]);
         }
@@ -98,6 +93,8 @@ class App {
       }
 
       asyncDebounceTimer = setTimeout(async () => {
+        const searchId = ++currentSearchId;
+
         // Do local search on already-loaded nodes
         const localMatches = this.hierarchy.searchLocalNodes(searchText.toLowerCase());
 
@@ -106,6 +103,9 @@ class App {
         if (this.client.connected) {
           serverResults = await this.client.searchNodes(searchText);
         }
+
+        // Check if this search is still current (newer search may have started)
+        if (searchId !== currentSearchId) return;
 
         updateSearchStatus(serverResults.unavailable);
 
@@ -135,6 +135,9 @@ class App {
           matches: mergedMatches,
           paths: serverResults.paths
         };
+
+        // Final check before applying results
+        if (searchId !== currentSearchId) return;
 
         // Always apply filter - with no results, this hides everything
         await this.hierarchy.revealSearchResults(mergedResults, (node) => this.loadNodeChildren(node));
@@ -500,17 +503,6 @@ class App {
     }
   }
 
-  findNodeById(tree, id) {
-    if (tree.id === id) return tree;
-    if (tree.children) {
-      for (const child of tree.children) {
-        const found = this.findNodeById(child, id);
-        if (found) return found;
-      }
-    }
-    return null;
-  }
-
   async restoreNodePath(path) {
     if (!path || path.length === 0 || !this.tree) {
       this.hierarchy.selectNode(this.tree);
@@ -565,6 +557,10 @@ class App {
   }
 
   async loadNodeChildren(node) {
+    if (!node?.type || node.id === undefined) {
+      return;
+    }
+
     const key = `${node.type}_${node.id}`;
 
     // If already loading this node, return the existing promise

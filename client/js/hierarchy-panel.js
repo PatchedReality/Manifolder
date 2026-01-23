@@ -107,17 +107,17 @@ export class HierarchyPanel {
     }
   }
 
-  addParentsToSet(nodeKey, set) {
+  addParentsToSet(nodeKey, set, depth = 0) {
+    if (depth > 100 || set.has(nodeKey)) return;
+
     const element = this.nodes.get(nodeKey);
-    if (!element) {
-      return;
-    }
+    if (!element) return;
 
     const parent = element.parentElement?.closest('.tree-node');
     if (parent) {
       const parentKey = `node-${parent.dataset.uid}`;
       set.add(parentKey);
-      this.addParentsToSet(parentKey, set);
+      this.addParentsToSet(parentKey, set, depth + 1);
     }
   }
 
@@ -836,7 +836,8 @@ export class HierarchyPanel {
         this.hideContextMenu();
       }
     };
-    setTimeout(() => {
+    this._contextMenuSetupTimeout = setTimeout(() => {
+      this._contextMenuSetupTimeout = null;
       document.addEventListener('click', this._contextMenuCloseHandler);
       document.addEventListener('contextmenu', this._contextMenuCloseHandler);
       document.addEventListener('touchstart', this._contextMenuCloseHandler);
@@ -844,6 +845,10 @@ export class HierarchyPanel {
   }
 
   hideContextMenu() {
+    if (this._contextMenuSetupTimeout) {
+      clearTimeout(this._contextMenuSetupTimeout);
+      this._contextMenuSetupTimeout = null;
+    }
     const menu = document.getElementById('tree-context-menu');
     if (menu) {
       menu.remove();
