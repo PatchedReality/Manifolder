@@ -291,16 +291,20 @@ export class LayoutManager {
     this.loadUrlHistory();
 
     // Use saved mapUrl from state, or fall back to most recent URL in history
-    const navState = this.stateManager?.getSection('navigation');
-    const savedUrl = navState?.mapUrl;
-    const history = this.getUrlHistory();
-    const initialUrl = savedUrl || (history.length > 0 ? history[0] : null);
+    // Skip auto-load if there's a shared URL hash - let checkUrlForSharedState handle it
+    const hasSharedUrl = (window.top?.location?.hash || window.location.hash).startsWith('#b=');
+    if (!hasSharedUrl) {
+      const navState = this.stateManager?.getSection('navigation');
+      const savedUrl = navState?.mapUrl;
+      const history = this.getUrlHistory();
+      const initialUrl = savedUrl || (history.length > 0 ? history[0] : null);
 
-    if (initialUrl && input) {
-      input.value = initialUrl;
-      setTimeout(() => {
-        loadBtn?.click();
-      }, 100);
+      if (initialUrl && input) {
+        input.value = initialUrl;
+        setTimeout(() => {
+          loadBtn?.click();
+        }, 100);
+      }
     }
 
     select?.addEventListener('change', () => {
