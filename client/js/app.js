@@ -48,6 +48,18 @@ class App {
     this.layout.setStatus('Disconnected', 'disconnected');
 
     this.checkUrlForSharedState();
+
+    try {
+      const targetWindow = window.top !== window ? window.top : window;
+      targetWindow.addEventListener('hashchange', () => {
+        this.checkUrlForSharedState();
+      });
+    } catch (e) {
+      // Cross-origin - fall back to current window
+      window.addEventListener('hashchange', () => {
+        this.checkUrlForSharedState();
+      });
+    }
   }
 
   setupResetButton() {
