@@ -1,0 +1,12 @@
+{
+  "name": "manifolder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}
