@@ -499,8 +499,9 @@ export class ViewBounds {
     this.renderer.render(this.scene, this.camera);
   }
 
-  setData(tree) {
+  setData(tree, inheritedPlanetContext = null) {
     this.tree = tree;
+    this.inheritedPlanetContext = inheritedPlanetContext;
     this.clearNodes();
     this.nodeData.clear();
     this.nodeParents.clear();
@@ -510,7 +511,7 @@ export class ViewBounds {
     this.focusNode = null;
 
     if (tree) {
-      this.buildNodeData(tree);
+      this.buildNodeData(tree, null, null, null, inheritedPlanetContext);
       this.calculateDynamicScale();
       this.expandedNodes.add(this._getKey(tree.id, tree.type));
 
@@ -945,13 +946,22 @@ export class ViewBounds {
     };
   }
 
-  buildNodeData(node, parentWorldPos = null, parentWorldRot = null, parentNode = null) {
+  buildNodeData(node, parentWorldPos = null, parentWorldRot = null, parentNode = null, planetContext = null) {
     const localPos = node.transform?.position || { x: 0, y: 0, z: 0 };
     const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
     const bound = node.bound || { x: 0, y: 0, z: 0 };
 
     // Check for orbital data
     const orbitData = getOrbitData(node);
+
+    // Detect Surface node and create planet context for descendants
+    if (node.nodeType === 'Surface' && bound.x > 0) {
+      planetContext = {
+        radius: bound.x,
+        planetName: parentNode?.name || 'Unknown',
+        celestialId: node.id
+      };
+    }
 
     let worldPos, worldRot;
 
@@ -1006,6 +1016,9 @@ export class ViewBounds {
     node._worldRot = worldRot;
     node._bound = bound;
     node._orbitData = orbitData;
+    if (planetContext) {
+      node._planetContext = planetContext;
+    }
 
     // Store parent ref in separate map to avoid circular JSON
     if (parentNode) {
@@ -1014,7 +1027,7 @@ export class ViewBounds {
 
     if (node.children && node.children.length > 0) {
       node.children.forEach(child => {
-        this.buildNodeData(child, worldPos, worldRot, node);
+        this.buildNodeData(child, worldPos, worldRot, node, planetContext);
       });
     }
   }
@@ -1518,9 +1531,10 @@ export class ViewBounds {
 
     const parentWorldPos = parent._worldPos;
     const parentWorldRot = parent._worldRot;
+    const parentPlanetContext = parent._planetContext;
 
     children.forEach(child => {
-      this.buildNodeData(child, parentWorldPos, parentWorldRot, parent);
+      this.buildNodeData(child, parentWorldPos, parentWorldRot, parent, parentPlanetContext);
     });
 
     if (!parent.children) {
@@ -2103,5 +2117,12 @@ export class ViewBounds {
     // Dispose controls and renderer
     this.controls?.dispose();
     this.renderer?.dispose();
+  }
+
+  getPlanetContext(node) {
+    if (!node) return null;
+    const key = this._getKey(node.id, node.type);
+    const nodeData = this.nodeData.get(key);
+    return nodeData?._planetContext || this.inheritedPlanetContext || null;
   }
 }

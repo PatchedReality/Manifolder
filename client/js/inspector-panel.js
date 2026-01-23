@@ -8,6 +8,7 @@
  */
 
 import { NodeFactory } from './node-factory.js';
+import { calculateLatLong, formatLatLong } from './geo-utils.js';
 
 const TYPE_COLORS = {
   RMRoot: 'var(--node-rmroot)',
@@ -53,7 +54,12 @@ export class InspectorPanel {
     this.currentNode = null;
     this.showRawJson = false;
     this.showResource = false;
+    this.inheritedPlanetContext = null;
     this.restoreState();
+  }
+
+  setInheritedPlanetContext(context) {
+    this.inheritedPlanetContext = context;
   }
 
   saveState() {
@@ -80,6 +86,7 @@ export class InspectorPanel {
     this.container.innerHTML = '';
 
     this._renderBasicInfo(nodeData);
+    this._renderLocation(nodeData);
     this._renderTransform(nodeData);
     this._renderBounds(nodeData);
     this._renderRawJson(nodeData);
@@ -115,6 +122,23 @@ export class InspectorPanel {
 
     this._addRow(section, 'ID', node.id !== undefined ? String(node.id) : '(none)');
 
+    this.container.appendChild(section);
+  }
+
+  _renderLocation(node) {
+    const planetContext = node._planetContext || this.inheritedPlanetContext;
+    if (!node._worldPos || !planetContext) return;
+
+    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    if (!coords) return;
+
+    const section = this._createSection('Location');
+
+    const valueContainer = document.createElement('span');
+    valueContainer.className = 'inspector-value inspector-location-value';
+    valueContainer.innerHTML = `${formatLatLong(coords.latitude, coords.longitude)}<span class="inspector-planet-name"> (${planetContext.planetName})</span>`;
+
+    this._addRowWithElement(section, 'Lat/Long', valueContainer);
     this.container.appendChild(section);
   }
 

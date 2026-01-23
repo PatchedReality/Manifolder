@@ -13,6 +13,7 @@ import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
+import { calculateLatLong } from './geo-utils.js';
 
 class App {
   constructor() {
@@ -28,7 +29,64 @@ class App {
 
     this.tree = null;
     this.loadingNodes = new Map();
+    this.selectedNode = null;
+    this.inheritedPlanetContext = null;
+    this.rp1GoBtn = document.getElementById('rp1-go-btn');
     this.init();
+  }
+
+  updateRP1GoButton(node) {
+    if (!this.rp1GoBtn) return;
+
+    const planetContext = this.viewBounds.getPlanetContext(node);
+    if (!node?._worldPos || !planetContext?.celestialId) {
+      this.rp1GoBtn.classList.add('hidden');
+      return;
+    }
+
+    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    if (!coords) {
+      this.rp1GoBtn.classList.add('hidden');
+      return;
+    }
+
+    const url = `https://enter.rp1.com/?start_cid=${planetContext.celestialId}&start_geo=[${coords.latitude.toFixed(5)},${coords.longitude.toFixed(5)},${planetContext.radius}]`;
+
+    this.rp1GoBtn.href = url;
+    this.rp1GoBtn.classList.remove('hidden');
+  }
+
+  /**
+   * Handle node selection from any source view.
+   * @param {Object} node - The selected node
+   * @param {string} source - 'hierarchy' | 'graph' | 'bounds'
+   */
+  handleNodeSelection(node, source) {
+    this.selectedNode = node;
+
+    if (source !== 'hierarchy') {
+      this.hierarchy.selectNode(node);
+      this.hierarchy.expandToNode(node);
+    }
+    if (source !== 'graph') {
+      this.viewGraph.selectNode(node);
+    }
+    if (source !== 'bounds') {
+      this.viewBounds.selectNode(node.id, node.type);
+    }
+
+    const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+    this.viewResource.setNode(node, expandedDescendants);
+    this.inspector.showNode(node);
+    this.layout.setFollowLink(getMsfReference(node));
+    this.updateRP1GoButton(node);
+
+    if (source === 'hierarchy') {
+      const path = this.hierarchy.getPathToNode(node);
+      this.stateManager.updateSection('navigation', {
+        selectedNodePath: path || []
+      });
+    }
   }
 
   init() {
@@ -498,17 +556,7 @@ class App {
 
   setupHierarchyEvents() {
     this.hierarchy.onSelect(node => {
-      this.viewGraph.selectNode(node);
-      this.viewBounds.selectNode(node.id, node.type);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
-
-      const path = this.hierarchy.getPathToNode(node);
-      this.stateManager.updateSection('navigation', {
-        selectedNodePath: path || []
-      });
+      this.handleNodeSelection(node, 'hierarchy');
     });
 
     this.hierarchy.onZoom(node => {
@@ -548,13 +596,7 @@ class App {
 
   setupViewEvents() {
     this.viewGraph.onSelect(node => {
-      this.hierarchy.selectNode(node);
-      this.hierarchy.expandToNode(node);
-      this.viewBounds.selectNode(node.id, node.type);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
+      this.handleNodeSelection(node, 'graph');
     });
 
     this.viewGraph.onToggle(node => {
@@ -568,13 +610,7 @@ class App {
     });
 
     this.viewBounds.onSelect(node => {
-      this.hierarchy.selectNode(node);
-      this.hierarchy.expandToNode(node);
-      this.viewGraph.selectNode(node);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
+      this.handleNodeSelection(node, 'bounds');
     });
 
     this.viewBounds.onToggle((node, expanded) => {
@@ -599,6 +635,10 @@ class App {
 
   setupLayoutEvents() {
     this.layout.onLoad(async ({ url }) => {
+      // Capture planet context from selected node before loading new map
+      if (this.selectedNode) {
+        this.inheritedPlanetContext = this.viewBounds.getPlanetContext(this.selectedNode);
+      }
       await this.handleLoadMap(url);
     });
   }
@@ -629,11 +669,24 @@ class App {
       const tree = await this.client.loadMap(url);
       this.tree = tree;
 
+      // Detect Earth MSF and set default planet context
+      if (!this.inheritedPlanetContext && url.includes('earth.msf')) {
+        this.inheritedPlanetContext = {
+          planetName: 'Earth',
+          celestialId: 104,
+          radius: 6371000
+        };
+      }
+
       this.hierarchy.setData(tree);
       this.viewGraph.setData(tree);
-      this.viewBounds.setData(tree);
+      this.viewBounds.setData(tree, this.inheritedPlanetContext);
+      this.inspector.setInheritedPlanetContext(this.inheritedPlanetContext);
       this.inspector.clear();
       this.layout.setFollowLink(null);
+      this.rp1GoBtn?.classList.add('hidden');
+      this.selectedNode = null;
+      this.inheritedPlanetContext = null;
 
       this.layout.setStatus('Map loaded', 'connected');
       this.stateManager.updateSection('navigation', { mapUrl: url });

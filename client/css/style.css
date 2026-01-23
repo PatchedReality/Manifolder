@@ -1026,6 +1026,18 @@ body {
   text-decoration: underline;
 }
 
+.inspector-location-value {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.inspector-planet-name {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 /* ============================================
    STATUS BAR
    ============================================ */
@@ -1317,6 +1329,28 @@ button:disabled {
 /* ============================================
    SHARE BUTTON & TOAST
    ============================================ */
+#rp1-go-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--accent-dim);
+  color: var(--text-primary);
+  border-radius: 3px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid var(--accent);
+}
+
+#rp1-go-btn:hover {
+  background: var(--accent);
+  text-decoration: none;
+}
+
+#rp1-go-btn.hidden {
+  display: none;
+}
+
 #share-btn {
   font-size: var(--font-size-sm);
   padding: 4px 8px;
