@@ -141,7 +141,8 @@ export class BookmarkManager {
     const json = JSON.stringify(minimal);
     const compressed = pako.deflate(json);
     const base64 = this.toBase64Url(compressed);
-    const url = new URL(window.location.href);
+    const baseUrl = window.top !== window ? window.top.location.href : window.location.href;
+    const url = new URL(baseUrl);
     url.hash = `b=${base64}`;
     return url.toString();
   }
