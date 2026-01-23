@@ -63,7 +63,7 @@ class App {
       searchInput.value = '';
       clearBtn?.classList.remove('visible');
       if (searchStatus) searchStatus.textContent = '';
-      this.hierarchy.filterNodes('');
+      this.hierarchy.clearSearchFilter();
     };
 
     const updateClearButton = () => {
@@ -91,22 +91,53 @@ class App {
 
       if (!searchText || searchText.length < 2) {
         if (!searchText) {
-          this.hierarchy.filterNodes('');
+          this.hierarchy.clearSearchFilter();
           updateSearchStatus([]);
         }
         return;
       }
 
       asyncDebounceTimer = setTimeout(async () => {
-        if (!this.client.connected) return;
+        // Do local search on already-loaded nodes
+        const localMatches = this.hierarchy.searchLocalNodes(searchText.toLowerCase());
 
-        const results = await this.client.searchNodes(searchText);
-
-        updateSearchStatus(results.unavailable);
-
-        if (results.matches.length > 0 || results.paths.length > 0) {
-          await this.hierarchy.revealSearchResults(results, (node) => this.loadNodeChildren(node));
+        // Do server search if connected
+        let serverResults = { matches: [], paths: [], unavailable: [] };
+        if (this.client.connected) {
+          serverResults = await this.client.searchNodes(searchText);
         }
+
+        updateSearchStatus(serverResults.unavailable);
+
+        // Merge and dedupe results
+        const seenKeys = new Set();
+        const mergedMatches = [];
+
+        // Add server matches first
+        for (const match of serverResults.matches) {
+          const key = `${match.type}_${match.id}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            mergedMatches.push(match);
+          }
+        }
+
+        // Add local matches
+        for (const match of localMatches) {
+          const key = `${match.type}_${match.id}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            mergedMatches.push(match);
+          }
+        }
+
+        const mergedResults = {
+          matches: mergedMatches,
+          paths: serverResults.paths
+        };
+
+        // Always apply filter - with no results, this hides everything
+        await this.hierarchy.revealSearchResults(mergedResults, (node) => this.loadNodeChildren(node));
       }, 300);
     });
 

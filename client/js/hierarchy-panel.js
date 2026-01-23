@@ -51,55 +51,60 @@ export class HierarchyPanel {
   }
 
   init() {
-    this.setupSearch();
   }
 
-  setupSearch() {
-    if (!this.searchInput) {
-      return;
-    }
-
-    let debounceTimer;
-    this.searchInput.addEventListener('input', (e) => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        this.filterNodes(e.target.value.toLowerCase().trim());
-      }, 150);
+  clearSearchFilter() {
+    this.nodes.forEach((element) => {
+      element.classList.remove('hidden');
+      element.classList.remove('search-match');
     });
   }
 
-  filterNodes(searchTerm) {
-    if (!searchTerm) {
-      this.nodes.forEach((element) => {
-        element.classList.remove('hidden');
-        element.classList.remove('search-match');
-      });
-      return;
-    }
-
-    const matchingKeys = new Set();
-
+  searchLocalNodes(searchTerm) {
+    const matches = [];
     this.nodeData.forEach((data, nodeKey) => {
       if (data.name.toLowerCase().includes(searchTerm)) {
-        matchingKeys.add(nodeKey);
-        this.addParentsToSet(nodeKey, matchingKeys);
+        matches.push({
+          id: data.id,
+          name: data.name,
+          type: data.type,
+          nodeType: data.nodeType
+        });
       }
     });
+    return matches;
+  }
 
+  _applySearchFilter(visibleKeys, matchKeys) {
+    // Hide non-matching nodes, show matching ones
     this.nodes.forEach((element, nodeKey) => {
-      if (matchingKeys.has(nodeKey)) {
+      element.classList.remove('search-match');
+      if (visibleKeys.has(nodeKey)) {
         element.classList.remove('hidden');
-        const data = this.nodeData.get(nodeKey);
-        if (data && data.name.toLowerCase().includes(searchTerm)) {
+        if (matchKeys.has(nodeKey)) {
           element.classList.add('search-match');
-        } else {
-          element.classList.remove('search-match');
         }
       } else {
         element.classList.add('hidden');
-        element.classList.remove('search-match');
       }
     });
+
+    // Expand to each match so they're all visible
+    for (const matchKey of matchKeys) {
+      this.expandToNode(matchKey);
+    }
+
+    // Scroll first match into view
+    if (matchKeys.size > 0) {
+      const firstMatchKey = matchKeys.values().next().value;
+      const element = this.nodes.get(firstMatchKey);
+      if (element) {
+        const content = element.querySelector(':scope > .tree-node-content');
+        if (content) {
+          content.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }
   }
 
   addParentsToSet(nodeKey, set) {
@@ -852,11 +857,16 @@ export class HierarchyPanel {
   }
 
   async revealSearchResults(results, loadNodeCallback) {
-    if (!results || (results.matches.length === 0 && results.paths.length === 0)) {
+    if (!results) {
       return;
     }
 
-    // Build set of all node keys that should be visible
+    // If no results, hide all nodes (empty search result)
+    if (results.matches.length === 0 && results.paths.length === 0) {
+      this._applySearchFilter(new Set(), new Set());
+      return;
+    }
+
     const visibleKeys = new Set();
     const matchKeys = new Set();
 
@@ -901,36 +911,7 @@ export class HierarchyPanel {
       }
     }
 
-    // Hide all nodes not in visibleKeys, show and highlight those that are
-    this.nodes.forEach((element, nodeKey) => {
-      element.classList.remove('search-match');
-
-      if (visibleKeys.has(nodeKey)) {
-        element.classList.remove('hidden');
-        if (matchKeys.has(nodeKey)) {
-          element.classList.add('search-match');
-        }
-      } else {
-        element.classList.add('hidden');
-      }
-    });
-
-    // Expand to first match and scroll into view
-    if (results.matches.length > 0) {
-      const firstMatch = results.matches[0];
-      const firstNode = this._findNodeByTypeAndId(firstMatch.type, firstMatch.id);
-      if (firstNode) {
-        const nodeKey = this._nodeKey(firstNode);
-        this.expandToNode(nodeKey);
-        const element = this.nodes.get(nodeKey);
-        if (element) {
-          const content = element.querySelector(':scope > .tree-node-content');
-          if (content) {
-            content.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          }
-        }
-      }
-    }
+    this._applySearchFilter(visibleKeys, matchKeys);
   }
 
   _findNodeByTypeAndId(type, id) {
