@@ -7,6 +7,10 @@ const STATE_VERSION = 1;
 
 const DEFAULT_STATE = {
   version: STATE_VERSION,
+  navigation: {
+    mapUrl: '',
+    selectedNodePath: []
+  },
   layout: {
     hierarchyWidth: 285,
     inspectorWidth: 280,
@@ -64,11 +68,12 @@ export class UIStateManager {
   }
 
   resetAndReload() {
+    const currentMapUrl = this.state.navigation?.mapUrl;
     this.state = this.cloneDefaults();
-    localStorage.removeItem(UI_STATE_KEY);
-    localStorage.removeItem('selectedNodeId');
-    localStorage.removeItem('selectedNodeType');
-    localStorage.removeItem('selectedNodePath');
+    if (currentMapUrl) {
+      this.state.navigation.mapUrl = currentMapUrl;
+    }
+    this.save();
     window.location.reload();
   }
 
@@ -79,6 +84,48 @@ export class UIStateManager {
   updateSection(section, data) {
     this.state[section] = { ...this.state[section], ...data };
     this.save();
+  }
+
+  getFullState() {
+    return JSON.parse(JSON.stringify(this.state));
+  }
+
+  async applyFullState(snapshot, app) {
+    if (!snapshot) return false;
+
+    const currentUrl = this.state.navigation.mapUrl;
+    const newUrl = snapshot.navigation?.mapUrl;
+
+    this.state = this.mergeWithDefaults(snapshot);
+    this.save();
+
+    // Defer heavy work to next tick so click handler returns immediately
+    await new Promise(r => setTimeout(r, 0));
+
+    const mapChanged = newUrl && newUrl !== currentUrl;
+
+    const layoutState = snapshot.layout || {};
+    const viewBoundsState = snapshot.viewBounds || {};
+
+    app.layout.restoreStateValues(layoutState);
+    app.viewBounds.restoreState(viewBoundsState);
+
+    if (mapChanged) {
+      document.getElementById('url-input').value = newUrl;
+      await app.handleLoadMap(newUrl);
+    }
+
+    app.layout.restoreStateUI(layoutState);
+
+    if (snapshot.hierarchy?.expandedNodeIds?.length > 0) {
+      app.hierarchy.expandNodesByKeys(snapshot.hierarchy.expandedNodeIds);
+    }
+
+    if (snapshot.navigation?.selectedNodePath?.length > 0) {
+      await app.restoreNodePath(snapshot.navigation.selectedNodePath);
+    }
+
+    return true;
   }
 
   cloneDefaults() {

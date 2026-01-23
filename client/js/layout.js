@@ -290,11 +290,14 @@ export class LayoutManager {
     this.followLinkUrl = null;
     this.loadUrlHistory();
 
-    // Default to most recent URL
+    // Use saved mapUrl from state, or fall back to most recent URL in history
+    const navState = this.stateManager?.getSection('navigation');
+    const savedUrl = navState?.mapUrl;
     const history = this.getUrlHistory();
-    if (history.length > 0 && input) {
-      input.value = history[0];
-      // Auto-load after a short delay to ensure app is initialized
+    const initialUrl = savedUrl || (history.length > 0 ? history[0] : null);
+
+    if (initialUrl && input) {
+      input.value = initialUrl;
       setTimeout(() => {
         loadBtn?.click();
       }, 100);
@@ -474,23 +477,8 @@ export class LayoutManager {
     });
   }
 
-  restoreState() {
-    if (!this.stateManager) return;
-    const state = this.stateManager.getSection('layout');
-
-    if (state.hierarchyWidth) {
-      this.panels.hierarchy.style.width = state.hierarchyWidth + 'px';
-    }
-    if (state.inspectorWidth) {
-      this.panels.inspector.style.width = state.inspectorWidth + 'px';
-    }
-
-    if (state.hierarchyMinimized) {
-      this.minimizePanelWithoutSave('hierarchy');
-    }
-    if (state.inspectorMinimized) {
-      this.minimizePanelWithoutSave('inspector');
-    }
+  restoreStateValues(state) {
+    state = state || this.stateManager?.getSection('layout') || {};
 
     if (typeof state.graphEnabled === 'boolean') {
       this.graphEnabled = state.graphEnabled;
@@ -501,9 +489,37 @@ export class LayoutManager {
     if (typeof state.resourceEnabled === 'boolean') {
       this.resourceEnabled = state.resourceEnabled;
     }
+  }
+
+  restoreStateUI(state) {
+    state = state || this.stateManager?.getSection('layout') || {};
+
+    if (state.hierarchyWidth) {
+      this.panels.hierarchy.style.width = state.hierarchyWidth + 'px';
+    }
+    if (state.inspectorWidth) {
+      this.panels.inspector.style.width = state.inspectorWidth + 'px';
+    }
+
+    if (state.hierarchyMinimized) {
+      this.minimizePanelWithoutSave('hierarchy');
+    } else {
+      this.restorePanelWithoutSave('hierarchy');
+    }
+    if (state.inspectorMinimized) {
+      this.minimizePanelWithoutSave('inspector');
+    } else {
+      this.restorePanelWithoutSave('inspector');
+    }
 
     this.updateViewToggles();
     this.updateViewDisplay();
+  }
+
+  restoreState() {
+    const state = this.stateManager?.getSection('layout') || {};
+    this.restoreStateValues(state);
+    this.restoreStateUI(state);
   }
 
   minimizePanelWithoutSave(panelName) {
@@ -519,6 +535,24 @@ export class LayoutManager {
     }
     if (resizeHandle) {
       resizeHandle.classList.add('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  restorePanelWithoutSave(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.remove('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.add('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.remove('hidden');
     }
 
     window.dispatchEvent(new Event('resize'));

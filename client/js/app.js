@@ -12,6 +12,7 @@ import { MVClient } from './mv-client.js';
 import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
 import { UIStateManager } from './ui-state-manager.js';
+import { BookmarkManager } from './bookmark-manager.js';
 
 class App {
   constructor() {
@@ -23,6 +24,7 @@ class App {
     this.viewResource = new ViewResource('#viewport-resource');
     this.inspector = new InspectorPanel('#inspector-content', this.stateManager);
     this.client = new MVClient();
+    this.bookmarkManager = new BookmarkManager(this.stateManager);
 
     this.tree = null;
     this.loadingNodes = new Map();
@@ -37,6 +39,7 @@ class App {
     this.setupTypeFilter();
     this.setupResetButton();
     this.setupAsyncSearch();
+    this.setupBookmarks();
 
     this.layout.restoreState();
     this.inspector.clear();
@@ -49,6 +52,128 @@ class App {
     resetBtn?.addEventListener('click', () => {
       this.stateManager.resetAndReload();
     });
+  }
+
+  setupBookmarks() {
+    const addBtn = document.getElementById('add-bookmark-btn');
+    const bookmarksBtn = document.getElementById('bookmarks-btn');
+    const dropdown = document.getElementById('bookmark-dropdown');
+    const bookmarkList = dropdown?.querySelector('.bookmark-list');
+
+    if (!addBtn || !bookmarksBtn || !dropdown || !bookmarkList) return;
+
+    addBtn.addEventListener('click', () => {
+      const selectedNode = this.hierarchy.getSelectedNode();
+      const name = selectedNode?.name || selectedNode?.type || 'Untitled';
+      this.bookmarkManager.save(name);
+      this.renderBookmarkList(bookmarkList);
+    });
+
+    bookmarksBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.renderBookmarkList(bookmarkList);
+      dropdown.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', () => {
+      dropdown.classList.add('hidden');
+    });
+
+    dropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  renderBookmarkList(container) {
+    const bookmarks = this.bookmarkManager.list();
+    container.innerHTML = '';
+
+    bookmarks.forEach(bookmark => {
+      const item = document.createElement('div');
+      item.className = 'bookmark-item';
+      item.dataset.id = bookmark.id;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'bookmark-item-name';
+      nameSpan.textContent = bookmark.name;
+      nameSpan.title = bookmark.name;
+
+      item.addEventListener('click', () => {
+        const state = this.bookmarkManager.load(bookmark.id);
+        if (state) {
+          document.getElementById('bookmark-dropdown')?.classList.add('hidden');
+          this.bookmarkManager.applyState(state, this);
+        }
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'bookmark-item-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'bookmark-item-btn';
+      editBtn.textContent = '✎';
+      editBtn.title = 'Rename';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.startBookmarkEdit(item, bookmark);
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'bookmark-item-btn';
+      deleteBtn.textContent = '×';
+      deleteBtn.title = 'Delete';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.bookmarkManager.delete(bookmark.id);
+        this.renderBookmarkList(container);
+      });
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+
+      item.appendChild(nameSpan);
+      item.appendChild(actions);
+      container.appendChild(item);
+    });
+  }
+
+  startBookmarkEdit(item, bookmark) {
+    const nameSpan = item.querySelector('.bookmark-item-name');
+    const actions = item.querySelector('.bookmark-item-actions');
+
+    nameSpan.style.display = 'none';
+    actions.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bookmark-edit-input';
+    input.value = bookmark.name;
+
+    let finished = false;
+    const finishEdit = () => {
+      if (finished) return;
+      finished = true;
+      const newName = input.value.trim() || bookmark.name;
+      this.bookmarkManager.rename(bookmark.id, newName);
+      input.remove();
+      nameSpan.textContent = newName;
+      nameSpan.style.display = '';
+      actions.style.display = '';
+    };
+
+    input.addEventListener('blur', finishEdit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        finishEdit();
+      } else if (e.key === 'Escape') {
+        input.value = bookmark.name;
+        finishEdit();
+      }
+    });
+
+    item.insertBefore(input, nameSpan);
+    input.focus();
+    input.select();
   }
 
   setupAsyncSearch() {
@@ -324,14 +449,10 @@ class App {
       this.inspector.showNode(node);
       this.layout.setFollowLink(getMsfReference(node));
 
-      localStorage.setItem('selectedNodeId', node.id);
-      localStorage.setItem('selectedNodeType', node.type);
-
-      // Save path from root to this node for restoration
       const path = this.hierarchy.getPathToNode(node);
-      if (path) {
-        localStorage.setItem('selectedNodePath', JSON.stringify(path));
-      }
+      this.stateManager.updateSection('navigation', {
+        selectedNodePath: path || []
+      });
     });
 
     this.hierarchy.onZoom(node => {
@@ -460,6 +581,7 @@ class App {
       this.layout.setFollowLink(null);
 
       this.layout.setStatus('Map loaded', 'connected');
+      this.stateManager.updateSection('navigation', { mapUrl: url });
 
       if (tree) {
         // Check for saved hierarchy state
@@ -488,9 +610,9 @@ class App {
         }
 
         // Try to restore previously selected node via path
-        const savedPath = localStorage.getItem('selectedNodePath');
-        if (savedPath) {
-          await this.restoreNodePath(JSON.parse(savedPath));
+        const navState = this.stateManager.getSection('navigation');
+        if (navState.selectedNodePath?.length > 0) {
+          await this.restoreNodePath(navState.selectedNodePath);
         } else {
           this.hierarchy.selectNode(tree);
           setTimeout(() => {

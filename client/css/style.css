@@ -1204,3 +1204,112 @@ button:disabled {
 .text-secondary {
   color: var(--text-secondary);
 }
+
+/* ============================================
+   BOOKMARKS
+   ============================================ */
+.bookmark-section {
+  margin-left: auto;
+}
+
+.bookmark-dropdown-wrapper {
+  position: relative;
+}
+
+#add-bookmark-btn {
+  font-size: 14px;
+  padding: 4px 8px;
+}
+
+.bookmark-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  z-index: 1000;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.bookmark-dropdown.hidden {
+  display: none;
+}
+
+.bookmark-empty {
+  padding: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.bookmark-list:not(:empty) + .bookmark-empty {
+  display: none;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  gap: 6px;
+  cursor: pointer;
+}
+
+.bookmark-item:last-child {
+  border-bottom: none;
+}
+
+.bookmark-item:hover {
+  background: var(--bg-hover);
+}
+
+.bookmark-item:hover .bookmark-item-name {
+  color: var(--accent);
+}
+
+.bookmark-item-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.bookmark-item-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.bookmark-item-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  border-radius: 2px;
+}
+
+.bookmark-item-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.bookmark-edit-input {
+  flex: 1;
+  padding: 2px 4px;
+  font-size: var(--font-size-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  border-radius: 2px;
+  outline: none;
+}

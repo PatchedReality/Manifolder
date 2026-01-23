@@ -1990,9 +1990,8 @@ export class ViewBounds {
     });
   }
 
-  restoreState() {
-    if (!this.stateManager) return;
-    const state = this.stateManager.getSection('viewBounds');
+  restoreState(state) {
+    state = state || this.stateManager?.getSection('viewBounds') || {};
 
     if (state.expandedNodeIds && Array.isArray(state.expandedNodeIds)) {
       this.pendingExpandedNodes = new Set(state.expandedNodeIds);
@@ -2000,6 +1999,7 @@ export class ViewBounds {
 
     if (state.typeFilter && Array.isArray(state.typeFilter)) {
       this.typeFilter = new Set(state.typeFilter);
+      this.syncTypeFilterCheckboxes();
     }
 
     if (typeof state.timeScaleIndex === 'number') {
