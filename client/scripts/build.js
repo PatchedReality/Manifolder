@@ -5,21 +5,29 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(__dirname, '..');
+const watchMode = process.argv.includes('--watch');
 
 const version = Math.floor(Date.now() / 1000);
 
-console.log(`Building with version: ${version}`);
+console.log(`Building with version: ${version}${watchMode ? ' (watch mode)' : ''}`);
 
-// Bundle the app
-await esbuild.build({
+const buildOptions = {
   entryPoints: [path.join(clientDir, 'js/app.js')],
   bundle: true,
   format: 'esm',
   outfile: path.join(clientDir, 'dist/app.bundle.js'),
   external: ['three', 'three/*', 'hls.js'],
-  minify: true,
+  minify: !watchMode,
   sourcemap: true,
-});
+};
+
+if (watchMode) {
+  const ctx = await esbuild.context(buildOptions);
+  await ctx.watch();
+  console.log('Watching for changes...');
+} else {
+  await esbuild.build(buildOptions);
+}
 
 // Update HTML to reference the bundle
 const htmlPath = path.join(clientDir, 'app.html');

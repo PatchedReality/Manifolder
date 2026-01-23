@@ -19,10 +19,10 @@ export class NodeFactory {
         z: pTransform.Position?.[2] || 0
       },
       rotation: {
-        x: pTransform.Rotation?.[0] || 0,
-        y: pTransform.Rotation?.[1] || 0,
-        z: pTransform.Rotation?.[2] || 0,
-        w: pTransform.Rotation?.[3] || 1
+        x: pTransform.Rotation?.[0] ?? 0,
+        y: pTransform.Rotation?.[1] ?? 0,
+        z: pTransform.Rotation?.[2] ?? 0,
+        w: pTransform.Rotation?.[3] ?? 1
       },
       scale: {
         x: pTransform.Scale?.[0] || 1,

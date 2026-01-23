@@ -624,8 +624,8 @@ export class ViewResource {
 
     const offsetMatrix = new THREE.Matrix4();
     const position = new THREE.Vector3(pos[0], pos[1], pos[2]);
-    const quaternion = new THREE.Quaternion(rot[0] || 0, rot[1] || 0, rot[2] || 0, rot[3] || 1);
-    const scaleVec = new THREE.Vector3(scale[0] || 1, scale[1] || 1, scale[2] || 1);
+    const quaternion = new THREE.Quaternion(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0, rot[3] ?? 1);
+    const scaleVec = new THREE.Vector3(scale[0] ?? 1, scale[1] ?? 1, scale[2] ?? 1);
 
     offsetMatrix.compose(position, quaternion, scaleVec);
     model.applyMatrix4(offsetMatrix);
