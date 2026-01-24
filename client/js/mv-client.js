@@ -247,47 +247,116 @@ export class MVClient {
     this._emit('status', 'Loading map tree...');
 
     try {
-      const allRoots = [];
+      const wClass = this.msf.GetMapWClass();
+      const twObjectIx = this.msf.GetMapObjectIx();
 
-      for (let rootIx = 1; rootIx <= 10; rootIx++) {
-        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-        pIAction.pRequest.twRMRootIx = rootIx;
-
-        const rootResponse = await this._sendAction(pIAction);
-
-        if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-          break;
-        }
-
-        const rootTree = this._buildTreeFromRoot(rootResponse, rootIx);
-        allRoots.push(rootTree);
+      if (wClass !== undefined && twObjectIx !== undefined) {
+        return await this._getMapTreeFromObject(wClass, twObjectIx);
       }
 
-      if (allRoots.length === 0) {
-        return { error: 'No roots found in map' };
-      }
-
-      let tree;
-      if (allRoots.length === 1) {
-        tree = allRoots[0];
-      } else {
-        tree = {
-          name: 'Map',
-          type: 'RMRoot',
-          nodeType: 'Root',
-          id: 0,
-          transform: null,
-          bound: null,
-          children: allRoots,
-          hasChildren: true
-        };
-      }
-
-      return { tree };
+      return await this._getMapTreeAllRoots();
 
     } catch (err) {
       return { error: err.message };
     }
+  }
+
+  async _getMapTreeFromObject(wClass, twObjectIx) {
+    const WCLASS_RMROOT = 70;
+    const WCLASS_RMCOBJECT = 71;
+    const WCLASS_RMTOBJECT = 72;
+    const WCLASS_RMPOBJECT = 73;
+
+    let pIAction;
+    let response;
+    let tree;
+
+    switch (wClass) {
+      case WCLASS_RMROOT:
+        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+        pIAction.pRequest.twRMRootIx = twObjectIx;
+        response = await this._sendAction(pIAction);
+        if (response && (response.nResult === undefined || response.nResult === 0)) {
+          tree = this._buildTreeFromRoot(response, twObjectIx);
+        }
+        break;
+
+      case WCLASS_RMCOBJECT:
+        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMCOBJECT.apAction.UPDATE);
+        pIAction.pRequest.twRMCObjectIx = twObjectIx;
+        response = await this._sendAction(pIAction);
+        if (response && (response.nResult === undefined || response.nResult === 0)) {
+          tree = NodeFactory.createNode('RMCObject', response, twObjectIx);
+        }
+        break;
+
+      case WCLASS_RMTOBJECT:
+        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMTOBJECT.apAction.UPDATE);
+        pIAction.pRequest.twRMTObjectIx = twObjectIx;
+        response = await this._sendAction(pIAction);
+        if (response && (response.nResult === undefined || response.nResult === 0)) {
+          tree = NodeFactory.createNode('RMTObject', response, twObjectIx);
+        }
+        break;
+
+      case WCLASS_RMPOBJECT:
+        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMPOBJECT.apAction.UPDATE);
+        pIAction.pRequest.twRMPObjectIx = twObjectIx;
+        response = await this._sendAction(pIAction);
+        if (response && (response.nResult === undefined || response.nResult === 0)) {
+          tree = NodeFactory.createNode('RMPObject', response, twObjectIx);
+        }
+        break;
+
+      default:
+        return { error: `Unknown wClass: ${wClass}` };
+    }
+
+    if (!tree) {
+      return { error: `Failed to load object (wClass=${wClass}, twObjectIx=${twObjectIx})` };
+    }
+
+    return { tree };
+  }
+
+  async _getMapTreeAllRoots() {
+    const allRoots = [];
+
+    for (let rootIx = 1; rootIx <= 10; rootIx++) {
+      const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+      pIAction.pRequest.twRMRootIx = rootIx;
+
+      const rootResponse = await this._sendAction(pIAction);
+
+      if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
+        break;
+      }
+
+      const rootTree = this._buildTreeFromRoot(rootResponse, rootIx);
+      allRoots.push(rootTree);
+    }
+
+    if (allRoots.length === 0) {
+      return { error: 'No roots found in map' };
+    }
+
+    let tree;
+    if (allRoots.length === 1) {
+      tree = allRoots[0];
+    } else {
+      tree = {
+        name: 'Map',
+        type: 'RMRoot',
+        nodeType: 'Root',
+        id: 0,
+        transform: null,
+        bound: null,
+        children: allRoots,
+        hasChildren: true
+      };
+    }
+
+    return { tree };
   }
 
   async _getNode(nodeId, nodeType) {
@@ -376,35 +445,17 @@ export class MVClient {
 
     const results = { matches: [], paths: [], unavailable: [] };
 
-    // Find ALL root child indices for search scopes (query all roots like _getMapTree)
     const rmcObjectIndices = [];
     const rmtObjectIndices = [];
 
+    const wClass = this.msf.GetMapWClass();
+    const twObjectIx = this.msf.GetMapObjectIx();
+
     try {
-      for (let rootIx = 1; rootIx <= 10; rootIx++) {
-        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-        pIAction.pRequest.twRMRootIx = rootIx;
-
-        const rootResponse = await this._sendAction(pIAction);
-
-        if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-          break;
-        }
-
-        if (rootResponse.aChild && rootResponse.aChild.length > 0) {
-          for (const childArray of rootResponse.aChild) {
-            if (Array.isArray(childArray)) {
-              for (const child of childArray) {
-                if (child.twRMCObjectIx) {
-                  rmcObjectIndices.push(child.twRMCObjectIx);
-                }
-                if (child.twRMTObjectIx) {
-                  rmtObjectIndices.push(child.twRMTObjectIx);
-                }
-              }
-            }
-          }
-        }
+      if (wClass !== undefined && twObjectIx !== undefined) {
+        await this._collectSearchIndicesFromObject(wClass, twObjectIx, rmcObjectIndices, rmtObjectIndices);
+      } else {
+        await this._collectSearchIndicesFromAllRoots(rmcObjectIndices, rmtObjectIndices);
       }
     } catch (err) {
       return results;
@@ -496,5 +547,68 @@ export class MVClient {
     }
 
     return { matches, paths };
+  }
+
+  async _collectSearchIndicesFromObject(wClass, twObjectIx, rmcObjectIndices, rmtObjectIndices) {
+    const WCLASS_RMROOT = 70;
+    const WCLASS_RMCOBJECT = 71;
+    const WCLASS_RMTOBJECT = 72;
+    const WCLASS_RMPOBJECT = 73;
+
+    switch (wClass) {
+      case WCLASS_RMROOT: {
+        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+        pIAction.pRequest.twRMRootIx = twObjectIx;
+        const response = await this._sendAction(pIAction);
+
+        if (response && (response.nResult === undefined || response.nResult === 0)) {
+          this._extractChildIndices(response, rmcObjectIndices, rmtObjectIndices);
+        }
+        break;
+      }
+
+      case WCLASS_RMCOBJECT:
+        rmcObjectIndices.push(twObjectIx);
+        break;
+
+      case WCLASS_RMTOBJECT:
+        rmtObjectIndices.push(twObjectIx);
+        break;
+
+      case WCLASS_RMPOBJECT:
+        break;
+    }
+  }
+
+  async _collectSearchIndicesFromAllRoots(rmcObjectIndices, rmtObjectIndices) {
+    for (let rootIx = 1; rootIx <= 10; rootIx++) {
+      const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
+      pIAction.pRequest.twRMRootIx = rootIx;
+
+      const rootResponse = await this._sendAction(pIAction);
+
+      if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
+        break;
+      }
+
+      this._extractChildIndices(rootResponse, rmcObjectIndices, rmtObjectIndices);
+    }
+  }
+
+  _extractChildIndices(response, rmcObjectIndices, rmtObjectIndices) {
+    if (response.aChild && response.aChild.length > 0) {
+      for (const childArray of response.aChild) {
+        if (Array.isArray(childArray)) {
+          for (const child of childArray) {
+            if (child.twRMCObjectIx) {
+              rmcObjectIndices.push(child.twRMCObjectIx);
+            }
+            if (child.twRMTObjectIx) {
+              rmtObjectIndices.push(child.twRMTObjectIx);
+            }
+          }
+        }
+      }
+    }
   }
 }

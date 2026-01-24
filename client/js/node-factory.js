@@ -213,34 +213,19 @@ export class NodeFactory {
     const ref = pResource.sReference;
     const name = pResource.sName;
 
-    if (ref && typeof ref === 'string') {
-      const lower = ref.toLowerCase();
-
-      if (lower.endsWith('.json') && (ref.startsWith('http://') || ref.startsWith('https://'))) {
-        return ref;
-      }
-
-      if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-        return resolveResourceUrl(ref);
-      }
-
-      if (lower.endsWith('.json') && !ref.startsWith('action://')) {
-        return resolveResourceUrl(ref);
-      }
-
-      if (ref.startsWith('action://') && name && typeof name === 'string') {
-        const nameLower = name.toLowerCase();
-        if (nameLower.endsWith('.json') && !name.startsWith('http://') && !name.startsWith('https://')) {
-          return resolveResourceUrl('action://' + name);
-        }
-      }
+    // Full URL in sReference - pass through
+    if (ref && (ref.startsWith('http://') || ref.startsWith('https://'))) {
+      return ref;
     }
 
-    if (name && typeof name === 'string') {
-      const lower = name.toLowerCase();
-      if (lower.endsWith('.json') && (name.startsWith('http://') || name.startsWith('https://'))) {
-        return name;
-      }
+    // action:// type marker - use sName for actual resource path
+    if (ref && ref.startsWith('action://') && name) {
+      return resolveResourceUrl(name);
+    }
+
+    // Regular sReference (relative path or other)
+    if (ref) {
+      return resolveResourceUrl(ref);
     }
 
     return null;

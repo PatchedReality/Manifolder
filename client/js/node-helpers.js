@@ -2,15 +2,11 @@
  * Copyright (c) 2026 Patched Reality, Inc.
  */
 
-const ACTION_CDN_BASE = 'https://cdn.rp1.com/res/action/';
-const LEGACY_CDN_BASE = 'https://cdn.rp1.com/res/glb/tiles/';
-
 let resourceBaseUrl = null;
 
 /**
  * Sets the base URL for resolving relative resource paths.
- * When set, relative paths resolve against this URL.
- * When null/empty, falls back to legacy CDN behavior.
+ * This must be set from the MSF's sRootUrl before loading resources.
  */
 export function setResourceBaseUrl(url) {
   if (!url) {
@@ -18,15 +14,15 @@ export function setResourceBaseUrl(url) {
     return;
   }
   try {
-    const parsed = new URL(url);
-    resourceBaseUrl = parsed.origin + '/';
+    new URL(url);
+    resourceBaseUrl = url.endsWith('/') ? url : url + '/';
   } catch (e) {
     resourceBaseUrl = null;
   }
 }
 
 /**
- * Gets the current resource base URL, or null if using legacy fallback.
+ * Gets the current resource base URL.
  */
 export function getResourceBaseUrl() {
   return resourceBaseUrl;
@@ -39,10 +35,10 @@ export function getResourceBaseUrl() {
 export function resolveResourceUrl(ref) {
   if (!ref || typeof ref !== 'string') return null;
 
-  // Handle action:// protocol - always goes to global CDN
+  // Handle action:// protocol
   if (ref.startsWith('action://')) {
     const path = ref.slice('action://'.length);
-    return ACTION_CDN_BASE + path;
+    return resourceBaseUrl ? resourceBaseUrl + path : null;
   }
 
   // Handle full URLs - pass through unchanged
@@ -50,11 +46,8 @@ export function resolveResourceUrl(ref) {
     return ref;
   }
 
-  // Relative paths: use resourceBaseUrl if set, otherwise legacy CDN fallback
-  if (resourceBaseUrl) {
-    return resourceBaseUrl + ref;
-  }
-  return LEGACY_CDN_BASE + ref;
+  // Relative paths: use resourceBaseUrl
+  return resourceBaseUrl ? resourceBaseUrl + ref : null;
 }
 
 /**

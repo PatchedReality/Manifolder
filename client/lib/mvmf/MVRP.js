@@ -2431,9 +2431,9 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
                   let pServices = pPrimary["services"];
                   let pRequire;
 
-                  if ((pRequire = MV.MVMF.Core.Require (pPrimary.require, pPrimary.service, pPrimary.namespace)) != null)
+                  if ((pRequire = MV.MVMF.Core.Require (pPrimary.sRequire, pPrimary.sService, pPrimary.sNamespace)) != null)
                   {
-                     this.#pLnG      = MV.MVMF.Core.LnG_Open (pPrimary.namespace, pPrimary.service, pPrimary.connect);
+                     this.#pLnG      = MV.MVMF.Core.LnG_Open (pPrimary.sNamespace, pPrimary.sService, pPrimary.sConnect);
                      this.#bLnGAlloc   = true;
                      this.#pLnG.Attach (this);
 
@@ -2441,12 +2441,12 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
                      {
                         let pConfig = pServices[sName];
 
-                        if ((pRequire = MV.MVMF.Core.Require (pConfig.require, pConfig.service, pConfig.namespace)) != null)
+                        if ((pRequire = MV.MVMF.Core.Require (pConfig.sRequire, pConfig.sService, pConfig.sNamespace)) != null)
                         {
                            this.#apSvc[sName] = {};
                            this.#apSvc[sName].bRequired = pConfig.bRequired;
                            this.#apSvc[sName].bAuth     = pConfig.bAuth;
-                           this.#apSvc[sName].pLnG      = MV.MVMF.Core.LnG_Open (pConfig.namespace, pConfig.service, pConfig.connect);
+                           this.#apSvc[sName].pLnG      = MV.MVMF.Core.LnG_Open (pConfig.sNamespace, pConfig.sService, pConfig.sConnect);
                            this.#apSvc[sName].pLnG.Attach (this);
                         }
                      }
@@ -2463,12 +2463,12 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
                   let pConfig = this.#pMSFConfig["map"];
                   let pRequire;
 
-                  if ((pRequire = MV.MVMF.Core.Require (pConfig.require, pConfig.service, pConfig.namespace)) != null)
+                  if ((pRequire = MV.MVMF.Core.Require (pConfig.sRequire, pConfig.sService, pConfig.sNamespace)) != null)
                   {
                      this.#apSvc["map"] = {};
                      this.#apSvc["map"].bAuth       = pConfig.bAuth;
                      this.#apSvc["map"].bRequired   = true;
-                     this.#apSvc["map"].pLnG        = MV.MVMF.Core.LnG_Open (pConfig.namespace, pConfig.service, pConfig.connect);
+                     this.#apSvc["map"].pLnG        = MV.MVMF.Core.LnG_Open (pConfig.sNamespace, pConfig.sService, pConfig.sConnect);
                      this.#apSvc["map"].pLnG.Attach (this);
                   }
                }
@@ -2623,7 +2623,17 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
 
    GetMapRootUrl ()
    {
-      return (this.#pMSFConfig && this.#pMSFConfig["map"] && this.#pMSFConfig["map"].RootUrl) ? this.#pMSFConfig["map"].RootUrl : '';
+      return (this.#pMSFConfig && this.#pMSFConfig["map"] && this.#pMSFConfig["map"].sRootUrl) ? this.#pMSFConfig["map"].sRootUrl : '';
+   }
+
+   GetMapWClass ()
+   {
+      return (this.#pMSFConfig && this.#pMSFConfig["map"]) ? this.#pMSFConfig["map"].wClass : undefined;
+   }
+
+   GetMapObjectIx ()
+   {
+      return (this.#pMSFConfig && this.#pMSFConfig["map"]) ? this.#pMSFConfig["map"].twObjectIx : undefined;
    }
 }
 

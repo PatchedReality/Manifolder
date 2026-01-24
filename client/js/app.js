@@ -740,9 +740,18 @@ class App {
       return;
     }
 
+    // Find where in the path the current tree root matches
+    // (handles old bookmarks that started from RMRoot when tree now starts elsewhere)
+    let startIndex = path.findIndex(p => p.id === this.tree.id && p.type === this.tree.type);
+    if (startIndex === -1) {
+      // Tree root not in path - can't restore, select tree root
+      this.hierarchy.selectNode(this.tree);
+      return;
+    }
+
     let currentNode = this.tree;
 
-    for (let i = 1; i < path.length; i++) {
+    for (let i = startIndex + 1; i < path.length; i++) {
       const targetId = path[i].id;
       const targetType = path[i].type;
 

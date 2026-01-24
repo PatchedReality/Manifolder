@@ -101,13 +101,15 @@ class MVClient {
       throw new Error('Invalid MSF config: missing map section');
     }
 
-    // Extract resource base URL from MSF URL
-    const urlObj = new URL(url);
-    this.resourceBaseUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1)}`;
-
     // Step 2: Parse connect string to get endpoint
-    const connectStr = this.msfConfig.map.connect;
+    const connectStr = this.msfConfig.map.sConnect;
     this.endpoint = this._parseConnectString(connectStr);
+
+    // Use sRootUrl from MSF
+    this.resourceBaseUrl = this.msfConfig.map.sRootUrl || '';
+    if (this.resourceBaseUrl && !this.resourceBaseUrl.endsWith('/')) {
+      this.resourceBaseUrl += '/';
+    }
 
     // Step 3: Disconnect any existing connection
     if (this.isConnected) {

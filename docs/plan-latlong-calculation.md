@@ -1,7 +1,7 @@
 # Plan: Latitude/Longitude Calculation for Terrestrial Objects
 
 ## Status
-Research complete, implementation deferred.
+**Implemented** - Phase 1 (basic display) + Phase 2 (magnitude inference) + Phase 3 (RP1 integration).
 
 ## Summary
 Display latitude and longitude coordinates in the Inspector panel for terrestrial objects on planetary surfaces.
@@ -103,34 +103,30 @@ No celestial parent means:
 
 ## Implementation Plan
 
-### Phase 1: Basic Implementation
-1. Add `findPlanetContext()` when following links from celestial to terrestrial
-2. Store context on the terrestrial MSF root node
-3. Add lat/long display to Inspector when context available
-4. Show: `Lat/Long: 47.2°N, 2.3°E (Earth)`
+### Phase 1: Basic Implementation (Implemented)
+1. ~~Add `findPlanetContext()` when following links~~ → Using magnitude inference instead
+2. ~~Store context on the terrestrial MSF root node~~ → Not needed with magnitude inference
+3. Add lat/long display to Inspector when context available ✓
+4. Show: `Lat/Long: 47.2°N, 2.3°E (Earth)` ✓
 
-### Phase 2: Fallback Detection (Optional)
+### Phase 2: Surface Ancestor Detection (Implemented)
+
+Planet context is derived from the hierarchy - no hardcoded radii:
+- `view-bounds.js` detects Surface nodes during tree traversal
+- Creates `_planetContext = { radius: bound.x, planetName: parent.name }`
+- Propagates context to all descendant nodes
+
+Only RP1-specific data (celestialId) requires a lookup table:
 ```javascript
-const KNOWN_PLANETS = {
-  'Earth': { radius: 6371000, tolerance: 50000 },
-  'Mars':  { radius: 3389500, tolerance: 30000 },
-  'Moon':  { radius: 1737400, tolerance: 20000 },
+const RP1_CELESTIAL_IDS = {
+  'Earth': 104,
 };
-
-function inferPlanetFromMagnitude(worldPosMagnitude) {
-  for (const [name, { radius, tolerance }] of Object.entries(KNOWN_PLANETS)) {
-    if (Math.abs(worldPosMagnitude - radius) < tolerance) {
-      return { name, radius };
-    }
-  }
-  return null;
-}
 ```
 
-### Files to Modify
-- `client/js/inspector-panel.js` - Display lat/long in node details
-- `client/js/msf-loader.js` (or equivalent) - Capture planet context when following links
-- `client/js/app.js` - Pass context through when loading linked MSFs
+### Files Modified
+- `client/js/view-bounds.js` - Propagates `_planetContext` from Surface nodes to descendants ✓
+- `client/js/inspector-panel.js` - Display lat/long + GO→ button using `_planetContext` ✓
+- `client/css/style.css` - Location section styles ✓
 
 ---
 
@@ -140,6 +136,24 @@ function inferPlanetFromMagnitude(worldPosMagnitude) {
 - The `_worldPos` is always computed in Y-up after hierarchy transforms applied
 - Earth Surface has rotation quaternion `(0, 0, 0.2028, 0.9792)` = ~23.4° axial tilt
 - Consider future transition to Z-up coordinate system (mentioned as possibility)
+
+---
+
+## Phase 3: RP1 Deep-Link Integration (Implemented)
+
+### RP1 URL Format
+```
+https://enter.rp1.com/?start_cid=<CELESTIAL_ID>&start_geo=[<LAT>,<LON>,<RADIUS>]
+```
+
+### Known Celestial IDs (stored in KNOWN_PLANETS)
+- Earth: 104
+- Mars, Moon: TBD (GO→ button hidden until celestialId added)
+
+### Implementation ✓
+1. Add "GO→" button in Inspector when lat/long is available ✓
+2. Button generates RP1 URL and opens in new tab ✓
+3. Example URL for Earth location: `https://enter.rp1.com/?start_cid=104&start_geo=[39.70989,-75.11976,6371000]` ✓
 
 ---
 

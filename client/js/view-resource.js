@@ -400,8 +400,9 @@ export class ViewResource {
       // Check if this request is still current
       if (requestId !== this.loadRequestId) return;
 
+      const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       const data = await response.json();
-      await this.processResourceData(data, nodeTransform, requestId);
+      await this.processResourceData(data, nodeTransform, requestId, baseDir);
     } catch (error) {
       console.warn(`Error loading resource ${url}:`, error);
     }
@@ -427,8 +428,9 @@ export class ViewResource {
 
       if (requestId !== this.loadRequestId) return;
 
+      const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       const data = await response.json();
-      await this.processResourceData(data, null, requestId);
+      await this.processResourceData(data, null, requestId, baseDir);
 
       if (requestId !== this.loadRequestId) return;
 
@@ -447,14 +449,15 @@ export class ViewResource {
     }
   }
 
-  async processResourceData(data, nodeTransform = null, requestId = null) {
+  async processResourceData(data, nodeTransform = null, requestId = null, baseDir = null) {
     // Handle metadata files (have lods, no blueprint)
     const lods = data?.lods || data?.LODs;
     if (lods && lods.length > 0) {
       const lod0 = lods[0];
-      const glbName = typeof lod0 === 'string' ? lod0 : lod0.file || lod0.name;
+      const glbName = typeof lod0 === 'string' ? lod0 : lod0._url || lod0.file || lod0.name;
       if (glbName) {
-        const model = await this.loadGlb(glbName, requestId);
+        const glbUrl = glbName.startsWith('http') ? glbName : (baseDir ? baseDir + glbName : glbName);
+        const model = await this.loadGlb(glbUrl, requestId);
         if (model && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
@@ -536,7 +539,7 @@ export class ViewResource {
         if (requestId !== null && requestId !== this.loadRequestId) return null;
 
         // Check for rotator - handle specially
-        if (child.resourceReference === 'action://rotator.json') {
+        if (child.resourceReference?.endsWith('rotator.json')) {
           pendingRotators.push(child);
           continue;
         }
@@ -578,37 +581,33 @@ export class ViewResource {
     return null;
   }
 
-  async setupRotator(rotatorNode, targetGroup, requestId = null) {
-    const resourceName = rotatorNode.resourceName;
-    if (!resourceName) return;
+  async fetchResourceJson(resourceName, requestId = null) {
+    if (!resourceName) return null;
+    const url = resolveResourceUrl(resourceName);
+    if (!url) return null;
 
     try {
-      const url = resolveResourceUrl('action://' + resourceName);
       const response = await fetch(url);
-      if (!response.ok) return;
-
-      // Check if request is still current after fetch
-      if (requestId !== null && requestId !== this.loadRequestId) return;
-
-      let data;
-      try {
-        data = await response.json();
-      } catch (parseErr) {
-        console.warn(`Invalid JSON in rotator params: ${resourceName}`);
-        return;
-      }
-
-      const axisArray = data?.body?.axis || [0, 1, 0];
-      const speed = data?.body?.rotSpeed || 10;
-
-      this.rotators.push({
-        target: targetGroup,
-        axis: new THREE.Vector3(axisArray[0], axisArray[1], axisArray[2]).normalize(),
-        speed: speed
-      });
+      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      if (!response.ok) return null;
+      return await response.json();
     } catch (e) {
-      console.warn(`Failed to load rotator params: ${resourceName}`);
+      return null;
     }
+  }
+
+  async setupRotator(rotatorNode, targetGroup, requestId = null) {
+    const data = await this.fetchResourceJson(rotatorNode.resourceName, requestId);
+    if (!data) return;
+
+    const axisArray = data?.body?.axis || [0, 1, 0];
+    const speed = data?.body?.rotSpeed || 10;
+
+    this.rotators.push({
+      target: targetGroup,
+      axis: new THREE.Vector3(axisArray[0], axisArray[1], axisArray[2]).normalize(),
+      speed: speed
+    });
   }
 
   applyNodeTransform(model, transform) {
@@ -634,43 +633,48 @@ export class ViewResource {
   async loadPhysicalObject(obj, requestId = null) {
     const { resourceReference, resourceName, objectBounds, transform } = obj;
 
+    // Extract action filename for action:// references
+    const actionFile = resourceReference?.startsWith('action://')
+      ? resourceReference.split('/').pop()
+      : null;
+
     // Handle point lights
-    if (resourceReference === 'action://pointlight.json') {
+    if (actionFile === 'pointlight.json') {
       return this.loadPointLight(resourceName, transform, requestId);
     }
 
     // Handle text sprites
-    if (resourceReference === 'action://showtext.json') {
+    if (actionFile === 'showtext.json') {
       return this.loadTextSprite(resourceName, transform, objectBounds, requestId);
     }
 
     // Handle video planes
-    if (resourceReference === 'action://video.json') {
+    if (actionFile === 'video.json') {
       return this.loadVideoPlane(resourceName, transform, objectBounds, requestId);
     }
 
     // Skip non-visual action types (behavioral, UI, sync components)
     const nonVisualActions = [
-      'action://collider.json',
-      'action://interior.json',
-      'action://testswitch.json',
-      'action://player_controller.json',
-      'action://activity.json',
-      'action://modeshow.json',
-      'action://textinput.json',
-      'action://demolight.json',
-      'action://textsync.json',
-      'action://button.json',
-      'action://entitysync.json',
-      'action://widgetframe.json',
-      'action://actioncon.json',
+      'collider.json',
+      'interior.json',
+      'testswitch.json',
+      'player_controller.json',
+      'activity.json',
+      'modeshow.json',
+      'textinput.json',
+      'demolight.json',
+      'textsync.json',
+      'button.json',
+      'entitysync.json',
+      'widgetframe.json',
+      'actioncon.json',
     ];
-    if (nonVisualActions.includes(resourceReference)) {
+    if (actionFile && nonVisualActions.includes(actionFile)) {
       return null;
     }
 
     // Handle nested scenes (action://scene.json means load resourceName as another scene)
-    if (resourceReference === 'action://scene.json' && resourceName) {
+    if (actionFile === 'scene.json' && resourceName) {
       return this.loadNestedScene(resourceName, transform, requestId);
     }
 
@@ -685,7 +689,7 @@ export class ViewResource {
     }
 
     // Handle metadata files with LODs
-    const metadata = await this.loadMetadata(resourceReference);
+    const { metadata, baseDir } = await this.loadMetadata(resourceReference);
     const lods = metadata?.lods || metadata?.LODs;
     if (!metadata || !lods || lods.length === 0) {
       console.warn(`No LODs in metadata: ${resourceReference}`);
@@ -693,14 +697,15 @@ export class ViewResource {
     }
 
     const lod0 = lods[0];
-    const glbName = typeof lod0 === 'string' ? lod0 : lod0.file || lod0.name;
+    const glbName = typeof lod0 === 'string' ? lod0 : lod0._url || lod0.file || lod0.name;
 
     if (!glbName) {
       console.warn(`No GLB filename in metadata: ${resourceReference}`);
       return null;
     }
 
-    const model = await this.loadGlb(glbName, requestId);
+    const glbUrl = glbName.startsWith('http') ? glbName : (baseDir ? baseDir + glbName : glbName);
+    const model = await this.loadGlb(glbUrl, requestId);
     if (!model) {
       return null;
     }
@@ -739,21 +744,8 @@ export class ViewResource {
   }
 
   async loadTextSprite(resourceName, transform, objectBounds, requestId = null) {
-    let text = 'Text';
-
-    if (resourceName) {
-      try {
-        const url = resolveResourceUrl('action://' + resourceName);
-        const response = await fetch(url);
-        if (requestId !== null && requestId !== this.loadRequestId) return null;
-        if (response.ok) {
-          const data = await response.json();
-          text = data?.body?.text || 'Text';
-        }
-      } catch (e) {
-        console.warn(`Failed to load text params: ${resourceName}`);
-      }
-    }
+    const data = await this.fetchResourceJson(resourceName, requestId);
+    const text = data?.body?.text || 'Text';
 
     // Create canvas for text
     const canvas = document.createElement('canvas');
@@ -802,30 +794,17 @@ export class ViewResource {
   }
 
   async loadPointLight(resourceName, transform, requestId = null) {
-    // Load light parameters from resourceName
-    let color = new THREE.Color(1, 0.9, 0.8);  // Default warm white
+    let color = new THREE.Color(1, 0.9, 0.8);
     let intensity = 1;
     let distance = 100;
 
-    if (resourceName) {
-      try {
-        const url = resolveResourceUrl('action://' + resourceName);
-        const response = await fetch(url);
-        if (requestId !== null && requestId !== this.loadRequestId) return null;
-        if (response.ok) {
-          const data = await response.json();
-          const colorArray = data?.body?.color;
-          if (colorArray && colorArray.length >= 3) {
-            color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
-            // Fourth value could be intensity or distance
-            if (colorArray.length >= 4) {
-              distance = colorArray[3];
-              intensity = Math.min(colorArray[3] / 100, 10);  // Scale intensity
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`Failed to load point light params: ${resourceName}`);
+    const data = await this.fetchResourceJson(resourceName, requestId);
+    const colorArray = data?.body?.color;
+    if (colorArray && colorArray.length >= 3) {
+      color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
+      if (colorArray.length >= 4) {
+        distance = colorArray[3];
+        intensity = Math.min(colorArray[3] / 100, 10);
       }
     }
 
@@ -839,27 +818,11 @@ export class ViewResource {
   }
 
   async loadVideoPlane(resourceName, transform, objectBounds, requestId = null) {
-    let videoUrl = null;
-
-    if (resourceName) {
-      try {
-        const url = resolveResourceUrl('action://' + resourceName);
-        const response = await fetch(url);
-        if (requestId !== null && requestId !== this.loadRequestId) return null;
-        if (response.ok) {
-          const data = await response.json();
-          const sources = data?.body?.streamConfig?.sources;
-          if (sources && sources.length > 0) {
-            videoUrl = sources[0];
-          }
-        }
-      } catch (e) {
-        console.warn(`Failed to load video params: ${resourceName}`);
-      }
-    }
+    const data = await this.fetchResourceJson(resourceName, requestId);
+    const sources = data?.body?.streamConfig?.sources;
+    const videoUrl = sources?.[0];
 
     if (!videoUrl) {
-      console.warn('No video URL found in video config');
       return null;
     }
 
@@ -921,24 +884,26 @@ export class ViewResource {
 
   async loadMetadata(metadataRef) {
     const url = resolveResourceUrl(metadataRef);
-    if (!url) return null;
+    if (!url) return { metadata: null, baseDir: null };
 
     if (this.metadataCache.has(url)) {
-      return this.metadataCache.get(url);
+      const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
+      return { metadata: this.metadataCache.get(url), baseDir };
     }
 
     try {
       const response = await fetch(url);
       if (!response.ok) {
         console.warn(`Metadata not found: ${metadataRef}`);
-        return null;
+        return { metadata: null, baseDir: null };
       }
       const metadata = await response.json();
       this.metadataCache.set(url, metadata);
-      return metadata;
+      const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
+      return { metadata, baseDir };
     } catch (error) {
       console.warn(`Failed to load metadata ${metadataRef}:`, error);
-      return null;
+      return { metadata: null, baseDir: null };
     }
   }
 
