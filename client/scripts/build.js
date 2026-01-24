@@ -29,29 +29,25 @@ if (watchMode) {
   await esbuild.build(buildOptions);
 }
 
-// Generate versioned HTML to dist/app.html (source app.html stays clean)
-const srcHtmlPath = path.join(clientDir, 'app.html');
-const distHtmlPath = path.join(clientDir, 'dist/app.html');
-let html = fs.readFileSync(srcHtmlPath, 'utf-8');
+// Update app.html in place with versioned references for cache busting
+const htmlPath = path.join(clientDir, 'app.html');
+let html = fs.readFileSync(htmlPath, 'utf-8');
 
-// Version the module script (path stays same - deployed structure is flat)
 html = html.replace(
-  /<script type="module" src="[^"]+"><\/script>/,
+  /<script type="module" src="dist\/app\.bundle\.js[^"]*"><\/script>/,
   `<script type="module" src="dist/app.bundle.js?v=${version}"></script>`
 );
 
-// Version the CSS
 html = html.replace(
   /<link rel="stylesheet" href="css\/style\.css[^"]*">/,
   `<link rel="stylesheet" href="css/style.css?v=${version}">`
 );
 
-// Version the lib/mvmf scripts
 html = html.replace(
   /<script src="lib\/mvmf\/([^"?]+)(\?v=\d+)?"><\/script>/g,
   `<script src="lib/mvmf/$1?v=${version}"></script>`
 );
 
-fs.writeFileSync(distHtmlPath, html);
+fs.writeFileSync(htmlPath, html);
 
 console.log(`Build complete: dist/app.bundle.js?v=${version}`);
