@@ -34,6 +34,9 @@ const DEFAULT_STATE = {
     orbitsVisible: true,
     selectedId: null,
     selectedType: null
+  },
+  viewResource: {
+    showBounds: false
   }
 };
 
@@ -104,9 +107,11 @@ export class UIStateManager {
 
     const layoutState = snapshot.layout || {};
     const viewBoundsState = snapshot.viewBounds || {};
+    const viewResourceState = snapshot.viewResource || {};
 
     app.layout.restoreStateValues(layoutState);
     app.viewBounds.restoreState(viewBoundsState);
+    app.viewResource.restoreState(viewResourceState);
 
     if (newUrl && (newUrl !== currentUrl || !app.tree)) {
       document.getElementById('url-input').value = newUrl;

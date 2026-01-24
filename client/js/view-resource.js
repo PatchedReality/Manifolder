@@ -10,10 +10,12 @@ import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import Hls from 'hls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
+import { NODE_TYPES } from '../shared/node-types.js';
 
 export class ViewResource {
-  constructor(containerSelector) {
+  constructor(containerSelector, stateManager) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
@@ -40,8 +42,12 @@ export class ViewResource {
 
     this.currentResourceUrl = null;
     this.currentNode = null;
+    this.currentExpandedDescendants = [];
     this.isLoading = false;
     this.loadRequestId = 0;  // Increments on each load to handle race conditions
+
+    this.showBounds = false;
+    this.boundsGroup = null;
 
     this.statusCallbacks = [];
 
@@ -114,6 +120,7 @@ export class ViewResource {
 
     window.addEventListener('resize', this.boundResizeHandler);
     this.setupEventListeners();
+    this.setupBoundsToggle();
     this.initialized = true;
   }
 
@@ -249,6 +256,7 @@ export class ViewResource {
 
   setNode(node, expandedDescendants = []) {
     this.currentNode = node;
+    this.currentExpandedDescendants = expandedDescendants;
 
     const resourcesToLoad = [];
 
@@ -321,6 +329,7 @@ export class ViewResource {
       this.centerContentAtOrigin();
       this.fitCameraToContent();
       this.updateGridFromContent();
+      this.updateBoundsDisplay();
       this.setStatus('', '');
     } catch (error) {
       if (requestId === this.loadRequestId) {
@@ -1048,6 +1057,7 @@ export class ViewResource {
     if (this.contentGroup) {
       this.scene.remove(this.contentGroup);
     }
+    this.clearBoundsGroup();
     if (this.gridHelper) {
       this.gridHelper.position.y = 0;
     }
@@ -1138,6 +1148,12 @@ export class ViewResource {
       this.renderer.domElement.removeEventListener('click', this.boundClickHandler);
     }
 
+    // Remove bounds toggle listener
+    const toggle = document.getElementById('resource-bounds-toggle');
+    if (toggle && this.boundBoundsToggleHandler) {
+      toggle.removeEventListener('change', this.boundBoundsToggleHandler);
+    }
+
     // Clear scene content
     this.clearScene();
 
@@ -1214,5 +1230,191 @@ export class ViewResource {
     spacing.fadeDistance = maxExtent;
 
     updateGridSpacing(this.gridHelper, spacing);
+  }
+
+  setupBoundsToggle() {
+    const toggle = document.getElementById('resource-bounds-toggle');
+    if (!toggle) return;
+
+    // Restore saved state
+    const state = this.stateManager?.getSection('viewResource') || {};
+    if (typeof state.showBounds === 'boolean') {
+      this.showBounds = state.showBounds;
+      toggle.checked = state.showBounds;
+    }
+
+    this.boundBoundsToggleHandler = () => {
+      this.showBounds = toggle.checked;
+      this.updateBoundsDisplay();
+      this.saveState();
+    };
+    toggle.addEventListener('change', this.boundBoundsToggleHandler);
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+    this.stateManager.updateSection('viewResource', {
+      showBounds: this.showBounds
+    });
+  }
+
+  restoreState(state) {
+    state = state || this.stateManager?.getSection('viewResource') || {};
+
+    if (typeof state.showBounds === 'boolean') {
+      this.showBounds = state.showBounds;
+      const toggle = document.getElementById('resource-bounds-toggle');
+      if (toggle) {
+        toggle.checked = state.showBounds;
+      }
+      this.updateBoundsDisplay();
+    }
+  }
+
+  updateBoundsDisplay() {
+    this.clearBoundsGroup();
+
+    if (!this.showBounds || !this.contentGroup) return;
+
+    this.boundsGroup = new THREE.Group();
+    this.boundsGroup.name = 'boundsGroup';
+
+    // Add bounds for the main selected node
+    if (this.currentNode?.bound) {
+      const box = this.createNodeBoundingBox(this.currentNode, null);
+      if (box) {
+        this.boundsGroup.add(box);
+      }
+    }
+
+    // Add bounds for each expanded descendant
+    for (const { node, cumulativeTransform } of this.currentExpandedDescendants) {
+      if (node.bound) {
+        const box = this.createNodeBoundingBox(node, cumulativeTransform);
+        if (box) {
+          this.boundsGroup.add(box);
+        }
+      }
+    }
+
+    // Apply same transform as contentGroup so bounds align with content
+    this.boundsGroup.scale.copy(this.contentGroup.scale);
+    this.boundsGroup.position.copy(this.contentGroup.position);
+
+    this.scene.add(this.boundsGroup);
+  }
+
+  clearBoundsGroup() {
+    if (!this.boundsGroup) return;
+
+    this.boundsGroup.traverse((child) => {
+      if (child.geometry) {
+        child.geometry.dispose();
+      }
+      if (child.material) {
+        if (child.material.map) {
+          child.material.map.dispose();
+        }
+        child.material.dispose();
+      }
+    });
+    if (this.scene) {
+      this.scene.remove(this.boundsGroup);
+    }
+    this.boundsGroup = null;
+  }
+
+  createNodeBoundingBox(node, cumulativeTransform) {
+    const bound = node.bound;
+    if (!bound || bound.x == null || bound.y == null || bound.z == null) return null;
+
+    const color = this.getNodeColor(node);
+    const group = new THREE.Group();
+    group.name = `bounds-${node.name || 'node'}`;
+
+    // Create box geometry and edges for wireframe
+    const geometry = new THREE.BoxGeometry(bound.x, bound.y, bound.z);
+    const edges = new THREE.EdgesGeometry(geometry);
+    const material = new THREE.LineBasicMaterial({ color: color });
+    const wireframe = new THREE.LineSegments(edges, material);
+
+    // Position box so bottom is at origin (y centered at bound.y/2)
+    wireframe.position.y = bound.y / 2;
+
+    group.add(wireframe);
+
+    // Create label at top center, sized relative to bound
+    const labelHeight = Math.max(bound.x, bound.y, bound.z) * 0.08;
+    const label = this.createBoundsLabel(node.name || 'Node', color, labelHeight);
+    label.position.set(0, bound.y + labelHeight * 0.6, 0);
+    group.add(label);
+
+    // Apply cumulative transform if provided
+    if (cumulativeTransform) {
+      const pos = cumulativeTransform.Position || cumulativeTransform.position || [0, 0, 0];
+      const rot = cumulativeTransform.Rotation || cumulativeTransform.rotation || [0, 0, 0, 1];
+      const scale = cumulativeTransform.Scale || cumulativeTransform.scale || [1, 1, 1];
+
+      if (isFinite(pos[0]) && isFinite(pos[1]) && isFinite(pos[2])) {
+        group.position.set(pos[0], pos[1], pos[2]);
+        group.quaternion.set(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0, rot[3] ?? 1);
+        group.scale.set(scale[0] ?? 1, scale[1] ?? 1, scale[2] ?? 1);
+      }
+    }
+
+    geometry.dispose();
+
+    return group;
+  }
+
+  createBoundsLabel(text, color, worldHeight) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontSize = 48;
+    const padding = 8;
+
+    ctx.font = `bold ${fontSize}px Arial`;
+    const metrics = ctx.measureText(text);
+    const textWidth = metrics.width;
+
+    canvas.width = Math.ceil(textWidth) + padding * 2;
+    canvas.height = fontSize + padding * 2;
+
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Text
+    ctx.font = `bold ${fontSize}px Arial`;
+    ctx.fillStyle = '#' + new THREE.Color(color).getHexString();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    const sprite = new THREE.Sprite(material);
+
+    // Scale sprite based on requested world height, maintaining aspect ratio
+    const aspectRatio = canvas.width / canvas.height;
+    sprite.scale.set(worldHeight * aspectRatio, worldHeight, 1);
+
+    return sprite;
+  }
+
+  getNodeColor(node) {
+    const nodeType = node.nodeType;
+    if (!nodeType) return 0xffffff;
+
+    const typeInfo = NODE_TYPES.find(t => t.name === nodeType);
+    return typeInfo ? typeInfo.color : 0xffffff;
   }
 }

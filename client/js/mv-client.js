@@ -22,6 +22,29 @@ import { setResourceBaseUrl } from './node-helpers.js';
 
 export class MVClient {
   static _initialized = false;
+  static _wClassConfig = null;
+
+  static _getWClassConfig() {
+    if (!MVClient._wClassConfig) {
+      const ioClasses = [
+        MV.MVRP.Map.IO_RMROOT,
+        MV.MVRP.Map.IO_RMCOBJECT,
+        MV.MVRP.Map.IO_RMTOBJECT,
+        MV.MVRP.Map.IO_RMPOBJECT
+      ];
+      MVClient._wClassConfig = {};
+      for (const ioClass of ioClasses) {
+        const factory = ioClass.factory();
+        const ref = factory.pReference;
+        MVClient._wClassConfig[ref.wClass] = {
+          type: ref.sID_Model,
+          action: ioClass.apAction.UPDATE,
+          indexField: `tw${ref.sID_Model}Ix`
+        };
+      }
+    }
+    return MVClient._wClassConfig;
+  }
 
   static _initializePlugins() {
     if (MVClient._initialized) return;
@@ -46,6 +69,8 @@ export class MVClient {
     this.pClient = null;
     this.isConnected = false;
     this.msfConfig = null;
+    this.sceneWClass = null;
+    this.sceneObjectIx = null;
 
     this.callbacks = {
       connected: [],
@@ -122,7 +147,10 @@ export class MVClient {
     if (state >= MV.MVRP.MSF.eSTATE.READY_LOGGEDOUT) {
       this.msfConfig = this.msf.pMSFConfig;
 
-      const rootUrl = this.msf.GetMapRootUrl();
+      const mapConfig = this.msfConfig?.map;
+      this.sceneWClass = mapConfig?.wClass;
+      this.sceneObjectIx = mapConfig?.twObjectIx;
+      const rootUrl = mapConfig?.sRootUrl || mapConfig?.RootUrl || '';
       setResourceBaseUrl(rootUrl);
 
       this.pLnG = this.msf.GetLnG('map');
@@ -235,8 +263,8 @@ export class MVClient {
     });
   }
 
-  _buildTreeFromRoot(rootData, rootIx = 1) {
-    return NodeFactory.createNode('RMRoot', rootData, rootIx);
+  _buildTree(nodeType, data, objectIx) {
+    return NodeFactory.createNode(nodeType, data, objectIx);
   }
 
   async _getMapTree() {
@@ -247,116 +275,36 @@ export class MVClient {
     this._emit('status', 'Loading map tree...');
 
     try {
-      const wClass = this.msf.GetMapWClass();
-      const twObjectIx = this.msf.GetMapObjectIx();
+      const wClass = this.sceneWClass;
+      const twObjectIx = this.sceneObjectIx;
 
-      if (wClass !== undefined && twObjectIx !== undefined) {
-        return await this._getMapTreeFromObject(wClass, twObjectIx);
+      if (wClass === undefined || twObjectIx === undefined) {
+        return { error: 'MSF config missing wClass or twObjectIx' };
       }
 
-      return await this._getMapTreeAllRoots();
-
+      const tree = await this._fetchSceneRoot(wClass, twObjectIx);
+      return tree ? { tree } : { error: 'Failed to fetch scene root' };
     } catch (err) {
       return { error: err.message };
     }
   }
 
-  async _getMapTreeFromObject(wClass, twObjectIx) {
-    const WCLASS_RMROOT = 70;
-    const WCLASS_RMCOBJECT = 71;
-    const WCLASS_RMTOBJECT = 72;
-    const WCLASS_RMPOBJECT = 73;
-
-    let pIAction;
-    let response;
-    let tree;
-
-    switch (wClass) {
-      case WCLASS_RMROOT:
-        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-        pIAction.pRequest.twRMRootIx = twObjectIx;
-        response = await this._sendAction(pIAction);
-        if (response && (response.nResult === undefined || response.nResult === 0)) {
-          tree = this._buildTreeFromRoot(response, twObjectIx);
-        }
-        break;
-
-      case WCLASS_RMCOBJECT:
-        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMCOBJECT.apAction.UPDATE);
-        pIAction.pRequest.twRMCObjectIx = twObjectIx;
-        response = await this._sendAction(pIAction);
-        if (response && (response.nResult === undefined || response.nResult === 0)) {
-          tree = NodeFactory.createNode('RMCObject', response, twObjectIx);
-        }
-        break;
-
-      case WCLASS_RMTOBJECT:
-        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMTOBJECT.apAction.UPDATE);
-        pIAction.pRequest.twRMTObjectIx = twObjectIx;
-        response = await this._sendAction(pIAction);
-        if (response && (response.nResult === undefined || response.nResult === 0)) {
-          tree = NodeFactory.createNode('RMTObject', response, twObjectIx);
-        }
-        break;
-
-      case WCLASS_RMPOBJECT:
-        pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMPOBJECT.apAction.UPDATE);
-        pIAction.pRequest.twRMPObjectIx = twObjectIx;
-        response = await this._sendAction(pIAction);
-        if (response && (response.nResult === undefined || response.nResult === 0)) {
-          tree = NodeFactory.createNode('RMPObject', response, twObjectIx);
-        }
-        break;
-
-      default:
-        return { error: `Unknown wClass: ${wClass}` };
+  async _fetchSceneRoot(wClass, twObjectIx) {
+    const config = MVClient._getWClassConfig()[wClass];
+    if (!config) {
+      throw new Error(`Unknown wClass: ${wClass}`);
     }
 
-    if (!tree) {
-      return { error: `Failed to load object (wClass=${wClass}, twObjectIx=${twObjectIx})` };
+    const pIAction = this.pClient.Request(config.action);
+    pIAction.pRequest[config.indexField] = twObjectIx;
+
+    const response = await this._sendAction(pIAction);
+
+    if (!response || (response.nResult !== undefined && response.nResult !== 0)) {
+      return null;
     }
 
-    return { tree };
-  }
-
-  async _getMapTreeAllRoots() {
-    const allRoots = [];
-
-    for (let rootIx = 1; rootIx <= 10; rootIx++) {
-      const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-      pIAction.pRequest.twRMRootIx = rootIx;
-
-      const rootResponse = await this._sendAction(pIAction);
-
-      if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-        break;
-      }
-
-      const rootTree = this._buildTreeFromRoot(rootResponse, rootIx);
-      allRoots.push(rootTree);
-    }
-
-    if (allRoots.length === 0) {
-      return { error: 'No roots found in map' };
-    }
-
-    let tree;
-    if (allRoots.length === 1) {
-      tree = allRoots[0];
-    } else {
-      tree = {
-        name: 'Map',
-        type: 'RMRoot',
-        nodeType: 'Root',
-        id: 0,
-        transform: null,
-        bound: null,
-        children: allRoots,
-        hasChildren: true
-      };
-    }
-
-    return { tree };
+    return this._buildTree(config.type, response, twObjectIx);
   }
 
   async _getNode(nodeId, nodeType) {
@@ -382,7 +330,7 @@ export class MVClient {
             response = await this._sendAction(pIAction);
 
             if (response && (response.nResult === undefined || response.nResult === 0)) {
-              node = this._buildTreeFromRoot(response, nodeId);
+              node = this._buildTree('RMRoot', response, nodeId);
             }
           }
           break;
@@ -448,15 +396,8 @@ export class MVClient {
     const rmcObjectIndices = [];
     const rmtObjectIndices = [];
 
-    const wClass = this.msf.GetMapWClass();
-    const twObjectIx = this.msf.GetMapObjectIx();
-
     try {
-      if (wClass !== undefined && twObjectIx !== undefined) {
-        await this._collectSearchIndicesFromObject(wClass, twObjectIx, rmcObjectIndices, rmtObjectIndices);
-      } else {
-        await this._collectSearchIndicesFromAllRoots(rmcObjectIndices, rmtObjectIndices);
-      }
+      await this._collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices);
     } catch (err) {
       return results;
     }
@@ -549,50 +490,40 @@ export class MVClient {
     return { matches, paths };
   }
 
-  async _collectSearchIndicesFromObject(wClass, twObjectIx, rmcObjectIndices, rmtObjectIndices) {
-    const WCLASS_RMROOT = 70;
-    const WCLASS_RMCOBJECT = 71;
-    const WCLASS_RMTOBJECT = 72;
-    const WCLASS_RMPOBJECT = 73;
+  async _collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices) {
+    const wClass = this.sceneWClass;
+    const twObjectIx = this.sceneObjectIx;
 
-    switch (wClass) {
-      case WCLASS_RMROOT: {
-        const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-        pIAction.pRequest.twRMRootIx = twObjectIx;
-        const response = await this._sendAction(pIAction);
-
-        if (response && (response.nResult === undefined || response.nResult === 0)) {
-          this._extractChildIndices(response, rmcObjectIndices, rmtObjectIndices);
-        }
-        break;
-      }
-
-      case WCLASS_RMCOBJECT:
-        rmcObjectIndices.push(twObjectIx);
-        break;
-
-      case WCLASS_RMTOBJECT:
-        rmtObjectIndices.push(twObjectIx);
-        break;
-
-      case WCLASS_RMPOBJECT:
-        break;
+    if (wClass === undefined || twObjectIx === undefined) {
+      return;
     }
-  }
 
-  async _collectSearchIndicesFromAllRoots(rmcObjectIndices, rmtObjectIndices) {
-    for (let rootIx = 1; rootIx <= 10; rootIx++) {
-      const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-      pIAction.pRequest.twRMRootIx = rootIx;
-
-      const rootResponse = await this._sendAction(pIAction);
-
-      if (!rootResponse || (rootResponse.nResult !== undefined && rootResponse.nResult !== 0)) {
-        break;
-      }
-
-      this._extractChildIndices(rootResponse, rmcObjectIndices, rmtObjectIndices);
+    const config = MVClient._getWClassConfig()[wClass];
+    if (!config) {
+      return;
     }
+
+    // If scene root is itself a searchable object type, add it directly
+    if (config.type === 'RMCObject') {
+      rmcObjectIndices.push(twObjectIx);
+      return;
+    }
+    if (config.type === 'RMTObject') {
+      rmtObjectIndices.push(twObjectIx);
+      return;
+    }
+
+    // For RMRoot/RMPObject, fetch and extract child indices
+    const pIAction = this.pClient.Request(config.action);
+    pIAction.pRequest[config.indexField] = twObjectIx;
+
+    const response = await this._sendAction(pIAction);
+
+    if (!response || (response.nResult !== undefined && response.nResult !== 0)) {
+      return;
+    }
+
+    this._extractChildIndices(response, rmcObjectIndices, rmtObjectIndices);
   }
 
   _extractChildIndices(response, rmcObjectIndices, rmtObjectIndices) {

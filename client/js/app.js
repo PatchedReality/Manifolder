@@ -22,7 +22,7 @@ class App {
     this.hierarchy = new HierarchyPanel('#hierarchy-tree');
     this.viewGraph = new ViewGraph('#viewport-graph');
     this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager);
-    this.viewResource = new ViewResource('#viewport-resource');
+    this.viewResource = new ViewResource('#viewport-resource', this.stateManager);
     this.inspector = new InspectorPanel('#inspector-content', this.stateManager);
     this.client = new MVClient();
     this.bookmarkManager = new BookmarkManager(this.stateManager);
@@ -697,21 +697,8 @@ class App {
         const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
         if (!hasSavedExpanded) {
-          // No saved state - expand top 3 levels by default
-          const expandLevel = (nodes, depth) => {
-            if (depth > 3 || !nodes) return;
-            nodes.forEach(node => {
-              this.hierarchy.expandNode(node);
-              if (node.children && node.children.length > 0) {
-                expandLevel(node.children, depth + 1);
-              }
-            });
-          };
-
+          // No saved state - just expand the root
           this.hierarchy.expandNode(tree);
-          if (tree.children) {
-            expandLevel(tree.children, 2);
-          }
         } else {
           // Restore saved expanded nodes
           this.hierarchy.expandNodesByKeys(hierarchyState.expandedNodeIds);

@@ -387,6 +387,41 @@ body {
   display: none;
 }
 
+/* Resource view toolbar */
+.resource-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bounds-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-raised);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.bounds-toggle-label:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.bounds-toggle-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
 .resource-status.loading {
   color: var(--status-loading);
 }
