@@ -558,6 +558,7 @@ export class ViewResource {
       }
 
       this.centerContentAtOrigin();
+      this.applyWorldOrientation();
       this.fitCameraToContent();
       this.updateGridFromContent();
       this.updateBoundsDisplay();
@@ -1233,6 +1234,17 @@ export class ViewResource {
       -center.z * scale
     );
 
+  }
+
+  applyWorldOrientation() {
+    if (!this.contentGroup || !this.currentNode?._worldRot) return;
+
+    const worldRot = this.currentNode._worldRot;
+    const quaternion = new THREE.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
+
+    // Extract just the yaw (rotation around Y) - ignore tilt from Earth's curvature
+    const euler = new THREE.Euler().setFromQuaternion(quaternion, 'YXZ');
+    this.contentGroup.rotation.y = euler.y;
   }
 
   fitCameraToContent() {
