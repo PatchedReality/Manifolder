@@ -7,9 +7,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import Hls from 'hls.js';
-import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
+import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
+import { calculateSunPosition, getSunLightingParams } from './geo-utils.js';
 import { NODE_TYPES } from '../shared/node-types.js';
 
 export class ViewResource {
@@ -49,6 +51,11 @@ export class ViewResource {
     this.showBounds = false;
     this.boundsGroup = null;
 
+    // Sun lighting state
+    this.location = { latitude: 0, longitude: 0 }; // Default: equator/prime meridian
+    this.timeOffset = 0; // Hours offset from current time
+    this.isEarthBased = false;
+
     this.statusCallbacks = [];
 
     this.animationFrameId = null;
@@ -73,7 +80,7 @@ export class ViewResource {
     const width = this.container.clientWidth || 800;
     const height = this.container.clientHeight || 600;
 
-    this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000);
+    this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100000);
     this.camera.position.set(5, 5, 10);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
@@ -81,27 +88,37 @@ export class ViewResource {
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
+
+    // Environment map for soft IBL lighting
+    this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+    this.pmremGenerator.compileEquirectangularShader();
+    const roomEnv = new RoomEnvironment();
+    this.scene.environment = this.pmremGenerator.fromScene(roomEnv).texture;
+    roomEnv.dispose();
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
 
-    this.hemiLight = new THREE.HemisphereLight(0x4466aa, 0x1a1a2e, 0.8);
-    this.hemiLight.position.set(0, 200, 0);
-    this.scene.add(this.hemiLight);
-
-    this.keyLight = new THREE.DirectionalLight(0xfff5e6, 2.0);
-    this.keyLight.position.set(50, 100, 50);
+    // Late afternoon sunlight
+    this.keyLight = new THREE.DirectionalLight(0xffebd6, 2.1);
+    this.keyLight.position.set(85, 52, 50);
+    this.keyLight.castShadow = true;
+    this.keyLight.shadow.mapSize.width = 2048;
+    this.keyLight.shadow.mapSize.height = 2048;
+    this.keyLight.shadow.camera.near = 1;
+    this.keyLight.shadow.camera.far = 1000;
+    this.keyLight.shadow.camera.left = -500;
+    this.keyLight.shadow.camera.right = 500;
+    this.keyLight.shadow.camera.top = 500;
+    this.keyLight.shadow.camera.bottom = -500;
+    this.keyLight.shadow.bias = -0.0001;
     this.scene.add(this.keyLight);
 
-    this.rimLight = new THREE.DirectionalLight(0x6699ff, 0.8);
-    this.rimLight.position.set(-50, 30, -50);
-    this.scene.add(this.rimLight);
-
-    this.cameraLight = new THREE.PointLight(0xffffff, 0.3);
-    this.camera.add(this.cameraLight);
     this.scene.add(this.camera);
 
     // Set up KTX2 loader for compressed textures (store for disposal)
@@ -111,7 +128,26 @@ export class ViewResource {
     this.gltfLoader.setKTX2Loader(this.ktx2Loader);
 
     this.gridHelper = createInfiniteGrid(this.scene);
-    this.starfield = createStarfield(this.scene, { radius: 2500 });
+    this.skyDome = createSkyDome(this.scene);
+    this.starfield = createStarfield(this.scene, { radius: 80000 });
+    this.starfield.visible = false;
+
+    // Sun disc - positioned on sky dome, apparent size ~0.5 degrees
+    const sunRadius = 80000 * Math.tan(0.5 * Math.PI / 180);
+    const sunGeo = new THREE.SphereGeometry(sunRadius, 32, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffee });
+    this.sun = new THREE.Mesh(sunGeo, sunMat);
+    this.scene.add(this.sun);
+
+    this.setupTimeSlider();
+    this.setResourceMode(false);
+
+    // Invisible ground plane that only shows shadows
+    const shadowPlaneGeo = new THREE.PlaneGeometry(2000, 2000);
+    shadowPlaneGeo.rotateX(-Math.PI / 2);
+    this.shadowPlane = new THREE.Mesh(shadowPlaneGeo, new THREE.ShadowMaterial({ opacity: 0.4 }));
+    this.shadowPlane.receiveShadow = true;
+    this.scene.add(this.shadowPlane);
 
     // Store bound handlers for cleanup
     this.boundResizeHandler = () => this.onWindowResize();
@@ -127,6 +163,181 @@ export class ViewResource {
   setupEventListeners() {
     this.renderer.domElement.addEventListener('dblclick', this.boundDblClickHandler);
     this.renderer.domElement.addEventListener('click', this.boundClickHandler);
+  }
+
+  setupTimeSlider() {
+    // Calculate current solar time at location to set initial slider position
+    const now = new Date();
+    const currentSolarHours = (now.getUTCHours() + now.getUTCMinutes() / 60 + this.location.longitude / 15 + 24) % 24;
+    // Slider is 0-24 starting from 8am, so convert current time to slider value
+    const sliderValue = (currentSolarHours - 8 + 24) % 24;
+
+    this.timeSlider = document.getElementById('time-slider');
+    this.timeHourInput = document.getElementById('time-hour');
+    this.timeMinuteInput = document.getElementById('time-minute');
+
+    if (this.timeSlider) {
+      this.timeSlider.value = sliderValue.toFixed(4);
+      this.timeSliderValue = sliderValue;
+
+      this.boundTimeSliderHandler = () => {
+        this.timeSliderValue = parseFloat(this.timeSlider.value);
+        this.updateSunLighting();
+      };
+      this.timeSlider.addEventListener('input', this.boundTimeSliderHandler);
+    }
+
+    if (this.timeHourInput && this.timeMinuteInput) {
+      this.boundTimeInputHandler = () => {
+        const h = parseInt(this.timeHourInput.value) || 0;
+        const m = parseInt(this.timeMinuteInput.value) || 0;
+        const solarHours = h + m / 60;
+        this.timeSliderValue = (solarHours - 8 + 24) % 24;
+        if (this.timeSlider) {
+          this.timeSlider.value = this.timeSliderValue.toFixed(4);
+        }
+        this.updateSunLighting();
+      };
+
+      this.timeHourInput.addEventListener('change', this.boundTimeInputHandler);
+      this.timeMinuteInput.addEventListener('change', this.boundTimeInputHandler);
+    }
+  }
+
+  updateSunLighting() {
+    // Calculate time: slider goes 0-24 hours starting from 8am
+    const sliderHours = this.timeSliderValue ?? 4;
+    const solarHours = (8 + sliderHours) % 24;
+
+    // Create a date for sun position calculation
+    const now = new Date();
+    const utcHours = solarHours - this.location.longitude / 15;
+    now.setUTCHours(Math.floor(utcHours), (utcHours % 1) * 60, 0, 0);
+
+    const { azimuth, elevation } = calculateSunPosition(
+      this.location.latitude,
+      this.location.longitude,
+      now
+    );
+
+    // Position light based on sun azimuth/elevation
+    const distance = 100;
+    const elevRad = elevation * Math.PI / 180;
+    const azimRad = azimuth * Math.PI / 180;
+
+    this.keyLight.position.set(
+      distance * Math.cos(elevRad) * Math.sin(azimRad),
+      distance * Math.sin(elevRad),
+      distance * Math.cos(elevRad) * Math.cos(azimRad)
+    );
+
+    // Get lighting params based on sun elevation
+    const params = getSunLightingParams(elevation);
+
+    this.keyLight.color.setHex(params.color);
+    this.keyLight.intensity = params.intensity;
+
+    // Update sky dome colors
+    if (this.skyDome?.material?.uniforms) {
+      this.skyDome.material.uniforms.uHorizonColor.value.setHex(params.skyHorizon);
+      this.skyDome.material.uniforms.uZenithColor.value.setHex(params.skyZenith);
+      this.skyDome.material.uniforms.uGroundColor.value.setHex(params.groundColor);
+    }
+
+    // Position and color sun disc
+    if (this.sun) {
+      const sunDistance = 80000;
+      this.sun.position.set(
+        sunDistance * Math.cos(elevRad) * Math.sin(azimRad) + this.camera.position.x,
+        sunDistance * Math.sin(elevRad) + this.camera.position.y,
+        sunDistance * Math.cos(elevRad) * Math.cos(azimRad) + this.camera.position.z
+      );
+      this.sun.visible = elevation > -1;
+
+      // Sun color changes with elevation - warmer near horizon
+      let sunColor;
+      if (elevation < 5) {
+        sunColor = 0xff6622;
+      } else if (elevation < 15) {
+        sunColor = 0xffaa44;
+      } else if (elevation < 30) {
+        sunColor = 0xffdd88;
+      } else {
+        sunColor = 0xffffee;
+      }
+      this.sun.material.color.setHex(sunColor);
+    }
+
+    // Show starfield at night (sun below horizon)
+    if (this.starfield) {
+      const showStars = elevation < 0;
+      this.starfield.visible = showStars;
+      if (showStars && this.starfield.material) {
+        // Fade in stars as sun goes further below horizon
+        const opacity = Math.min(1, Math.abs(elevation) / 12);
+        this.starfield.material.opacity = opacity;
+        this.starfield.material.transparent = true;
+      }
+    }
+
+    // Update time inputs
+    const h = Math.floor(solarHours);
+    const m = Math.floor((solarHours % 1) * 60);
+    if (this.timeHourInput && document.activeElement !== this.timeHourInput) {
+      this.timeHourInput.value = h.toString().padStart(2, '0');
+    }
+    if (this.timeMinuteInput && document.activeElement !== this.timeMinuteInput) {
+      this.timeMinuteInput.value = m.toString().padStart(2, '0');
+    }
+  }
+
+  setLocation(latitude, longitude) {
+    this.location = { latitude, longitude };
+    this.isEarthBased = true;
+    this.setResourceMode(true);
+  }
+
+  clearLocation() {
+    this.isEarthBased = false;
+    this.location = { latitude: 0, longitude: 0 };
+  }
+
+  setResourceMode(hasResource) {
+    const showTimeControl = hasResource && this.isEarthBased;
+
+    // Show/hide time control (left toolbar) - only for earth-based
+    const toolbarLeft = this.container?.querySelector('.resource-toolbar-left');
+    if (toolbarLeft) {
+      toolbarLeft.style.display = showTimeControl ? '' : 'none';
+    }
+
+    // Show/hide bounds toggle (right toolbar) - for any resource
+    const toolbar = this.container?.querySelector('.resource-toolbar');
+    if (toolbar) {
+      toolbar.style.display = hasResource ? '' : 'none';
+    }
+
+    // Toggle between sun lighting and starfield
+    if (showTimeControl) {
+      this.starfield.visible = false;
+      if (this.sun) this.sun.visible = true;
+      this.updateSunLighting();
+    } else {
+      // No resource or non-earth - show starfield, hide sun
+      this.starfield.visible = true;
+      this.starfield.material.opacity = 1;
+      if (this.sun) this.sun.visible = false;
+      // Reset sky to night colors
+      if (this.skyDome?.material?.uniforms) {
+        this.skyDome.material.uniforms.uHorizonColor.value.setHex(0x0a0a15);
+        this.skyDome.material.uniforms.uZenithColor.value.setHex(0x000010);
+        this.skyDome.material.uniforms.uGroundColor.value.setHex(0x050508);
+      }
+      // Dim the key light
+      if (this.keyLight) {
+        this.keyLight.intensity = 0.3;
+      }
+    }
   }
 
   onClick(event) {
@@ -240,7 +451,10 @@ export class ViewResource {
     this.updateRotators(delta);
 
     this.controls.update();
-    this.starfield.position.copy(this.camera.position);
+    this.skyDome.position.copy(this.camera.position);
+    if (this.starfield) {
+      this.starfield.position.copy(this.camera.position);
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -280,6 +494,7 @@ export class ViewResource {
       this.clearScene();
       this.currentResourceUrl = null;
       this.setStatus('No resource', '');
+      this.setResourceMode(false);
       return;
     }
 
@@ -331,6 +546,7 @@ export class ViewResource {
       this.updateGridFromContent();
       this.updateBoundsDisplay();
       this.setStatus('', '');
+      this.setResourceMode(true);
     } catch (error) {
       if (requestId === this.loadRequestId) {
         this.setStatus(`Failed: ${error.message}`, 'error');
@@ -379,6 +595,7 @@ export class ViewResource {
             return;
           }
           const model = gltf.scene;
+          this.setupModelMaterials(model);
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
           }
@@ -406,7 +623,6 @@ export class ViewResource {
         return;
       }
 
-      // Check if this request is still current
       if (requestId !== this.loadRequestId) return;
 
       const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
@@ -416,7 +632,6 @@ export class ViewResource {
       console.warn(`Error loading resource ${url}:`, error);
     }
   }
-
 
   async loadResourceJson(url) {
     if (this.isLoading) return;
@@ -468,6 +683,7 @@ export class ViewResource {
         const glbUrl = glbName.startsWith('http') ? glbName : (baseDir ? baseDir + glbName : glbName);
         const model = await this.loadGlb(glbUrl, requestId);
         if (model && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
+          this.setupModelMaterials(model);
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
           }
@@ -494,6 +710,7 @@ export class ViewResource {
     // Process blueprint recursively to preserve group hierarchy (needed for rotators)
     const result = await this.processBlueprintNode(blueprint, requestId);
     if (result && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
+      this.setupModelMaterials(result);
       if (nodeTransform) {
         this.applyNodeTransform(result, nodeTransform);
       }
@@ -619,6 +836,25 @@ export class ViewResource {
     });
   }
 
+  setupModelMaterials(model) {
+    model.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+
+        // Ensure materials work with environment lighting
+        if (child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          for (const mat of materials) {
+            if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) {
+              mat.envMapIntensity = 1.0;
+            }
+          }
+        }
+      }
+    });
+  }
+
   applyNodeTransform(model, transform) {
     if (!transform) return;
 
@@ -733,7 +969,6 @@ export class ViewResource {
         return null;
       }
 
-      // Check if request is still current after fetch
       if (requestId !== null && requestId !== this.loadRequestId) return null;
 
       const data = await response.json();
@@ -743,9 +978,7 @@ export class ViewResource {
         return null;
       }
 
-      // Process blueprint recursively to preserve group hierarchy
-      const result = await this.processBlueprintNode(blueprint, requestId);
-      return result;
+      return this.processBlueprintNode(blueprint, requestId);
     } catch (error) {
       console.warn(`Error loading nested scene ${sceneName}:`, error);
       return null;
@@ -1039,6 +1272,7 @@ export class ViewResource {
 
     if (this.gridHelper && isFinite(boundingBox.min.y)) {
       this.gridHelper.position.y = boundingBox.min.y;
+      if (this.shadowPlane) this.shadowPlane.position.y = boundingBox.min.y;
     }
   }
 
@@ -1048,6 +1282,9 @@ export class ViewResource {
     this.controls.update();
     if (this.gridHelper) {
       this.gridHelper.position.y = 0;
+    }
+    if (this.shadowPlane) {
+      this.shadowPlane.position.y = 0;
     }
   }
 
@@ -1060,6 +1297,9 @@ export class ViewResource {
     this.clearBoundsGroup();
     if (this.gridHelper) {
       this.gridHelper.position.y = 0;
+    }
+    if (this.shadowPlane) {
+      this.shadowPlane.position.y = 0;
     }
     this.loadedModels.forEach(model => {
       model.traverse((child) => {
@@ -1154,11 +1394,20 @@ export class ViewResource {
       toggle.removeEventListener('change', this.boundBoundsToggleHandler);
     }
 
+    // Remove time slider listeners
+    if (this.timeSlider && this.boundTimeSliderHandler) {
+      this.timeSlider.removeEventListener('input', this.boundTimeSliderHandler);
+    }
+    if (this.boundTimeInputHandler) {
+      this.timeHourInput?.removeEventListener('change', this.boundTimeInputHandler);
+      this.timeMinuteInput?.removeEventListener('change', this.boundTimeInputHandler);
+    }
+
     // Clear scene content
     this.clearScene();
 
     // Dispose scene helpers
-    for (const obj of [this.starfield, this.gridHelper]) {
+    for (const obj of [this.skyDome, this.gridHelper, this.shadowPlane, this.starfield, this.sun]) {
       if (obj) {
         obj.geometry?.dispose();
         obj.material?.dispose();
@@ -1166,9 +1415,11 @@ export class ViewResource {
     }
 
     // Dispose lights
-    for (const light of [this.hemiLight, this.keyLight, this.rimLight, this.cameraLight]) {
-      light?.dispose();
-    }
+    this.keyLight?.dispose();
+
+    // Dispose environment
+    this.scene?.environment?.dispose();
+    this.pmremGenerator?.dispose();
 
     // Dispose loaders, controls, and renderer
     this.dracoLoader?.dispose();
@@ -1381,7 +1632,7 @@ export class ViewResource {
     canvas.height = fontSize + padding * 2;
 
     // Background
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Text
@@ -1411,10 +1662,8 @@ export class ViewResource {
   }
 
   getNodeColor(node) {
-    const nodeType = node.nodeType;
-    if (!nodeType) return 0xffffff;
-
-    const typeInfo = NODE_TYPES.find(t => t.name === nodeType);
-    return typeInfo ? typeInfo.color : 0xffffff;
+    if (!node.nodeType) return 0xffffff;
+    const typeInfo = NODE_TYPES.find(t => t.name === node.nodeType);
+    return typeInfo?.color ?? 0xffffff;
   }
 }

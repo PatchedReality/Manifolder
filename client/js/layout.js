@@ -47,61 +47,46 @@ export class LayoutManager {
     e.preventDefault();
 
     const target = handle.dataset.resize;
-    let panel;
-    let direction;
+    const panelConfig = {
+      hierarchy: { panel: this.panels.hierarchy, direction: 'right' },
+      inspector: { panel: this.panels.inspector, direction: 'left' }
+    };
 
-    if (target === 'hierarchy') {
-      panel = this.panels.hierarchy;
-      direction = 'right';
-    } else if (target === 'inspector') {
-      panel = this.panels.inspector;
-      direction = 'left';
-    }
+    const config = panelConfig[target];
+    if (!config) return;
 
-    if (panel) {
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      this.resizing = {
-        panel,
-        direction,
-        startX: clientX,
-        startWidth: panel.offsetWidth
-      };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    this.resizing = {
+      panel: config.panel,
+      direction: config.direction,
+      startX: clientX,
+      startWidth: config.panel.offsetWidth
+    };
 
-      handle.classList.add('active');
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    }
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
   }
 
   doResize(e) {
-    if (!this.resizing) {
-      return;
-    }
+    if (!this.resizing) return;
 
     const { panel, direction, startX, startWidth } = this.resizing;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const deltaX = clientX - startX;
 
-    let newWidth;
-    if (direction === 'right') {
-      newWidth = startWidth + deltaX;
-    } else {
-      newWidth = startWidth - deltaX;
-    }
+    const rawWidth = direction === 'right' ? startWidth + deltaX : startWidth - deltaX;
 
     const minWidth = parseInt(getComputedStyle(panel).minWidth) || 150;
     const maxWidth = parseInt(getComputedStyle(panel).maxWidth) || 500;
+    const newWidth = Math.max(minWidth, Math.min(maxWidth, rawWidth));
 
-    newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
     panel.style.width = newWidth + 'px';
-
     window.dispatchEvent(new Event('resize'));
   }
 
   stopResize() {
-    if (!this.resizing) {
-      return;
-    }
+    if (!this.resizing) return;
 
     document.querySelectorAll('.resize-handle').forEach(h => h.classList.remove('active'));
     document.body.style.cursor = '';
@@ -176,29 +161,7 @@ export class LayoutManager {
 
     toggles.forEach(toggle => {
       toggle.addEventListener('click', () => {
-        const view = toggle.dataset.view;
-
-        if (view === 'graph') {
-          this.graphEnabled = !this.graphEnabled;
-        } else if (view === 'bounds') {
-          this.boundsEnabled = !this.boundsEnabled;
-        } else if (view === 'resource') {
-          this.resourceEnabled = !this.resourceEnabled;
-        }
-
-        // Ensure at least one view is enabled
-        if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
-          if (view === 'graph') {
-            this.boundsEnabled = true;
-          } else if (view === 'bounds') {
-            this.graphEnabled = true;
-          } else {
-            this.graphEnabled = true;
-          }
-        }
-
-        this.updateViewToggles();
-        this.updateViewDisplay();
+        this.toggleView(toggle.dataset.view);
         this.saveState();
       });
     });
@@ -282,7 +245,8 @@ export class LayoutManager {
   }
 
   setupUrlHistory() {
-    const select = document.getElementById('url-history');
+    const dropdownBtn = document.getElementById('url-dropdown-btn');
+    const dropdown = document.getElementById('url-dropdown');
     const input = document.getElementById('url-input');
     const loadBtn = document.getElementById('load-btn');
     const followLinkBtn = document.getElementById('follow-link-btn');
@@ -312,11 +276,14 @@ export class LayoutManager {
       }
     }
 
-    select?.addEventListener('change', () => {
-      if (select.value) {
-        input.value = select.value;
-        select.value = '';
-        loadBtn?.click();
+    dropdownBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!dropdown?.contains(e.target) && e.target !== dropdownBtn) {
+        dropdown?.classList.add('hidden');
       }
     });
 
@@ -343,21 +310,36 @@ export class LayoutManager {
   }
 
   loadUrlHistory() {
-    const select = document.getElementById('url-history');
-    if (!select) {
+    const dropdown = document.getElementById('url-dropdown');
+    const list = dropdown?.querySelector('.url-dropdown-list');
+    if (!list) return;
+
+    const history = this.getUrlHistory();
+    const input = document.getElementById('url-input');
+    const loadBtn = document.getElementById('load-btn');
+
+    list.innerHTML = '';
+
+    if (history.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'url-dropdown-empty';
+      empty.textContent = 'No recent URLs';
+      list.appendChild(empty);
       return;
     }
 
-    const history = this.getUrlHistory();
-
-    select.innerHTML = '<option value="">Recent URLs...</option>';
-
-    history.forEach(url => {
-      const option = document.createElement('option');
-      option.value = url;
-      option.textContent = this.truncateUrl(url);
-      select.appendChild(option);
-    });
+    for (const url of history) {
+      const item = document.createElement('div');
+      item.className = 'url-dropdown-item';
+      item.textContent = this.truncateUrl(url);
+      item.title = url;
+      item.addEventListener('click', () => {
+        input.value = url;
+        dropdown.classList.add('hidden');
+        loadBtn?.click();
+      });
+      list.appendChild(item);
+    }
   }
 
   getUrlHistory() {
@@ -434,22 +416,24 @@ export class LayoutManager {
   }
 
   toggleView(view) {
-    if (view === 'graph') {
-      this.graphEnabled = !this.graphEnabled;
-    } else if (view === 'bounds') {
-      this.boundsEnabled = !this.boundsEnabled;
-    } else if (view === 'resource') {
-      this.resourceEnabled = !this.resourceEnabled;
+    switch (view) {
+      case 'graph':
+        this.graphEnabled = !this.graphEnabled;
+        break;
+      case 'bounds':
+        this.boundsEnabled = !this.boundsEnabled;
+        break;
+      case 'resource':
+        this.resourceEnabled = !this.resourceEnabled;
+        break;
     }
 
-    // Ensure at least one view is enabled
+    // Ensure at least one view is enabled - default to graph if all disabled
     if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
-      if (view === 'graph') {
-        this.boundsEnabled = true;
-      } else if (view === 'bounds') {
+      if (view === 'bounds' || view === 'resource') {
         this.graphEnabled = true;
       } else {
-        this.graphEnabled = true;
+        this.boundsEnabled = true;
       }
     }
 

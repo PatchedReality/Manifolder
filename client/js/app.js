@@ -77,6 +77,20 @@ class App {
 
     const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
     this.viewResource.setNode(node, expandedDescendants);
+
+    // Update sun position based on node's geographic location (earth-based only)
+    const planetContext = this.viewBounds.getPlanetContext(node);
+    if (node?._worldPos && planetContext?.radius) {
+      const coords = calculateLatLong(node._worldPos, planetContext.radius);
+      if (coords) {
+        this.viewResource.setLocation(coords.latitude, coords.longitude);
+      } else {
+        this.viewResource.clearLocation();
+      }
+    } else {
+      this.viewResource.clearLocation();
+    }
+
     this.inspector.showNode(node);
     this.layout.setFollowLink(getMsfReference(node));
     this.updateRP1GoButton(node);
@@ -179,22 +193,21 @@ class App {
   }
 
   async checkUrlForSharedState() {
-    let search, targetWindow;
+    let targetWindow;
     try {
       targetWindow = window.top;
-      search = targetWindow.location.search;
-    } catch (e) {
+      targetWindow.location.search; // Test access
+    } catch {
       targetWindow = window;
-      search = window.location.search;
     }
 
-    if (!search || !search.includes('loc=')) return;
+    const search = targetWindow.location.search;
+    if (!search?.includes('loc=')) return;
 
     const state = this.bookmarkManager.decodeStateFromUrl(search);
     if (!state) return;
 
     targetWindow.history.replaceState(null, '', targetWindow.location.pathname);
-
     await this.bookmarkManager.applyState(state, this);
   }
 
@@ -408,7 +421,6 @@ class App {
     const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name) && t.name !== 'Root');
     const placementTypesList = NODE_TYPES.filter(t => PLACEMENT_NAMES.has(t.name));
 
-    // Helper to create a category
     const createCategory = (name, types) => {
       const category = document.createElement('div');
       category.className = 'filter-category';
@@ -421,10 +433,11 @@ class App {
       const items = document.createElement('div');
       items.className = 'filter-category-items';
 
-      types.forEach(type => {
+      for (const type of types) {
         const label = document.createElement('label');
         const isCelestial = CELESTIAL_NAMES.has(type.name);
         const isPlacement = PLACEMENT_NAMES.has(type.name);
+
         let shapeClass, colorStyle;
         if (isCelestial) {
           shapeClass = 'type-triangle';
@@ -436,9 +449,10 @@ class App {
           shapeClass = 'type-dot';
           colorStyle = 'background';
         }
+
         label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="${shapeClass}" style="${colorStyle}: var(${type.cssVar})"></span> ${type.name}`;
         items.appendChild(label);
-      });
+      }
 
       category.appendChild(items);
       return category;
@@ -543,15 +557,14 @@ class App {
   }
 
   updateTypeFilter(dropdown) {
-    // Collect from both category items and standalone checkboxes
-    const categoryTypes = Array.from(dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]'))
-      .filter(cb => cb.checked)
-      .map(cb => cb.value);
-    const standaloneTypes = Array.from(dropdown.querySelectorAll('.filter-standalone input[type="checkbox"]'))
-      .filter(cb => cb.checked)
-      .map(cb => cb.value);
-    const enabledTypes = [...standaloneTypes, ...categoryTypes];
-    this.viewBounds.setTypeFilter(enabledTypes);
+    const getCheckedValues = (selector) =>
+      Array.from(dropdown.querySelectorAll(selector))
+        .filter(cb => cb.checked)
+        .map(cb => cb.value);
+
+    const categoryTypes = getCheckedValues('.filter-category-items input[type="checkbox"]');
+    const standaloneTypes = getCheckedValues('.filter-standalone input[type="checkbox"]');
+    this.viewBounds.setTypeFilter([...standaloneTypes, ...categoryTypes]);
   }
 
   setupHierarchyEvents() {

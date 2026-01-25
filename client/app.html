@@ -10,17 +10,20 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1769294736">
+  <link rel="stylesheet" href="css/style.css?v=1769322361">
 </head>
 <body>
   <!-- Toolbar -->
   <div id="toolbar">
     <div class="toolbar-section">
       <label class="toolbar-label">URL:</label>
-      <select id="url-history" title="Recent URLs">
-        <option value="">Recent URLs...</option>
-      </select>
-      <input type="text" id="url-input" value="https://cdn2.rp1.com/config/enter.msf" placeholder="Enter MSF URL...">
+      <div class="url-combo">
+        <input type="text" id="url-input" value="https://cdn2.rp1.com/config/enter.msf" placeholder="Enter MSF URL...">
+        <button id="url-dropdown-btn" type="button" title="Recent URLs">▼</button>
+        <div id="url-dropdown" class="url-dropdown hidden">
+          <div class="url-dropdown-list"></div>
+        </div>
+      </div>
       <button id="load-btn">Load</button>
       <button id="reset-view-btn" title="Reset all view settings to defaults">Reset View</button>
       <button id="follow-link-btn" class="hidden">Follow Link</button>
@@ -94,6 +97,13 @@
           </div>
         </div>
         <div id="viewport-resource" class="viewport" style="display: none;">
+          <div class="resource-toolbar-left">
+            <div class="time-control">
+              <label>Time of Day</label>
+              <input type="range" id="time-slider" min="0" max="24" step="0.0167" value="12">
+              <input type="text" id="time-hour" maxlength="2" value="12"><span class="time-separator">:</span><input type="text" id="time-minute" maxlength="2" value="00">
+            </div>
+          </div>
           <div class="resource-toolbar">
             <label class="bounds-toggle-label">
               <input type="checkbox" id="resource-bounds-toggle">
@@ -146,16 +156,16 @@
   <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
 
   <!-- lib/mvmf libraries (order matters) -->
-  <script src="lib/mvmf/MVMF.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVSB.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVXP.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVRest.js?v=1769294736"></script>
-  <script src="lib/mvmf/socket.io.min.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVIO.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVRP.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVRP_Dev.js?v=1769294736"></script>
-  <script src="lib/mvmf/MVRP_Map.js?v=1769294736"></script>
+  <script src="lib/mvmf/MVMF.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVSB.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVXP.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVRest.js?v=1769322361"></script>
+  <script src="lib/mvmf/socket.io.min.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVIO.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVRP.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVRP_Dev.js?v=1769322361"></script>
+  <script src="lib/mvmf/MVRP_Map.js?v=1769322361"></script>
 
-  <script type="module" src="dist/app.bundle.js?v=1769294736"></script>
+  <script type="module" src="dist/app.bundle.js?v=1769322361"></script>
 </body>
 </html>

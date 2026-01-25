@@ -12,10 +12,9 @@ import * as THREE from 'three';
  */
 export function createInfiniteGrid(scene, options = {}) {
   const {
-    size = 100000,
+    size = 200000,
     gridSpacing = 10,
-    majorGridSpacing = 100,
-    fadeDistance = 10000
+    majorGridSpacing = 100
   } = options;
 
   const vertexShader = `
@@ -32,7 +31,6 @@ export function createInfiniteGrid(scene, options = {}) {
 
     uniform float uGridSpacing;
     uniform float uMajorGridSpacing;
-    uniform float uFadeDistance;
     varying vec3 vWorldPosition;
 
     float gridLine(float coord, float lineWidth) {
@@ -41,11 +39,6 @@ export function createInfiniteGrid(scene, options = {}) {
     }
 
     void main() {
-      float distanceFromCenter = length(vWorldPosition.xz);
-      float fadeAlpha = 1.0 - smoothstep(uFadeDistance * 3.0, uFadeDistance * 4.0, distanceFromCenter);
-
-      if (fadeAlpha < 0.01) discard;
-
       vec2 minorCoord = vWorldPosition.xz / uGridSpacing;
       vec2 majorCoord = vWorldPosition.xz / uMajorGridSpacing;
 
@@ -61,7 +54,7 @@ export function createInfiniteGrid(scene, options = {}) {
       float baseAlpha = 0.8;
 
       vec3 color = mix(baseColor, mix(minorColor, majorColor, majorLine), lineAlpha > 0.0 ? 1.0 : 0.0);
-      float alpha = max(lineAlpha, baseAlpha) * fadeAlpha;
+      float alpha = max(lineAlpha, baseAlpha);
 
       gl_FragColor = vec4(color, alpha);
     }
@@ -73,8 +66,7 @@ export function createInfiniteGrid(scene, options = {}) {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uGridSpacing: { value: gridSpacing },
-      uMajorGridSpacing: { value: majorGridSpacing },
-      uFadeDistance: { value: fadeDistance }
+      uMajorGridSpacing: { value: majorGridSpacing }
     },
     vertexShader,
     fragmentShader,
@@ -88,6 +80,70 @@ export function createInfiniteGrid(scene, options = {}) {
   scene.add(grid);
 
   return grid;
+}
+
+/**
+ * Creates a sky dome with gradient from horizon to zenith
+ * @param {THREE.Scene} scene - The scene to add the sky to
+ * @param {Object} options - Configuration options
+ * @returns {THREE.Mesh} The sky dome mesh
+ */
+export function createSkyDome(scene, options = {}) {
+  const {
+    radius = 90000,
+    horizonColor = new THREE.Color(0x87ceeb),
+    zenithColor = new THREE.Color(0x1e90ff),
+    groundColor = new THREE.Color(0x0c0c14)
+  } = options;
+
+  const vertexShader = `
+    varying vec3 vPosition;
+    void main() {
+      vPosition = position;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  const fragmentShader = `
+    uniform vec3 uHorizonColor;
+    uniform vec3 uZenithColor;
+    uniform vec3 uGroundColor;
+    varying vec3 vPosition;
+
+    void main() {
+      float height = normalize(vPosition).y;
+      vec3 color;
+      if (height >= 0.0) {
+        float t = pow(height, 0.4);
+        color = mix(uHorizonColor, uZenithColor, t);
+      } else {
+        float t = pow(-height, 0.6);
+        color = mix(uHorizonColor, uGroundColor, t);
+      }
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  const geometry = new THREE.SphereGeometry(radius, 32, 32);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uHorizonColor: { value: horizonColor },
+      uZenithColor: { value: zenithColor },
+      uGroundColor: { value: groundColor }
+    },
+    vertexShader,
+    fragmentShader,
+    side: THREE.BackSide,
+    depthWrite: false
+  });
+
+  const sky = new THREE.Mesh(geometry, material);
+  sky.renderOrder = -1001;
+  sky.frustumCulled = false;
+  scene.add(sky);
+
+  return sky;
 }
 
 /**
@@ -169,15 +225,12 @@ export function updateGridSpacing(gridMesh, options = {}) {
     return;
   }
 
-  const { gridSpacing, majorGridSpacing, fadeDistance } = options;
+  const { gridSpacing, majorGridSpacing } = options;
 
   if (gridSpacing !== undefined) {
     gridMesh.material.uniforms.uGridSpacing.value = gridSpacing;
   }
   if (majorGridSpacing !== undefined) {
     gridMesh.material.uniforms.uMajorGridSpacing.value = majorGridSpacing;
-  }
-  if (fadeDistance !== undefined) {
-    gridMesh.material.uniforms.uFadeDistance.value = fadeDistance;
   }
 }
