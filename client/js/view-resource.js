@@ -8,6 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Sky } from 'three/addons/objects/Sky.js';
 import Hls from 'hls.js';
 import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
@@ -88,7 +89,7 @@ export class ViewResource {
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = .75;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
@@ -128,16 +129,22 @@ export class ViewResource {
     this.gltfLoader.setKTX2Loader(this.ktx2Loader);
 
     this.gridHelper = createInfiniteGrid(this.scene);
+
+    // Three.js Sky for daytime atmospheric scattering
+    this.sky = new Sky();
+    this.sky.scale.setScalar(450000);
+    this.scene.add(this.sky);
+
+    // Sky parameters - adjusted dynamically in updateSunLighting based on elevation
+    const skyUniforms = this.sky.material.uniforms;
+    skyUniforms.mieCoefficient.value = 0.005;
+    skyUniforms.mieDirectionalG.value = 0.7;
+
+    // Night sky - gradient dome and starfield
     this.skyDome = createSkyDome(this.scene);
+    this.skyDome.visible = false;
     this.starfield = createStarfield(this.scene, { radius: 80000 });
     this.starfield.visible = false;
-
-    // Sun disc - positioned on sky dome, apparent size ~0.5 degrees
-    const sunRadius = 80000 * Math.tan(0.5 * Math.PI / 180);
-    const sunGeo = new THREE.SphereGeometry(sunRadius, 32, 32);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffee });
-    this.sun = new THREE.Mesh(sunGeo, sunMat);
-    this.scene.add(this.sun);
 
     this.setupTimeSlider();
     this.setResourceMode(false);
@@ -220,7 +227,7 @@ export class ViewResource {
       now
     );
 
-    // Position light based on sun azimuth/elevation
+    // Position directional light based on sun azimuth/elevation
     const distance = 100;
     const elevRad = elevation * Math.PI / 180;
     const azimRad = azimuth * Math.PI / 180;
@@ -233,50 +240,60 @@ export class ViewResource {
 
     // Get lighting params based on sun elevation
     const params = getSunLightingParams(elevation);
-
     this.keyLight.color.setHex(params.color);
     this.keyLight.intensity = params.intensity;
 
-    // Update sky dome colors
-    if (this.skyDome?.material?.uniforms) {
-      this.skyDome.material.uniforms.uHorizonColor.value.setHex(params.skyHorizon);
-      this.skyDome.material.uniforms.uZenithColor.value.setHex(params.skyZenith);
-      this.skyDome.material.uniforms.uGroundColor.value.setHex(params.groundColor);
+    // Update Sky addon sun position (phi = zenith angle, theta = azimuth)
+    const phi = (90 - elevation) * Math.PI / 180;
+    const theta = azimuth * Math.PI / 180;
+    const sunPosition = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+    this.sky.material.uniforms.sunPosition.value.copy(sunPosition);
+
+    // Adjust sky parameters based on sun elevation
+    // Keep clear blue sky until sun is very low, then ramp up haze for sunset
+    let rayleigh, turbidity;
+    if (elevation > 5) {
+      // Daytime - clear blue sky
+      rayleigh = 0.08;
+      turbidity = 0.3;
+    } else if (elevation > 0) {
+      // Near horizon - ramp up for sunset/sunrise
+      const t = (5 - elevation) / 5;
+      rayleigh = 0.08 + t * (3 - 0.08);
+      turbidity = 0.3 + t * (10 - 0.3);
+    } else {
+      // Below horizon
+      rayleigh = 3;
+      turbidity = 10;
     }
+    this.sky.material.uniforms.rayleigh.value = rayleigh;
+    this.sky.material.uniforms.turbidity.value = turbidity;
 
-    // Position and color sun disc
-    if (this.sun) {
-      const sunDistance = 80000;
-      this.sun.position.set(
-        sunDistance * Math.cos(elevRad) * Math.sin(azimRad) + this.camera.position.x,
-        sunDistance * Math.sin(elevRad) + this.camera.position.y,
-        sunDistance * Math.cos(elevRad) * Math.cos(azimRad) + this.camera.position.z
-      );
-      this.sun.visible = elevation > -1;
+    // Day/night/twilight transitions
+    if (elevation > 0) {
+      // Daytime - use Sky addon
+      this.sky.visible = true;
+      this.skyDome.visible = false;
+      this.starfield.visible = false;
+    } else if (elevation > -12) {
+      // Twilight - Sky fades out, stars fade in
+      this.sky.visible = true;
+      this.skyDome.visible = false;
+      this.starfield.visible = true;
+      this.starfield.material.opacity = Math.abs(elevation) / 12;
+      this.starfield.material.transparent = true;
+    } else {
+      // Night - use skyDome gradient and starfield
+      this.sky.visible = false;
+      this.skyDome.visible = true;
+      this.starfield.visible = true;
+      this.starfield.material.opacity = 1;
 
-      // Sun color changes with elevation - warmer near horizon
-      let sunColor;
-      if (elevation < 5) {
-        sunColor = 0xff6622;
-      } else if (elevation < 15) {
-        sunColor = 0xffaa44;
-      } else if (elevation < 30) {
-        sunColor = 0xffdd88;
-      } else {
-        sunColor = 0xffffee;
-      }
-      this.sun.material.color.setHex(sunColor);
-    }
-
-    // Show starfield at night (sun below horizon)
-    if (this.starfield) {
-      const showStars = elevation < 0;
-      this.starfield.visible = showStars;
-      if (showStars && this.starfield.material) {
-        // Fade in stars as sun goes further below horizon
-        const opacity = Math.min(1, Math.abs(elevation) / 12);
-        this.starfield.material.opacity = opacity;
-        this.starfield.material.transparent = true;
+      // Update night sky dome colors
+      if (this.skyDome?.material?.uniforms) {
+        this.skyDome.material.uniforms.uHorizonColor.value.setHex(params.skyHorizon);
+        this.skyDome.material.uniforms.uZenithColor.value.setHex(params.skyZenith);
+        this.skyDome.material.uniforms.uGroundColor.value.setHex(params.groundColor);
       }
     }
 
@@ -319,15 +336,14 @@ export class ViewResource {
 
     // Toggle between sun lighting and starfield
     if (showTimeControl) {
-      this.starfield.visible = false;
-      if (this.sun) this.sun.visible = true;
       this.updateSunLighting();
     } else {
-      // No resource or non-earth - show starfield, hide sun
+      // No resource or non-earth - show starfield night sky
+      this.sky.visible = false;
+      this.skyDome.visible = true;
       this.starfield.visible = true;
       this.starfield.material.opacity = 1;
-      if (this.sun) this.sun.visible = false;
-      // Reset sky to night colors
+      // Set night sky colors
       if (this.skyDome?.material?.uniforms) {
         this.skyDome.material.uniforms.uHorizonColor.value.setHex(0x0a0a15);
         this.skyDome.material.uniforms.uZenithColor.value.setHex(0x000010);
@@ -1407,7 +1423,7 @@ export class ViewResource {
     this.clearScene();
 
     // Dispose scene helpers
-    for (const obj of [this.skyDome, this.gridHelper, this.shadowPlane, this.starfield, this.sun]) {
+    for (const obj of [this.sky, this.skyDome, this.gridHelper, this.shadowPlane, this.starfield]) {
       if (obj) {
         obj.geometry?.dispose();
         obj.material?.dispose();
