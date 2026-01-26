@@ -205,10 +205,24 @@ class App {
     if (!search?.includes('loc=')) return;
 
     const state = this.bookmarkManager.decodeStateFromUrl(search);
-    if (!state) return;
+    if (!state) {
+      console.error('Failed to decode shared link - URL may be corrupted');
+      this.layout.setStatus('Invalid shared link', 'disconnected');
+      return;
+    }
 
     targetWindow.history.replaceState(null, '', targetWindow.location.pathname);
-    await this.bookmarkManager.applyState(state, this);
+
+    try {
+      const success = await this.bookmarkManager.applyState(state, this);
+      if (!success) {
+        console.error('Failed to apply shared state - map may be unavailable');
+        this.layout.setStatus('Failed to load shared link', 'disconnected');
+      }
+    } catch (err) {
+      console.error('Error applying shared state:', err);
+      this.layout.setStatus('Error loading shared link', 'disconnected');
+    }
   }
 
   renderBookmarkList(container) {
@@ -225,11 +239,19 @@ class App {
       nameSpan.textContent = bookmark.name;
       nameSpan.title = bookmark.name;
 
-      item.addEventListener('click', () => {
+      item.addEventListener('click', async () => {
         const state = this.bookmarkManager.load(bookmark.id);
         if (state) {
           document.getElementById('bookmark-dropdown')?.classList.add('hidden');
-          this.bookmarkManager.applyState(state, this);
+          try {
+            const success = await this.bookmarkManager.applyState(state, this);
+            if (!success) {
+              this.layout.setStatus('Failed to load bookmark', 'disconnected');
+            }
+          } catch (err) {
+            console.error('Error loading bookmark:', err);
+            this.layout.setStatus('Error loading bookmark', 'disconnected');
+          }
         }
       });
 
@@ -675,7 +697,7 @@ class App {
     });
   }
 
-  async handleLoadMap(url) {
+  async handleLoadMap(url, { skipStateRestore = false } = {}) {
     try {
       this.layout.setStatus('Loading map...', 'loading');
 
@@ -705,27 +727,32 @@ class App {
       this.stateManager.updateSection('navigation', { mapUrl: url });
 
       if (tree) {
-        // Check for saved hierarchy state
-        const hierarchyState = this.stateManager.getSection('hierarchy');
-        const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
-
-        if (!hasSavedExpanded) {
-          // No saved state - just expand the root
+        if (skipStateRestore) {
+          // Caller will handle state restoration
           this.hierarchy.expandNode(tree);
         } else {
-          // Restore saved expanded nodes
-          this.hierarchy.expandNodesByKeys(hierarchyState.expandedNodeIds);
-        }
+          // Check for saved hierarchy state
+          const hierarchyState = this.stateManager.getSection('hierarchy');
+          const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
-        // Try to restore previously selected node via path
-        const navState = this.stateManager.getSection('navigation');
-        if (navState.selectedNodePath?.length > 0) {
-          await this.restoreNodePath(navState.selectedNodePath);
-        } else {
-          this.hierarchy.selectNode(tree);
-          setTimeout(() => {
-            this.viewGraph.zoomToNode(tree);
-          }, 100);
+          if (!hasSavedExpanded) {
+            // No saved state - just expand the root
+            this.hierarchy.expandNode(tree);
+          } else {
+            // Restore saved expanded nodes
+            this.hierarchy.expandNodesByKeys(hierarchyState.expandedNodeIds);
+          }
+
+          // Try to restore previously selected node via path
+          const navState = this.stateManager.getSection('navigation');
+          if (navState.selectedNodePath?.length > 0) {
+            await this.restoreNodePath(navState.selectedNodePath);
+          } else {
+            this.hierarchy.selectNode(tree);
+            setTimeout(() => {
+              this.viewGraph.zoomToNode(tree);
+            }, 100);
+          }
         }
       }
     } catch (error) {
@@ -765,7 +792,7 @@ class App {
           // Small delay to let UI update
           await new Promise(r => setTimeout(r, 50));
         } catch (err) {
-          console.warn('Failed to load children during restore:', err);
+          console.error(`Failed to load children for node ${currentNode.id} during path restore:`, err);
           break;
         }
       }
@@ -786,17 +813,19 @@ class App {
       currentNode = nextNode;
     }
 
+    // Get the canonical node from hierarchy (may have more data than the stub we traversed)
+    const canonicalNode = this.hierarchy.findNodeByTypeAndId(currentNode.type, currentNode.id) || currentNode;
+
     // Expand tree to show the node, then select it
-    this.hierarchy.expandToNode(currentNode);
-    this.hierarchy.selectNode(currentNode);
-    this.viewBounds.selectNode(currentNode.id, currentNode.type);
-    this.viewBounds.zoomToNode(currentNode);
-    this.inspector.showNode(currentNode);
+    this.hierarchy.expandToNode(canonicalNode);
+    this.hierarchy.selectNode(canonicalNode);
+
+    this.viewBounds.selectNode(canonicalNode.id, canonicalNode.type);
+    this.viewBounds.zoomToNode(canonicalNode);
+    this.inspector.showNode(canonicalNode);
 
     setTimeout(() => {
-      this.viewGraph.zoomToNode(currentNode);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(currentNode);
-      this.viewResource.setNode(currentNode, expandedDescendants);
+      this.viewGraph.zoomToNode(canonicalNode);
     }, 100);
   }
 
@@ -815,22 +844,25 @@ class App {
     const loadPromise = (async () => {
       try {
         const nodeData = await this.client.getNode(node.id, node.type);
-        if (nodeData && nodeData.children) {
+        if (!nodeData) {
+          console.warn(`loadNodeChildren: getNode returned null for ${node.type} ${node.id}`);
+        }
+        if (nodeData?.children) {
           this.hierarchy.setChildren(node, nodeData.children);
           this.viewGraph.addChildren(node, nodeData.children);
           this.viewBounds.addChildren(node, nodeData.children);
 
+          // Update resource view if there's a selected node - descendants may have resources
           const selectedNode = this.hierarchy.getSelectedNode();
-          if (selectedNode && selectedNode._uid === node._uid) {
-            const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-            this.viewResource.setNode(node, expandedDescendants);
+          if (selectedNode) {
+            const expandedDescendants = this.hierarchy.getExpandedDescendants(selectedNode);
+            this.viewResource.setNode(selectedNode, expandedDescendants);
           }
         }
-        this.hierarchy.markNodeLoaded(node);
-      } catch (error) {
-        console.error('Failed to load children:', error);
-        this.hierarchy.markNodeLoaded(node);
+      } catch (err) {
+        console.error(`Failed to load children for node ${node.id}:`, err);
       } finally {
+        this.hierarchy.markNodeLoaded(node);
         this.loadingNodes.delete(key);
       }
     })();

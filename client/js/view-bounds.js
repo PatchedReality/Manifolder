@@ -1258,16 +1258,12 @@ export class ViewBounds {
         textureLoader.load(
           surfaceInfo.url,
           (texture) => {
-                    if (!mesh.parent) {
-              texture.dispose();
-              return;
-            }
             texture.colorSpace = THREE.SRGBColorSpace;
             material.map = texture;
             material.needsUpdate = true;
           },
           undefined,
-          (err) => console.warn(`Failed to load texture: ${surfaceInfo.url}`, err)
+          (err) => console.warn(`Failed to load surface texture: ${surfaceInfo.url}`, err)
         );
       } else {
         material = new THREE.MeshBasicMaterial({

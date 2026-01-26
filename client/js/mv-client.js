@@ -116,6 +116,12 @@ export class MVClient {
         this._pendingResolve = resolve;
         this._pendingReject = reject;
 
+        this._loadTimeout = setTimeout(() => {
+          this._pendingResolve = null;
+          this._pendingReject = null;
+          reject(new Error('Connection timeout - server unreachable'));
+        }, 30000);
+
         this.msf = new MV.MVRP.MSF(url, MV.MVRP.MSF.eMETHOD.GET);
         this.msf.Attach(this);
       });
@@ -134,6 +140,7 @@ export class MVClient {
     const state = this.msf.ReadyState();
 
     if (state === MV.MVRP.MSF.eSTATE.FAILED) {
+      clearTimeout(this._loadTimeout);
       const err = new Error(this.msf.XHRError || 'Failed to load MSF config');
       this._emit('error', err);
       if (this._pendingReject) {
@@ -145,6 +152,7 @@ export class MVClient {
     }
 
     if (state >= MV.MVRP.MSF.eSTATE.READY_LOGGEDOUT) {
+      clearTimeout(this._loadTimeout);
       this.msfConfig = this.msf.pMSFConfig;
 
       const mapConfig = this.msfConfig?.map;

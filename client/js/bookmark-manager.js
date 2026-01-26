@@ -211,7 +211,8 @@ export class BookmarkManager {
         }
       };
     } catch (e) {
-      console.warn('Failed to decode shared state from URL:', e);
+      console.error('Failed to decode shared state from URL:', e);
+      console.error('Problematic loc parameter:', base64);
       return null;
     }
   }

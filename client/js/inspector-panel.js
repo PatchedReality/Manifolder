@@ -254,7 +254,9 @@ export class InspectorPanel {
         copyBtn.innerHTML = '&#10003;';
         setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
       } catch (err) {
-        console.error('Failed to copy:', err);
+        console.error('Failed to copy to clipboard:', err);
+        copyBtn.innerHTML = '!';
+        setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
       }
     });
 

@@ -364,8 +364,8 @@ export class LayoutManager {
 
     try {
       localStorage.setItem(URL_HISTORY_KEY, JSON.stringify(history));
-    } catch {
-      // localStorage unavailable or full
+    } catch (e) {
+      console.warn('localStorage unavailable, URL history not saved:', e.message);
     }
 
     this.loadUrlHistory();

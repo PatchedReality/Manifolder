@@ -277,11 +277,23 @@ export class HierarchyPanel {
       return;
     }
 
+    // Remove old children from Maps before clearing DOM
+    const parentNodeData = this.nodeData.get(parentKey);
+    if (parentNodeData?.children) {
+      for (const oldChild of parentNodeData.children) {
+        if (oldChild._uid) {
+          const oldKey = `node-${oldChild._uid}`;
+          this.nodes.delete(oldKey);
+          this.nodeData.delete(oldKey);
+          this.loadedNodes.delete(oldKey);
+        }
+      }
+    }
+
     childrenContainer.innerHTML = '';
     this.loadedNodes.add(parentKey);
 
     // Update internal data cache
-    const parentNodeData = this.nodeData.get(parentKey);
     if (parentNodeData) {
       parentNodeData.children = children;
       parentNodeData.hasChildren = children && children.length > 0;
@@ -330,6 +342,7 @@ export class HierarchyPanel {
 
     const node = this.nodes.get(nodeKey);
     if (!node) {
+      console.warn('selectNode: DOM element not found for key:', nodeKey);
       return;
     }
 
@@ -342,6 +355,9 @@ export class HierarchyPanel {
     this.selectedNode = node;
 
     const nodeData = this.nodeData.get(nodeKey);
+    if (!nodeData) {
+      console.warn('selectNode: nodeData not found for key:', nodeKey);
+    }
     if (nodeData) {
       this.selectCallbacks.forEach(callback => callback(nodeData));
     }
@@ -843,7 +859,7 @@ export class HierarchyPanel {
 
     // Expand ancestors in order (root to leaf), loading children as needed
     for (const ancestor of sortedPaths) {
-      const existingNode = this._findNodeByTypeAndId(ancestor.type, ancestor.id);
+      const existingNode = this.findNodeByTypeAndId(ancestor.type, ancestor.id);
 
       if (existingNode) {
         const nodeKey = this._nodeKey(existingNode);
@@ -862,7 +878,7 @@ export class HierarchyPanel {
 
     // Collect match node keys
     for (const match of results.matches) {
-      const matchNode = this._findNodeByTypeAndId(match.type, match.id);
+      const matchNode = this.findNodeByTypeAndId(match.type, match.id);
       if (matchNode) {
         const nodeKey = this._nodeKey(matchNode);
         visibleKeys.add(nodeKey);
@@ -874,8 +890,8 @@ export class HierarchyPanel {
     this._applySearchFilter(visibleKeys, matchKeys);
   }
 
-  _findNodeByTypeAndId(type, id) {
-    for (const [nodeKey, nodeData] of this.nodeData) {
+  findNodeByTypeAndId(type, id) {
+    for (const [, nodeData] of this.nodeData) {
       if (nodeData.type === type && nodeData.id === id) {
         return nodeData;
       }

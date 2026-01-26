@@ -239,7 +239,8 @@ export class NodeFactory {
     node._resourceLoading = this.#fetchAndProcessResource(node.resourceUrl);
     try {
       node._resourceData = await node._resourceLoading;
-    } catch {
+    } catch (err) {
+      console.error('Failed to fetch resource data:', node.resourceUrl, err);
       node._resourceData = null;
     }
     node._resourceLoading = null;

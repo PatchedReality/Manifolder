@@ -514,7 +514,9 @@ export class ViewResource {
       return;
     }
 
-    const cacheKey = resourcesToLoad.map(r => r.url).sort().join('|');
+    // Include node identity so selecting different nodes triggers refresh
+    const nodeKey = `${node.type}_${node.id}`;
+    const cacheKey = `${nodeKey}:${resourcesToLoad.map(r => r.url).sort().join('|')}`;
     if (cacheKey === this.currentResourceUrl) {
       return;
     }
@@ -827,14 +829,21 @@ export class ViewResource {
   async fetchResourceJson(resourceName, requestId = null) {
     if (!resourceName) return null;
     const url = resolveResourceUrl(resourceName);
-    if (!url) return null;
+    if (!url) {
+      console.warn('fetchResourceJson: Could not resolve URL for', resourceName);
+      return null;
+    }
 
     try {
       const response = await fetch(url);
       if (requestId !== null && requestId !== this.loadRequestId) return null;
-      if (!response.ok) return null;
+      if (!response.ok) {
+        console.warn(`fetchResourceJson: HTTP ${response.status} for ${url}`);
+        return null;
+      }
       return await response.json();
     } catch (e) {
+      console.error('fetchResourceJson: Failed to fetch', url, e);
       return null;
     }
   }
@@ -1096,6 +1105,9 @@ export class ViewResource {
     const isHls = videoUrl.toLowerCase().includes('.m3u8');
     if (isHls && Hls.isSupported()) {
       const hls = new Hls();
+      hls.on(Hls.Events.ERROR, (event, data) => {
+        console.error('HLS error:', data.type, data.details);
+      });
       hls.loadSource(videoUrl);
       hls.attachMedia(video);
       this.hlsInstances.push(hls);
@@ -1112,25 +1124,40 @@ export class ViewResource {
     texture.magFilter = THREE.LinearFilter;
     texture.colorSpace = THREE.SRGBColorSpace;
 
-    // Create 1x1 plane, node's scale handles final size
-    const geometry = new THREE.PlaneGeometry(1, 1);
     const material = new THREE.MeshBasicMaterial({
       map: texture,
       side: THREE.DoubleSide
     });
 
+    // Start with 1x1, update to video aspect when metadata loads
+    const geometry = new THREE.PlaneGeometry(1, 1);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.video = video;
     mesh.userData.isVideoPlane = true;
 
-    // Adjust width to video's aspect ratio when metadata loads
-    video.addEventListener('loadedmetadata', () => {
+    let geometryUpdated = false;
+    const updateGeometryFromVideo = () => {
+      if (geometryUpdated) return true;
       if (video.videoWidth && video.videoHeight) {
         const aspect = video.videoWidth / video.videoHeight;
         mesh.geometry.dispose();
         mesh.geometry = new THREE.PlaneGeometry(aspect, 1);
+        geometryUpdated = true;
+        return true;
       }
-    }, { once: true });
+      return false;
+    };
+
+    // Check if metadata already loaded, otherwise listen for multiple events
+    // (Safari's native HLS may fire loadedmetadata with 0x0, but loadeddata has dimensions)
+    if (!updateGeometryFromVideo()) {
+      video.addEventListener('loadedmetadata', updateGeometryFromVideo, { once: true });
+      video.addEventListener('loadeddata', updateGeometryFromVideo, { once: true });
+      video.addEventListener('error', (e) => {
+        console.error('Video error:', e, video.error);
+      });
+    }
+
 
     // Apply transform
     mesh.applyMatrix4(transform);

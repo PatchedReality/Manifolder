@@ -115,12 +115,13 @@ export class UIStateManager {
 
     if (newUrl && (newUrl !== currentUrl || !app.tree)) {
       document.getElementById('url-input').value = newUrl;
-      await app.handleLoadMap(newUrl);
+      await app.handleLoadMap(newUrl, { skipStateRestore: true });
     }
 
     app.layout.restoreStateUI(layoutState);
 
     if (!app.tree) {
+      console.error('applyFullState: Map failed to load - tree is null');
       return false;
     }
 

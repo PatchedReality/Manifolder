@@ -17,6 +17,7 @@ export function setResourceBaseUrl(url) {
     new URL(url);
     resourceBaseUrl = url.endsWith('/') ? url : url + '/';
   } catch (e) {
+    console.error('Invalid resource base URL:', url, e);
     resourceBaseUrl = null;
   }
 }
