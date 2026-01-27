@@ -965,6 +965,7 @@ export class ViewResource {
       'entitysync',
       'widgetframe',
       'actioncon',
+      'motor',
     ];
     if (actionType && nonVisualActions.includes(actionType)) {
       return null;
