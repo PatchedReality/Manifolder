@@ -723,6 +723,11 @@ export class ViewResource {
       return;
     }
 
+    // Fabric files with simple physical root (RMPObject-style) default to Earth at 0/0
+    if (!this.isEarthBased && this.isSimplePhysicalBlueprint(blueprint)) {
+      this.setLocation(0, 0);
+    }
+
     // Check if this request is still current
     if (requestId !== null && requestId !== this.loadRequestId) return;
 
@@ -824,6 +829,23 @@ export class ViewResource {
     }
 
     return null;
+  }
+
+  isSimplePhysicalBlueprint(blueprint) {
+    if (!blueprint) return false;
+
+    const isPhysical = blueprint.blueprintType === 'physical' && blueprint.resourceReference;
+    if (isPhysical) return true;
+
+    if (blueprint.children && blueprint.children.length > 0) {
+      const hasOnlyPhysicalChildren = blueprint.children.every(child =>
+        child.blueprintType === 'physical' ||
+        child.resourceReference?.startsWith('action://')
+      );
+      if (hasOnlyPhysicalChildren) return true;
+    }
+
+    return false;
   }
 
   async fetchResourceJson(resourceName, requestId = null) {

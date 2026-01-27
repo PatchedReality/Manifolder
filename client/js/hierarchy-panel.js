@@ -123,13 +123,19 @@ export class HierarchyPanel {
 
   setData(tree) {
     this.clear();
+    this.rootNode = null;
 
     if (!tree) {
       return;
     }
 
+    this.rootNode = tree;
     const rootElement = this.createNodeElement(tree);
     this.container.appendChild(rootElement);
+  }
+
+  getRootNode() {
+    return this.rootNode;
   }
 
   clear() {
@@ -139,6 +145,7 @@ export class HierarchyPanel {
     this.loadedNodes.clear();
     this.pendingExpandedKeys = null;
     this.selectedNode = null;
+    this.rootNode = null;
     this._nextId = 1;
   }
 

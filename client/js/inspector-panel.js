@@ -317,7 +317,7 @@ export class InspectorPanel {
     try {
       const data = await NodeFactory.getResourceData(node);
       if (!data) {
-        contentElement.textContent = 'Failed to load resource';
+        contentElement.textContent = 'No resource metadata';
         return;
       }
       contentElement.innerHTML = this._formatResourceJson(data);

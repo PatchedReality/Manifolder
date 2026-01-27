@@ -250,6 +250,12 @@ export class NodeFactory {
   static async #fetchAndProcessResource(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('json')) {
+      return null;
+    }
+
     const json = await response.json();
     return this.#processResourceJson(json, url);
   }

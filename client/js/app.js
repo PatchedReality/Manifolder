@@ -75,10 +75,8 @@ class App {
       this.viewBounds.selectNode(node.id, node.type);
     }
 
-    const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-    this.viewResource.setNode(node, expandedDescendants);
-
     // Update sun position based on node's geographic location (earth-based only)
+    // Must be set before setNode() since it calls setResourceMode() which checks isEarthBased
     const planetContext = this.viewBounds.getPlanetContext(node);
     if (node?._worldPos && planetContext?.radius) {
       const coords = calculateLatLong(node._worldPos, planetContext.radius);
@@ -88,8 +86,17 @@ class App {
         this.viewResource.clearLocation();
       }
     } else {
-      this.viewResource.clearLocation();
+      // Standalone RMPObject scenes (not on a planet) default to Earth at 0/0
+      const rootNode = this.hierarchy.getRootNode();
+      if (rootNode?.type === 'RMPObject') {
+        this.viewResource.setLocation(0, 0);
+      } else {
+        this.viewResource.clearLocation();
+      }
     }
+
+    const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
+    this.viewResource.setNode(node, expandedDescendants);
 
     this.inspector.showNode(node);
     this.layout.setFollowLink(getMsfReference(node));
