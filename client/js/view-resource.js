@@ -656,6 +656,11 @@ export class ViewResource {
     if (this.isLoading) return;
     this.isLoading = true;
 
+    // Default to Earth at 0/0 for direct URL loads
+    if (!this.isEarthBased) {
+      this.setLocation(0, 0);
+    }
+
     this.clearScene();
     this.contentGroup = new THREE.Group();
     this.scene.add(this.contentGroup);

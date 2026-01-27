@@ -83,16 +83,11 @@ class App {
       if (coords) {
         this.viewResource.setLocation(coords.latitude, coords.longitude);
       } else {
-        this.viewResource.clearLocation();
+        this.viewResource.setLocation(0, 0);
       }
     } else {
-      // Standalone RMPObject scenes (not on a planet) default to Earth at 0/0
-      const rootNode = this.hierarchy.getRootNode();
-      if (rootNode?.type === 'RMPObject') {
-        this.viewResource.setLocation(0, 0);
-      } else {
-        this.viewResource.clearLocation();
-      }
+      // Default to Earth at 0/0 for resources without computed geographic position
+      this.viewResource.setLocation(0, 0);
     }
 
     const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
