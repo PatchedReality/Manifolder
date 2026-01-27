@@ -789,7 +789,10 @@ export class ViewResource {
         if (requestId !== null && requestId !== this.loadRequestId) return null;
 
         // Check for rotator - handle specially
-        if (child.resourceReference?.endsWith('rotator.json')) {
+        const childActionType = child.resourceReference?.startsWith('action://')
+          ? child.resourceReference.split('/').pop().replace(/\.json$/, '')
+          : null;
+        if (childActionType === 'rotator') {
           pendingRotators.push(child);
           continue;
         }
@@ -926,48 +929,49 @@ export class ViewResource {
   async loadPhysicalObject(obj, requestId = null) {
     const { resourceReference, resourceName, objectBounds, transform } = obj;
 
-    // Extract action filename for action:// references
-    const actionFile = resourceReference?.startsWith('action://')
-      ? resourceReference.split('/').pop()
-      : null;
+    // Extract action type from action:// references (strip .json if present)
+    let actionType = null;
+    if (resourceReference?.startsWith('action://')) {
+      actionType = resourceReference.split('/').pop().replace(/\.json$/, '');
+    }
 
     // Handle point lights
-    if (actionFile === 'pointlight.json') {
+    if (actionType === 'pointlight') {
       return this.loadPointLight(resourceName, transform, requestId);
     }
 
     // Handle text sprites
-    if (actionFile === 'showtext.json') {
+    if (actionType === 'showtext') {
       return this.loadTextSprite(resourceName, transform, objectBounds, requestId);
     }
 
     // Handle video planes
-    if (actionFile === 'video.json') {
+    if (actionType === 'video') {
       return this.loadVideoPlane(resourceName, transform, objectBounds, requestId);
     }
 
     // Skip non-visual action types (behavioral, UI, sync components)
     const nonVisualActions = [
-      'collider.json',
-      'interior.json',
-      'testswitch.json',
-      'player_controller.json',
-      'activity.json',
-      'modeshow.json',
-      'textinput.json',
-      'demolight.json',
-      'textsync.json',
-      'button.json',
-      'entitysync.json',
-      'widgetframe.json',
-      'actioncon.json',
+      'collider',
+      'interior',
+      'testswitch',
+      'player_controller',
+      'activity',
+      'modeshow',
+      'textinput',
+      'demolight',
+      'textsync',
+      'button',
+      'entitysync',
+      'widgetframe',
+      'actioncon',
     ];
-    if (actionFile && nonVisualActions.includes(actionFile)) {
+    if (actionType && nonVisualActions.includes(actionType)) {
       return null;
     }
 
-    // Handle nested scenes (action://scene.json means load resourceName as another scene)
-    if (actionFile === 'scene.json' && resourceName) {
+    // Handle nested scenes (action://scene means load resourceName as another scene)
+    if (actionType === 'scene' && resourceName) {
       return this.loadNestedScene(resourceName, transform, requestId);
     }
 
