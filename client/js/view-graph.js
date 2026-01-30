@@ -62,24 +62,23 @@ const DAMPING = 0.92;
 const MAX_VELOCITY = 5;
 
 export class ViewGraph {
-  constructor(containerSelector) {
+  constructor(containerSelector, model) {
     this.container = document.querySelector(containerSelector);
+    this.model = model;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
     this.controls = null;
-    
+
     // Graph Data
     this.graphNodes = [];
     this.graphLinks = [];
     this.nodeMeshes = new Map(); // id -> Mesh
     this.linkLines = null; // THREE.LineSegments
-    
+
     // Interaction
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
-    this.selectCallbacks = [];
-    this.toggleCallbacks = [];
     this.msfLoadCallbacks = [];
     this.selectedId = null;
     this.highlightMesh = null;
@@ -89,10 +88,45 @@ export class ViewGraph {
     this.disposed = false;
     this.initialized = false;
 
+    this._bindModelEvents();
     this.init();
     if (this.initialized) {
       this.animate();
     }
+  }
+
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.selectNode(node);
+      }
+    });
+
+    this.model.on('treeChanged', (tree) => {
+      this.setData(tree);
+    });
+
+    this.model.on('nodeChildrenChanged', (parentNode) => {
+      if (parentNode.children) {
+        this.addChildren(parentNode, parentNode.children);
+      }
+    });
+
+    this.model.on('expansionChanged', (node, expanded) => {
+      if (expanded) {
+        if (node.children) {
+          this.addChildren(node, node.children);
+        }
+      } else {
+        this.removeDescendants(node);
+      }
+    });
+
+    this.model.on('nodeInserted', ({ node, parentNode }) => {
+      if (parentNode) {
+        this.addChildren(parentNode, [node]);
+      }
+    });
   }
 
   _getKey(id, type) {
@@ -113,13 +147,9 @@ export class ViewGraph {
     return null;
   }
 
-  _getMsfReference(nodeData) {
-    // Check for pResource.sReference that points to an MSF file
-    const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
-      return ref;
-    }
-    return null;
+  async _getMsfReference(nodeData) {
+    const { getMsfReference } = await import('./node-helpers.js');
+    return getMsfReference(nodeData);
   }
 
   _createNodeMaterial(nodeData, color) {
@@ -236,7 +266,7 @@ export class ViewGraph {
     this.renderer.domElement.addEventListener('dblclick', this.boundDblClickHandler);
   }
 
-  onDoubleClick(event) {
+  async onDoubleClick(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -251,13 +281,18 @@ export class ViewGraph {
       const node = this.graphNodes.find(n => n.id === id && n.type === type);
       if (node) {
         // Check for MSF reference - prompt to load instead of toggling
-        const msfUrl = this._getMsfReference(node.data);
+        const msfUrl = await this._getMsfReference(node.data);
         if (msfUrl) {
           if (confirm(`Load map: ${msfUrl}?`)) {
             this.msfLoadCallbacks.forEach(cb => cb(msfUrl));
           }
         } else {
-          this.toggleCallbacks.forEach(cb => cb(node.data));
+          if (this.model.isNodeExpanded(node.data)) {
+            this.model.collapseNode(node.data);
+          } else {
+            this.model.expandNode(node.data);
+          }
+          this.model.selectNode(node.data);
         }
       }
     }
@@ -423,8 +458,15 @@ export class ViewGraph {
     const parentGraphNode = this.graphNodes[parentIndex];
 
     children.forEach((child) => {
-      // Check for duplicates
-      if (this.nodeMeshes.has(this._getKey(child.id, child.type))) return;
+      const childKey = this._getKey(child.id, child.type);
+      // Update data reference if node already exists (model may have replaced the object)
+      if (this.nodeMeshes.has(childKey)) {
+        const existing = this.graphNodes.find(n => n.id === child.id && n.type === child.type);
+        if (existing) {
+          existing.data = child;
+        }
+        return;
+      }
 
       const nodeIndex = this.graphNodes.length;
 
@@ -763,15 +805,10 @@ export class ViewGraph {
 
     if (nodeIntersect) {
       const { id, type } = nodeIntersect.object.userData;
-      this.selectNode({ id, type });
-      
       const node = this.graphNodes.find(n => n.id === id && n.type === type);
       if (node) {
-        this.selectCallbacks.forEach(cb => cb(node.data));
+        this.model.selectNode(node.data);
       }
-    } else {
-      // Deselect if clicked background? 
-      // Optional, maybe keep selection
     }
   }
 
@@ -805,14 +842,6 @@ export class ViewGraph {
       this.highlightMesh = new THREE.Mesh(geometry, material);
       mesh.add(this.highlightMesh);
     }
-  }
-
-  onSelect(callback) {
-    this.selectCallbacks.push(callback);
-  }
-
-  onToggle(callback) {
-    this.toggleCallbacks.push(callback);
   }
 
   onMsfLoad(callback) {

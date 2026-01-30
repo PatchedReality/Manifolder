@@ -113,6 +113,8 @@ export class NodeFactory {
       orbit: type === 'RMCObject' ? this.parseOrbit(parent.pOrbit_Spin) : null,
       properties: this.#extractProperties(parent),
       resourceUrl: this.#getResourceUrl(parent.pResource),
+      resourceRef: parent.pResource?.sReference || null,
+      resourceName: parent.pResource?.sName || null,
       children: [],
       hasChildren: false,
       rawData: data
@@ -155,6 +157,8 @@ export class NodeFactory {
         bound: this.parseBound(child.pBound),
         properties: this.#extractProperties(child),
         resourceUrl: this.#getResourceUrl(child.pResource),
+        resourceRef: child.pResource?.sReference || null,
+        resourceName: child.pResource?.sName || null,
         children: [],
         hasChildren: child.nChildren > 0,
         rawData: child

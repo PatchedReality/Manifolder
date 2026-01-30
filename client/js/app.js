@@ -14,23 +14,21 @@ import { getMsfReference } from './node-helpers.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
 import { calculateLatLong } from './geo-utils.js';
+import { Model } from './model.js';
 
 class App {
   constructor() {
     this.stateManager = new UIStateManager();
-    this.layout = new LayoutManager(this.stateManager);
-    this.hierarchy = new HierarchyPanel('#hierarchy-tree');
-    this.viewGraph = new ViewGraph('#viewport-graph');
-    this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager);
-    this.viewResource = new ViewResource('#viewport-resource', this.stateManager);
-    this.inspector = new InspectorPanel('#inspector-content', this.stateManager);
     this.client = new MVClient();
+    this.model = new Model(this.client);
+    this.layout = new LayoutManager(this.stateManager);
+    this.hierarchy = new HierarchyPanel('#hierarchy-tree', this.model);
+    this.viewGraph = new ViewGraph('#viewport-graph', this.model);
+    this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager, this.model);
+    this.viewResource = new ViewResource('#viewport-resource', this.stateManager, this.model);
+    this.inspector = new InspectorPanel('#inspector-content', this.stateManager, this.model);
     this.bookmarkManager = new BookmarkManager(this.stateManager);
 
-    this.tree = null;
-    this.loadingNodes = new Map();
-    this.selectedNode = null;
-    this.inheritedPlanetContext = null;
     this.rp1GoBtn = document.getElementById('rp1-go-btn');
     this.init();
   }
@@ -38,7 +36,7 @@ class App {
   updateRP1GoButton(node) {
     if (!this.rp1GoBtn) return;
 
-    const planetContext = this.viewBounds.getPlanetContext(node);
+    const planetContext = this.model.getPlanetContext(node);
     if (!node?._worldPos || !planetContext?.celestialId) {
       this.rp1GoBtn.classList.add('hidden');
       return;
@@ -56,56 +54,8 @@ class App {
     this.rp1GoBtn.classList.remove('hidden');
   }
 
-  /**
-   * Handle node selection from any source view.
-   * @param {Object} node - The selected node
-   * @param {string} source - 'hierarchy' | 'graph' | 'bounds'
-   */
-  handleNodeSelection(node, source) {
-    this.selectedNode = node;
-
-    if (source !== 'hierarchy') {
-      this.hierarchy.selectNode(node);
-      this.hierarchy.expandToNode(node);
-    }
-    if (source !== 'graph') {
-      this.viewGraph.selectNode(node);
-    }
-    if (source !== 'bounds') {
-      this.viewBounds.selectNode(node.id, node.type);
-    }
-
-    // Update sun position based on node's geographic location (earth-based only)
-    // Must be set before setNode() since it calls setResourceMode() which checks isEarthBased
-    const planetContext = this.viewBounds.getPlanetContext(node);
-    if (node?._worldPos && planetContext?.radius) {
-      const coords = calculateLatLong(node._worldPos, planetContext.radius);
-      if (coords) {
-        this.viewResource.setLocation(coords.latitude, coords.longitude);
-      } else {
-        this.viewResource.setLocation(0, 0);
-      }
-    } else {
-      // Default to Earth at 0/0 for resources without computed geographic position
-      this.viewResource.setLocation(0, 0);
-    }
-
-    const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-    this.viewResource.setNode(node, expandedDescendants);
-
-    this.inspector.showNode(node);
-    this.layout.setFollowLink(getMsfReference(node));
-    this.updateRP1GoButton(node);
-
-    if (source === 'hierarchy') {
-      const path = this.hierarchy.getPathToNode(node);
-      this.stateManager.updateSection('navigation', {
-        selectedNodePath: path || []
-      });
-    }
-  }
-
   init() {
+    this.setupModelEvents();
     this.setupHierarchyEvents();
     this.setupViewEvents();
     this.setupLayoutEvents();
@@ -117,11 +67,33 @@ class App {
     this.setupShareButton();
 
     this.layout.restoreState();
-    this.inspector.clear();
     this.layout.setFollowLink(null);
     this.layout.setStatus('Disconnected', 'disconnected');
 
     this.checkUrlForSharedState();
+  }
+
+  setupModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (!node) return;
+
+      getMsfReference(node).then(url => this.layout.setFollowLink(url));
+      this.updateRP1GoButton(node);
+
+      const path = this.model.getPathToNode(node);
+      this.stateManager.updateSection('navigation', {
+        selectedNodePath: path || []
+      });
+    });
+
+    this.model.on('expansionChanged', (node) => {
+      this.viewGraph.zoomToNode(node);
+      this.viewBounds.zoomToNode(node);
+
+      this.stateManager.updateSection('hierarchy', {
+        expandedNodeIds: this.model.getExpandedNodeKeys()
+      });
+    });
   }
 
   setupResetButton() {
@@ -140,7 +112,7 @@ class App {
     if (!addBtn || !bookmarksBtn || !dropdown || !bookmarkList) return;
 
     addBtn.addEventListener('click', () => {
-      const selectedNode = this.hierarchy.getSelectedNode();
+      const selectedNode = this.model.getSelectedNode();
       const name = selectedNode?.name || selectedNode?.type || 'Untitled';
       this.bookmarkManager.save(name);
       this.renderBookmarkList(bookmarkList);
@@ -592,76 +564,16 @@ class App {
   }
 
   setupHierarchyEvents() {
-    this.hierarchy.onSelect(node => {
-      this.handleNodeSelection(node, 'hierarchy');
-    });
-
     this.hierarchy.onZoom(node => {
       this.viewGraph.zoomToNode(node);
       this.viewBounds.zoomToNode(node);
     });
-
-    this.hierarchy.onToggle((node, expanded) => {
-      if (expanded) {
-        const children = this.hierarchy.getChildren(node);
-        if (children && children.length > 0) {
-          this.viewGraph.addChildren(node, children);
-          this.viewBounds.addChildren(node, children);
-        }
-        this.viewBounds.expandNode(node);
-      } else {
-        this.viewGraph.removeDescendants(node);
-        this.viewBounds.collapseNode(node);
-      }
-
-      this.viewGraph.selectNode(node);
-      this.viewGraph.zoomToNode(node);
-      this.viewBounds.zoomToNode(node);
-
-      this.stateManager.updateSection('hierarchy', {
-        expandedNodeIds: this.hierarchy.getExpandedNodeKeys()
-      });
-    });
-
-    this.hierarchy.onExpand(node => {
-      this.loadNodeChildren(node);
-      this.stateManager.updateSection('hierarchy', {
-        expandedNodeIds: this.hierarchy.getExpandedNodeKeys()
-      });
-    });
   }
 
   setupViewEvents() {
-    this.viewGraph.onSelect(node => {
-      this.handleNodeSelection(node, 'graph');
-    });
-
-    this.viewGraph.onToggle(node => {
-      this.hierarchy.toggleNode(node);
-      this.viewBounds.zoomToNode(node);
-    });
-
     this.viewGraph.onMsfLoad(url => {
       this.layout.setUrl(url);
       this.handleLoadMap(url);
-    });
-
-    this.viewBounds.onSelect(node => {
-      this.handleNodeSelection(node, 'bounds');
-    });
-
-    this.viewBounds.onToggle((node, expanded) => {
-      if (expanded) {
-        this.hierarchy.expandNode(node);
-        const children = this.hierarchy.getChildren(node);
-        if (children && children.length > 0) {
-          this.viewBounds.addChildren(node, children);
-        }
-      } else {
-        this.hierarchy.collapseNode(node);
-      }
-      this.viewBounds.zoomToNode(node);
-      this.viewGraph.zoomToNode(node);
     });
 
     this.viewBounds.onMsfLoad(url => {
@@ -673,8 +585,9 @@ class App {
   setupLayoutEvents() {
     this.layout.onLoad(async ({ url }) => {
       // Capture planet context from selected node before loading new map
-      if (this.selectedNode) {
-        this.inheritedPlanetContext = this.viewBounds.getPlanetContext(this.selectedNode);
+      const selectedNode = this.model.getSelectedNode();
+      if (selectedNode) {
+        this.model.inheritedPlanetContext = this.model.getPlanetContext(selectedNode);
       }
       await this.handleLoadMap(url);
     });
@@ -697,6 +610,89 @@ class App {
     this.client.on('status', (msg) => {
       this.layout.setStatus(msg, 'loading');
     });
+
+    this.model.on('nodeInserted', ({ node, parentNode }) => {
+      this._addNodeResourceIfVisible(node, parentNode);
+    });
+
+    this.model.on('nodeUpdated', (existing, previousResourceUrl) => {
+      if (existing.resourceUrl && existing.resourceUrl !== previousResourceUrl) {
+        this._addNodeResourceIfVisible(existing, existing._parent);
+      }
+    });
+
+    this.model.on('nodeDeleted', ({ id, type }) => {
+      // View cleanup will be added in later phases
+    });
+  }
+
+  _addNodeResourceIfVisible(node, parentNode) {
+    if (!node?.resourceUrl) return;
+
+    const selectedNode = this.model.getSelectedNode();
+    if (!selectedNode) return;
+
+    // Check if the inserted node is a descendant of the selected node
+    const isSelectedOrDescendant =
+      (node.type === selectedNode.type && node.id === selectedNode.id) ||
+      (parentNode && this._isDescendantOfSelected(parentNode, selectedNode));
+
+    if (!isSelectedOrDescendant) return;
+
+    // Build transform info relative to parent
+    const parentId = parentNode ? `${parentNode.type}_${parentNode.id}` : null;
+    const childPos = this.hierarchy.getNodePosition(node);
+    const parentPos = parentNode ? this.hierarchy.getNodePosition(parentNode) : [0, 0, 0];
+    const cumulativePos = [
+      parentPos[0] + childPos[0],
+      parentPos[1] + childPos[1],
+      parentPos[2] + childPos[2]
+    ];
+
+    const cumulativeTransform = {
+      Position: cumulativePos,
+      Rotation: this.hierarchy.getNodeRotation(node),
+      Scale: this.hierarchy.getNodeScale(node)
+    };
+
+    const localTransform = {
+      Position: childPos,
+      Rotation: this.hierarchy.getNodeRotation(node),
+      Scale: this.hierarchy.getNodeScale(node)
+    };
+
+    const parentCumulativeTransform = parentNode ? {
+      Position: parentPos,
+      Rotation: this.hierarchy.getNodeRotation(parentNode),
+      Scale: this.hierarchy.getNodeScale(parentNode)
+    } : null;
+
+    this.viewResource.addNodeResource(node, cumulativeTransform, localTransform, parentId, parentCumulativeTransform);
+  }
+
+  _isDescendantOfSelected(node, selectedNode) {
+    if (node.type === selectedNode.type && node.id === selectedNode.id) return true;
+    if (!selectedNode.children) return false;
+    for (const child of selectedNode.children) {
+      if (child.type === node.type && child.id === node.id) return true;
+      if (this._isDescendantOfSelected(node, child)) return true;
+    }
+    return false;
+  }
+
+  _debouncedRefreshResourceView() {
+    clearTimeout(this._resourceRefreshTimer);
+    this._resourceRefreshTimer = setTimeout(() => {
+      this._refreshResourceViewIfNeeded();
+    }, 500);
+  }
+
+  _refreshResourceViewIfNeeded() {
+    const selectedNode = this.model.getSelectedNode();
+    if (selectedNode) {
+      const expandedDescendants = this.model.getExpandedDescendants(selectedNode);
+      this.viewResource.setNode(selectedNode, expandedDescendants);
+    }
   }
 
   async handleLoadMap(url, { skipStateRestore = false } = {}) {
@@ -704,45 +700,36 @@ class App {
       this.layout.setStatus('Loading map...', 'loading');
 
       const tree = await this.client.loadMap(url);
-      this.tree = tree;
 
       // Detect Earth MSF and set default planet context
-      if (!this.inheritedPlanetContext && url.includes('earth.msf')) {
-        this.inheritedPlanetContext = {
+      let planetContext = this.model.inheritedPlanetContext;
+      if (!planetContext && url.includes('earth.msf')) {
+        planetContext = {
           planetName: 'Earth',
           celestialId: 104,
           radius: 6371000
         };
       }
 
-      this.hierarchy.setData(tree);
-      this.viewGraph.setData(tree);
-      this.viewBounds.setData(tree, this.inheritedPlanetContext);
-      this.inspector.setInheritedPlanetContext(this.inheritedPlanetContext);
-      this.inspector.clear();
+      this.model.setTree(tree, planetContext);
+
       this.layout.setFollowLink(null);
       this.rp1GoBtn?.classList.add('hidden');
-      this.selectedNode = null;
-      this.inheritedPlanetContext = null;
 
       this.layout.setStatus('Map loaded', 'connected');
       this.stateManager.updateSection('navigation', { mapUrl: url });
 
       if (tree) {
         if (skipStateRestore) {
-          // Caller will handle state restoration
-          this.hierarchy.expandNode(tree);
+          this.model.expandNode(tree);
         } else {
-          // Check for saved hierarchy state
           const hierarchyState = this.stateManager.getSection('hierarchy');
           const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
           if (!hasSavedExpanded) {
-            // No saved state - just expand the root
-            this.hierarchy.expandNode(tree);
+            this.model.expandNode(tree);
           } else {
-            // Restore saved expanded nodes
-            this.hierarchy.expandNodesByKeys(hierarchyState.expandedNodeIds);
+            this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
           }
 
           // Try to restore previously selected node via path
@@ -750,7 +737,7 @@ class App {
           if (navState.selectedNodePath?.length > 0) {
             await this.restoreNodePath(navState.selectedNodePath);
           } else {
-            this.hierarchy.selectNode(tree);
+            this.model.selectNode(tree);
             setTimeout(() => {
               this.viewGraph.zoomToNode(tree);
             }, 100);
@@ -763,29 +750,27 @@ class App {
   }
 
   async restoreNodePath(path) {
-    if (!this.tree) return;
+    if (!this.model.tree) return;
     if (!path || path.length === 0) {
-      this.hierarchy.selectNode(this.tree);
+      this.model.selectNode(this.model.tree);
       return;
     }
 
     // Find where in the path the current tree root matches
     // (handles old bookmarks that started from RMRoot when tree now starts elsewhere)
-    let startIndex = path.findIndex(p => p.id === this.tree.id && p.type === this.tree.type);
+    let startIndex = path.findIndex(p => p.id === this.model.tree.id && p.type === this.model.tree.type);
     if (startIndex === -1) {
-      // Tree root not in path - can't restore, select tree root
-      this.hierarchy.selectNode(this.tree);
+      this.model.selectNode(this.model.tree);
       return;
     }
 
-    let currentNode = this.tree;
+    let currentNode = this.model.tree;
 
     for (let i = startIndex + 1; i < path.length; i++) {
       const targetId = path[i].id;
       const targetType = path[i].type;
 
-      // Expand current node first
-      this.hierarchy.expandNode(currentNode);
+      this.model.expandNode(currentNode);
 
       // Load children if not already loaded
       if (!currentNode.children || currentNode.children.length === 0) {
@@ -815,16 +800,13 @@ class App {
       currentNode = nextNode;
     }
 
-    // Get the canonical node from hierarchy (may have more data than the stub we traversed)
-    const canonicalNode = this.hierarchy.findNodeByTypeAndId(currentNode.type, currentNode.id) || currentNode;
+    const canonicalNode = this.model.findNodeByTypeAndId(currentNode.type, currentNode.id) || currentNode;
 
     // Expand tree to show the node, then select it
     this.hierarchy.expandToNode(canonicalNode);
-    this.hierarchy.selectNode(canonicalNode);
+    this.model.selectNode(canonicalNode);
 
-    this.viewBounds.selectNode(canonicalNode.id, canonicalNode.type);
     this.viewBounds.zoomToNode(canonicalNode);
-    this.inspector.showNode(canonicalNode);
 
     setTimeout(() => {
       this.viewGraph.zoomToNode(canonicalNode);
@@ -832,45 +814,7 @@ class App {
   }
 
   async loadNodeChildren(node) {
-    if (!node?.type || node.id === undefined) {
-      return;
-    }
-
-    const key = `${node.type}_${node.id}`;
-
-    // If already loading this node, return the existing promise
-    if (this.loadingNodes.has(key)) {
-      return this.loadingNodes.get(key);
-    }
-
-    const loadPromise = (async () => {
-      try {
-        const nodeData = await this.client.getNode(node.id, node.type);
-        if (!nodeData) {
-          console.warn(`loadNodeChildren: getNode returned null for ${node.type} ${node.id}`);
-        }
-        if (nodeData?.children) {
-          this.hierarchy.setChildren(node, nodeData.children);
-          this.viewGraph.addChildren(node, nodeData.children);
-          this.viewBounds.addChildren(node, nodeData.children);
-
-          // Update resource view if there's a selected node - descendants may have resources
-          const selectedNode = this.hierarchy.getSelectedNode();
-          if (selectedNode) {
-            const expandedDescendants = this.hierarchy.getExpandedDescendants(selectedNode);
-            this.viewResource.setNode(selectedNode, expandedDescendants);
-          }
-        }
-      } catch (err) {
-        console.error(`Failed to load children for node ${node.id}:`, err);
-      } finally {
-        this.hierarchy.markNodeLoaded(node);
-        this.loadingNodes.delete(key);
-      }
-    })();
-
-    this.loadingNodes.set(key, loadPromise);
-    return loadPromise;
+    return this.model.loadNodeChildren(node);
   }
 }
 

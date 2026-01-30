@@ -10,8 +10,9 @@
 import { CELESTIAL_NAMES } from '../shared/node-types.js';
 
 export class HierarchyPanel {
-  constructor(containerSelector) {
+  constructor(containerSelector, model) {
     this.container = document.querySelector(containerSelector);
+    this.model = model;
     this.searchInput = document.getElementById('hierarchy-search');
     this.selectedNode = null;
     this.nodes = new Map();
@@ -19,13 +20,47 @@ export class HierarchyPanel {
     this.loadedNodes = new Set();
     this.pendingExpandedKeys = null;
 
-    this.selectCallbacks = [];
-    this.expandCallbacks = [];
     this.zoomCallbacks = [];
-    this.toggleCallbacks = [];
     this._nextId = 1;
 
+    this._bindModelEvents();
     this.init();
+  }
+
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.expandToNode(node);
+        this.selectNode(node);
+      }
+    });
+
+    this.model.on('treeChanged', (tree) => {
+      this.setData(tree);
+    });
+
+    this.model.on('nodeChildrenChanged', (parentNode) => {
+      this.setChildren(parentNode, parentNode.children);
+      this.markNodeLoaded(parentNode);
+    });
+
+    this.model.on('expansionChanged', (node, expanded) => {
+      if (expanded) {
+        this.expandNode(node);
+      } else {
+        this.collapseNode(node);
+      }
+    });
+
+    this.model.on('nodeInserted', ({ node, parentNode }) => {
+      if (parentNode) {
+        this.addNode(parentNode, node);
+      }
+    });
+
+    this.model.on('nodeUpdated', (node) => {
+      this.refreshNode(node);
+    });
   }
 
   // Sort children alphabetically by name
@@ -149,6 +184,26 @@ export class HierarchyPanel {
     this._nextId = 1;
   }
 
+  _removeNodeAndDescendants(nodeKey) {
+    const el = this.nodes.get(nodeKey);
+    if (el) {
+      // Recursively clean up child DOM nodes
+      const childEls = el.querySelectorAll('.tree-node');
+      for (const childEl of childEls) {
+        const childUid = childEl.dataset.uid;
+        if (childUid) {
+          const childKey = `node-${childUid}`;
+          this.nodes.delete(childKey);
+          this.nodeData.delete(childKey);
+          this.loadedNodes.delete(childKey);
+        }
+      }
+    }
+    this.nodes.delete(nodeKey);
+    this.nodeData.delete(nodeKey);
+    this.loadedNodes.delete(nodeKey);
+  }
+
   createNodeElement(nodeData) {
     // Ensure _uid is assigned first
     const nodeKey = this._nodeKey(nodeData);
@@ -190,7 +245,10 @@ export class HierarchyPanel {
     content.appendChild(label);
 
     content.addEventListener('click', () => {
-      this.selectNode(nodeKey);
+      const data = this.nodeData.get(nodeKey);
+      if (data) {
+        this.model.selectNode(data);
+      }
     });
 
     content.addEventListener('dblclick', () => {
@@ -285,17 +343,18 @@ export class HierarchyPanel {
     }
 
     // Remove old children from Maps before clearing DOM
-    const parentNodeData = this.nodeData.get(parentKey);
-    if (parentNodeData?.children) {
-      for (const oldChild of parentNodeData.children) {
-        if (oldChild._uid) {
-          const oldKey = `node-${oldChild._uid}`;
-          this.nodes.delete(oldKey);
-          this.nodeData.delete(oldKey);
-          this.loadedNodes.delete(oldKey);
-        }
+    // Walk the DOM to find old children (parentNodeData.children may already point
+    // to new children if model replaced them before emitting nodeChildrenChanged)
+    const oldChildElements = childrenContainer.querySelectorAll(':scope > .tree-node');
+    for (const oldEl of oldChildElements) {
+      const oldUid = oldEl.dataset.uid;
+      if (oldUid) {
+        const oldKey = `node-${oldUid}`;
+        this._removeNodeAndDescendants(oldKey);
       }
     }
+
+    const parentNodeData = this.nodeData.get(parentKey);
 
     childrenContainer.innerHTML = '';
     this.loadedNodes.add(parentKey);
@@ -347,9 +406,22 @@ export class HierarchyPanel {
       }
     }
 
-    const node = this.nodes.get(nodeKey);
+    let node = this.nodes.get(nodeKey);
+
+    // Fallback: if _uid-based lookup fails, find by type+id
+    if (!node && typeof nodeOrKey === 'object' && nodeOrKey.type && nodeOrKey.id !== undefined) {
+      for (const [key, data] of this.nodeData) {
+        if (data.type === nodeOrKey.type && data.id === nodeOrKey.id) {
+          node = this.nodes.get(key);
+          if (node && data._uid) {
+            nodeOrKey._uid = data._uid;
+          }
+          break;
+        }
+      }
+    }
+
     if (!node) {
-      console.warn('selectNode: DOM element not found for key:', nodeKey);
       return;
     }
 
@@ -360,14 +432,6 @@ export class HierarchyPanel {
     }
 
     this.selectedNode = node;
-
-    const nodeData = this.nodeData.get(nodeKey);
-    if (!nodeData) {
-      console.warn('selectNode: nodeData not found for key:', nodeKey);
-    }
-    if (nodeData) {
-      this.selectCallbacks.forEach(callback => callback(nodeData));
-    }
   }
 
   toggleNode(nodeOrKey) {
@@ -422,10 +486,10 @@ export class HierarchyPanel {
     children.style.display = 'block';
 
     if (nodeData) {
-      this.toggleCallbacks.forEach(callback => callback(nodeData, true));
+      this.model.expandNode(nodeData);
     }
 
-    if (!isLoaded) {
+    if (!isLoaded && !children.querySelector('.tree-loading')) {
       const loading = document.createElement('div');
       loading.className = 'tree-loading';
       loading.textContent = 'Loading...';
@@ -435,7 +499,7 @@ export class HierarchyPanel {
       children.appendChild(loading);
 
       if (nodeData) {
-        this.expandCallbacks.forEach(callback => callback(nodeData));
+        this.model.loadNodeChildren(nodeData);
       }
     }
   }
@@ -458,16 +522,30 @@ export class HierarchyPanel {
       toggle.textContent = '▶';
     }
     children.style.display = 'none';
-    
+
     const nodeData = this.nodeData.get(nodeKey);
     if (nodeData) {
-      this.toggleCallbacks.forEach(callback => callback(nodeData, false));
+      this.model.collapseNode(nodeData);
     }
   }
 
   expandToNode(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
-    const node = this.nodes.get(nodeKey);
+    let node = this.nodes.get(nodeKey);
+
+    // Fallback: if _uid-based lookup fails, find by type+id
+    if (!node && typeof nodeOrKey === 'object' && nodeOrKey.type && nodeOrKey.id !== undefined) {
+      for (const [key, data] of this.nodeData) {
+        if (data.type === nodeOrKey.type && data.id === nodeOrKey.id) {
+          node = this.nodes.get(key);
+          if (node && data._uid) {
+            nodeOrKey._uid = data._uid;
+          }
+          break;
+        }
+      }
+    }
+
     if (!node) {
       return;
     }
@@ -491,20 +569,8 @@ export class HierarchyPanel {
     }
   }
 
-  onSelect(callback) {
-    this.selectCallbacks.push(callback);
-  }
-
-  onExpand(callback) {
-    this.expandCallbacks.push(callback);
-  }
-
   onZoom(callback) {
     this.zoomCallbacks.push(callback);
-  }
-
-  onToggle(callback) {
-    this.toggleCallbacks.push(callback);
   }
 
   getSelectedNode() {
@@ -579,7 +645,7 @@ export class HierarchyPanel {
     if (!nodeData || !nodeData.children) return results;
     if (!this.isNodeExpanded(nodeData)) return results;
 
-    const collectExpanded = (children, parentCumulativePos) => {
+    const collectExpanded = (children, parentCumulativePos, parentId, parentCumulativeTransform) => {
       for (const child of children) {
         const childPos = this.getNodePosition(child);
         const cumulativePos = [
@@ -594,15 +660,25 @@ export class HierarchyPanel {
           Scale: this.getNodeScale(child)
         };
 
-        results.push({ node: child, cumulativeTransform });
+        const localTransform = {
+          Position: childPos,
+          Rotation: this.getNodeRotation(child),
+          Scale: this.getNodeScale(child)
+        };
+
+        results.push({ node: child, cumulativeTransform, localTransform, parentId, parentCumulativeTransform });
 
         if (this.isNodeExpanded(child) && child.children) {
-          collectExpanded(child.children, cumulativePos);
+          const childId = `${child.type}_${child.id}`;
+          const childCumulativeTransform = cumulativeTransform;
+          collectExpanded(child.children, cumulativePos, childId, childCumulativeTransform);
         }
       }
     };
 
-    collectExpanded(nodeData.children, [0, 0, 0]);
+    const rootId = `${nodeData.type}_${nodeData.id}`;
+    const rootTransform = { Position: [0, 0, 0], Rotation: [0, 0, 0, 1], Scale: [1, 1, 1] };
+    collectExpanded(nodeData.children, [0, 0, 0], rootId, rootTransform);
     return results;
   }
 
@@ -895,6 +971,18 @@ export class HierarchyPanel {
     }
 
     this._applySearchFilter(visibleKeys, matchKeys);
+  }
+
+  refreshNode(node) {
+    const nodeKey = this._nodeKey(node);
+    const element = this.nodes.get(nodeKey);
+    if (!element) return;
+
+    const label = element.querySelector('.tree-label');
+    if (label) {
+      label.textContent = node.name;
+      label.title = node.name;
+    }
   }
 
   findNodeByTypeAndId(type, id) {

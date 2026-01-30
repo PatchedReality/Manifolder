@@ -55,11 +55,29 @@ export function resolveResourceUrl(ref) {
  * Gets MSF reference URL from a node's pResource property.
  * Returns the URL if it points to an MSF file, null otherwise.
  */
-export function getMsfReference(node) {
-  const ref = node?.properties?.pResource?.sReference;
-  if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
+export async function getMsfReference(node) {
+  const ref = node?.resourceRef || node?.properties?.pResource?.sReference;
+  if (!ref || typeof ref !== 'string') return null;
+
+  if (ref.endsWith('.msf') || ref.endsWith('.msf.json')) {
     return ref;
   }
+
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    try {
+      const response = await fetch(ref);
+      if (!response.ok) return null;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('json')) return null;
+      const data = await response.json();
+      if (data?.map?.sRequire && data?.map?.wClass !== undefined) {
+        return ref;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+
   return null;
 }
 

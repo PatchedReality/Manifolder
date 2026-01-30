@@ -12,13 +12,14 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import Hls from 'hls.js';
 import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
-import { calculateSunPosition, getSunLightingParams } from './geo-utils.js';
+import { calculateSunPosition, getSunLightingParams, calculateLatLong } from './geo-utils.js';
 import { NODE_TYPES } from '../shared/node-types.js';
 
 export class ViewResource {
-  constructor(containerSelector, stateManager) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
     this.stateManager = stateManager;
+    this.model = model;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
@@ -63,10 +64,40 @@ export class ViewResource {
     this.disposed = false;
     this.initialized = false;
 
+    this._bindModelEvents();
     this.init();
     if (this.initialized) {
       this.animate();
     }
+  }
+
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (!node) return;
+
+      const planetContext = this.model.getPlanetContext(node);
+      if (node._worldPos && planetContext?.radius) {
+        const coords = calculateLatLong(node._worldPos, planetContext.radius);
+        if (coords) {
+          this.setLocation(coords.latitude, coords.longitude);
+        } else {
+          this.setLocation(0, 0);
+        }
+      } else {
+        this.setLocation(0, 0);
+      }
+
+      const expandedDescendants = this.model.getExpandedDescendants(node);
+      this.setNode(node, expandedDescendants);
+    });
+
+    this.model.on('nodeChildrenChanged', () => {
+      const selectedNode = this.model.getSelectedNode();
+      if (selectedNode) {
+        const expandedDescendants = this.model.getExpandedDescendants(selectedNode);
+        this.setNode(selectedNode, expandedDescendants);
+      }
+    });
   }
 
   init() {
@@ -484,6 +515,38 @@ export class ViewResource {
     }
   }
 
+  async addNodeResource(node, cumulativeTransform, localTransform, parentId, parentCumulativeTransform) {
+    if (!node.resourceUrl || !this.contentGroup) return;
+
+    const requestId = this.loadRequestId;
+
+    let targetGroup = this.contentGroup;
+    let effectiveTransform = cumulativeTransform;
+
+    if (parentId) {
+      if (!this._parentGroups) this._parentGroups = new Map();
+      if (!this._parentGroups.has(parentId)) {
+        const group = new THREE.Group();
+        if (parentCumulativeTransform) {
+          this.applyNodeTransform(group, parentCumulativeTransform);
+        }
+        this.contentGroup.add(group);
+        this._parentGroups.set(parentId, group);
+      }
+      targetGroup = this._parentGroups.get(parentId);
+      effectiveTransform = localTransform || cumulativeTransform;
+    }
+
+    const lower = node.resourceUrl.toLowerCase();
+
+    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+      await this.loadDirectGlb(node.resourceUrl, effectiveTransform, requestId, targetGroup);
+    } else {
+      await this.loadResourceWithTransform(node.resourceUrl, effectiveTransform, requestId, targetGroup);
+    }
+
+  }
+
   setNode(node, expandedDescendants = []) {
     this.currentNode = node;
     this.currentExpandedDescendants = expandedDescendants;
@@ -493,15 +556,22 @@ export class ViewResource {
     if (node.resourceUrl) {
       resourcesToLoad.push({
         url: node.resourceUrl,
+        resourceRef: node.resourceRef,
+        resourceName: node.resourceName,
         transform: null
       });
     }
 
-    for (const { node: childNode, cumulativeTransform } of expandedDescendants) {
+    for (const { node: childNode, cumulativeTransform, localTransform, parentId, parentCumulativeTransform } of expandedDescendants) {
       if (childNode.resourceUrl) {
         resourcesToLoad.push({
           url: childNode.resourceUrl,
-          transform: cumulativeTransform
+          resourceRef: childNode.resourceRef,
+          resourceName: childNode.resourceName,
+          transform: cumulativeTransform,
+          localTransform: localTransform,
+          parentId: parentId,
+          parentCumulativeTransform: parentCumulativeTransform
         });
       }
     }
@@ -538,18 +608,39 @@ export class ViewResource {
     const isCancelled = () => requestId !== this.loadRequestId;
 
     try {
-      for (const { url, transform } of resourcesToLoad) {
-        // Check if this request is still current
+      const parentGroups = new Map();
+
+      for (const { url, resourceRef, resourceName, transform, localTransform, parentId, parentCumulativeTransform } of resourcesToLoad) {
         if (isCancelled()) {
           this.cleanupCancelledLoad();
           return;
         }
 
+        // Get or create a sub-group for this parent so siblings share a group
+        // Sub-group gets the parent's cumulative transform; children use local transforms
+        let targetGroup = this.contentGroup;
+        if (!targetGroup) break;
+        let effectiveTransform = transform;
+
+        if (parentId) {
+          if (!parentGroups.has(parentId)) {
+            const group = new THREE.Group();
+            if (parentCumulativeTransform) {
+              this.applyNodeTransform(group, parentCumulativeTransform);
+            }
+            targetGroup.add(group);
+            parentGroups.set(parentId, group);
+          }
+          targetGroup = parentGroups.get(parentId);
+          effectiveTransform = localTransform || transform;
+        }
+
         const lower = url.toLowerCase();
+
         if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-          await this.loadDirectGlb(url, transform, requestId);
+          await this.loadDirectGlb(url, effectiveTransform, requestId, targetGroup);
         } else {
-          await this.loadResourceWithTransform(url, transform, requestId);
+          await this.loadResourceWithTransform(url, effectiveTransform, requestId, targetGroup);
         }
       }
 
@@ -603,13 +694,14 @@ export class ViewResource {
     this.hlsInstances = [];
   }
 
-  async loadDirectGlb(url, nodeTransform, requestId) {
+  async loadDirectGlb(url, nodeTransform, requestId, targetGroup = null) {
     return new Promise((resolve) => {
       this.gltfLoader.load(
         url,
         (gltf) => {
+          const group = targetGroup || this.contentGroup;
           // Check if this request is still current before adding to scene
-          if (requestId !== this.loadRequestId || !this.contentGroup) {
+          if (requestId !== this.loadRequestId || !group) {
             resolve();
             return;
           }
@@ -618,7 +710,7 @@ export class ViewResource {
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
           }
-          this.contentGroup.add(model);
+          group.add(model);
           this.loadedModels.push(model);
           if (this.loadedModels.length === 1) {
             this.centerContentAtOrigin();
@@ -634,7 +726,43 @@ export class ViewResource {
     });
   }
 
-  async loadResourceWithTransform(url, nodeTransform, requestId) {
+  async loadActionResource(resourceRef, resourceName, nodeTransform, requestId, targetGroup = null) {
+    const group = targetGroup || this.contentGroup;
+    const actionType = resourceRef?.replace('action://', '').replace(/\.json$/, '');
+
+    if (actionType === 'rotator' && resourceName) {
+      await this.setupRotator({ resourceName }, group, requestId);
+      return;
+    }
+
+    const transformMatrix = new THREE.Matrix4();
+    if (nodeTransform) {
+      const pos = nodeTransform.Position || nodeTransform.position || [0, 0, 0];
+      const rot = nodeTransform.Rotation || nodeTransform.rotation || [0, 0, 0, 1];
+      const scale = nodeTransform.Scale || nodeTransform.scale || [1, 1, 1];
+      transformMatrix.compose(
+        new THREE.Vector3(pos[0], pos[1], pos[2]),
+        new THREE.Quaternion(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0, rot[3] ?? 1),
+        new THREE.Vector3(scale[0] ?? 1, scale[1] ?? 1, scale[2] ?? 1)
+      );
+    }
+
+    const obj = {
+      resourceReference: resourceRef,
+      resourceName: resourceName,
+      objectBounds: null,
+      transform: transformMatrix
+    };
+
+    const model = await this.loadPhysicalObject(obj, requestId);
+    if (model && group && (requestId === null || requestId === this.loadRequestId)) {
+      this.setupModelMaterials(model);
+      group.add(model);
+      this.loadedModels.push(model);
+    }
+  }
+
+  async loadResourceWithTransform(url, nodeTransform, requestId, targetGroup = null) {
     try {
       const response = await fetch(url);
       if (!response.ok) {
@@ -643,6 +771,11 @@ export class ViewResource {
       }
 
       if (requestId !== this.loadRequestId) return;
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('json')) {
+        return;
+      }
 
       const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       const data = await response.json();
@@ -724,7 +857,6 @@ export class ViewResource {
     // Handle scene files (have body.blueprint)
     const blueprint = data?.body?.blueprint;
     if (!blueprint) {
-      console.warn('No blueprint or LODs in resource data');
       return;
     }
 
@@ -882,11 +1014,17 @@ export class ViewResource {
     const data = await this.fetchResourceJson(rotatorNode.resourceName, requestId);
     if (!data) return;
 
+    const parentLevels = data?.body?.parent || 0;
+    let target = targetGroup;
+    for (let i = 0; i < parentLevels && target.parent; i++) {
+      target = target.parent;
+    }
+
     const axisArray = data?.body?.axis || [0, 1, 0];
     const speed = data?.body?.rotSpeed || 10;
 
     this.rotators.push({
-      target: targetGroup,
+      target: target,
       axis: new THREE.Vector3(axisArray[0], axisArray[1], axisArray[2]).normalize(),
       speed: speed
     });
@@ -971,6 +1109,7 @@ export class ViewResource {
       'widgetframe',
       'actioncon',
       'motor',
+      'rotator',
     ];
     if (actionType && nonVisualActions.includes(actionType)) {
       return null;

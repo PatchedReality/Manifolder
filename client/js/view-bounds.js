@@ -86,9 +86,10 @@ function getSurfaceTexture(node) {
 }
 
 export class ViewBounds {
-  constructor(containerSelector, stateManager) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
     this.stateManager = stateManager;
+    this.model = model;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
@@ -106,8 +107,6 @@ export class ViewBounds {
     this.selectedType = null;
     this.focusNode = null;
 
-    this.selectCallbacks = [];
-    this.toggleCallbacks = [];
     this.msfLoadCallbacks = [];
 
     this.raycaster = new THREE.Raycaster();
@@ -128,11 +127,44 @@ export class ViewBounds {
     this.disposed = false;
     this.initialized = false;
 
+    this._bindModelEvents();
     this.init();
     this.restoreState();
     if (this.initialized) {
       this.animate();
     }
+  }
+
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.selectNode(node.id, node.type);
+      }
+    });
+
+    this.model.on('treeChanged', (tree) => {
+      this.setData(tree, this.model.inheritedPlanetContext);
+    });
+
+    this.model.on('nodeChildrenChanged', (parentNode) => {
+      if (parentNode.children) {
+        this.addChildren(parentNode, parentNode.children);
+      }
+    });
+
+    this.model.on('expansionChanged', (node, expanded) => {
+      if (expanded) {
+        this.expandNode(node);
+      } else {
+        this.collapseNode(node);
+      }
+    });
+
+    this.model.on('nodeInserted', ({ node, parentNode }) => {
+      if (parentNode) {
+        this.addChildren(parentNode, [node]);
+      }
+    });
   }
 
   init() {
@@ -386,8 +418,7 @@ export class ViewBounds {
 
     const nodeData = uniqueIntersects[targetIndex].object.userData.nodeData;
     if (nodeData) {
-      this.selectNode(nodeData.id, nodeData.type);
-      this.selectCallbacks.forEach(cb => cb(nodeData));
+      this.model.selectNode(nodeData);
     }
   }
 
@@ -427,8 +458,7 @@ export class ViewBounds {
     } else {
       nodeData = uniqueIntersects[0].object.userData.nodeData;
       if (nodeData) {
-        this.selectNode(nodeData.id, nodeData.type);
-        this.selectCallbacks.forEach(cb => cb(nodeData));
+        this.model.selectNode(nodeData);
       }
     }
 
@@ -1083,7 +1113,9 @@ export class ViewBounds {
     const key = this._getKey(node.id, node.type);
 
     // Skip nodes without world position data (not yet processed by buildNodeData)
-    if (!node._worldPos) return;
+    if (!node._worldPos) {
+      return;
+    }
 
     // Create orbit path even for filtered nodes (orbit should still be visible)
     if (node._orbitData && !this.orbitPaths.has(key)) {
@@ -1097,7 +1129,9 @@ export class ViewBounds {
     }
 
     // Check type filter for mesh creation
-    if (!this.isTypeEnabled(node)) return;
+    if (!this.isTypeEnabled(node)) {
+      return;
+    }
 
     const worldPos = node._worldPos;
     const worldRot = node._worldRot;
@@ -1485,21 +1519,6 @@ export class ViewBounds {
     updateGridSpacing(this.gridHelper, spacing);
   }
 
-  toggleNode(node) {
-    const key = this._getKey(node.id, node.type);
-    const wasExpanded = this.expandedNodes.has(key);
-
-    if (wasExpanded) {
-      this.expandedNodes.delete(key);
-    } else {
-      this.expandedNodes.add(key);
-    }
-
-    this.rebuildVisibleNodes();
-    this.toggleCallbacks.forEach(cb => cb(node, !wasExpanded));
-    this.saveState();
-  }
-
   expandNode(node) {
     const key = this._getKey(node.id, node.type);
     if (!this.expandedNodes.has(key)) {
@@ -1542,8 +1561,30 @@ export class ViewBounds {
       }
     });
 
-    // Recalculate scale as scene extent may have changed
-    this.calculateDynamicScale();
+    this._scheduleRebuild();
+  }
+
+  _scheduleRebuild() {
+    if (this._rebuildTimer) return;
+    this._rebuildTimer = setTimeout(() => {
+      this._rebuildTimer = null;
+      this.calculateDynamicScale();
+      this.rebuildVisibleNodes();
+    }, 250);
+  }
+
+  updateNode(node) {
+    if (!node) return;
+    const key = this._getKey(node.id, node.type);
+    const existing = this.nodeData.get(key);
+    if (!existing) return;
+
+    const parentNode = this.nodeParents.get(key);
+    const parentWorldPos = parentNode?._worldPos || null;
+    const parentWorldRot = parentNode?._worldRot || null;
+    const planetContext = existing._planetContext || null;
+
+    this.buildNodeData(node, parentWorldPos, parentWorldRot, parentNode, planetContext);
     this.rebuildVisibleNodes();
   }
 
@@ -1629,14 +1670,6 @@ export class ViewBounds {
     this.camera.position.copy(cameraPos);
     this.controls.target.copy(targetPos);
     this.controls.update();
-  }
-
-  onSelect(callback) {
-    this.selectCallbacks.push(callback);
-  }
-
-  onToggle(callback) {
-    this.toggleCallbacks.push(callback);
   }
 
   onMsfLoad(callback) {
