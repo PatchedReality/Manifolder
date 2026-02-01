@@ -100,11 +100,6 @@ export class ViewBounds {
     this.nodeParents = new Map();
     this.nodeMeshes = new Map();
     this.orbitPaths = new Map();
-    this.expandedNodes = new Set();
-    this.pendingExpandedNodes = null;
-    this.tree = null;
-    this.selectedId = null;
-    this.selectedType = null;
     this.focusNode = null;
 
     this.msfLoadCallbacks = [];
@@ -407,9 +402,10 @@ export class ViewBounds {
 
     let targetIndex = 0;
 
+    const selected = this.model.getSelectedNode();
     const currentIndex = uniqueIntersects.findIndex(i => {
       const nd = i.object.userData.nodeData;
-      return nd && nd.id === this.selectedId && nd.type === this.selectedType;
+      return nd && selected && nd.id === selected.id && nd.type === selected.type;
     });
 
     if (currentIndex !== -1) {
@@ -447,9 +443,10 @@ export class ViewBounds {
 
     if (uniqueIntersects.length === 0) return;
 
+    const dblSelected = this.model.getSelectedNode();
     const currentIndex = uniqueIntersects.findIndex(i => {
       const nd = i.object.userData.nodeData;
-      return nd && nd.id === this.selectedId && nd.type === this.selectedType;
+      return nd && dblSelected && nd.id === dblSelected.id && nd.type === dblSelected.type;
     });
 
     let nodeData;
@@ -530,42 +527,19 @@ export class ViewBounds {
   }
 
   setData(tree, inheritedPlanetContext = null) {
-    this.tree = tree;
     this.inheritedPlanetContext = inheritedPlanetContext;
     this.clearNodes();
     this.nodeData.clear();
     this.nodeParents.clear();
-    this.expandedNodes.clear();
-    this.selectedId = null;
-    this.selectedType = null;
     this.focusNode = null;
 
     if (tree) {
       this.buildNodeData(tree, null, null, null, inheritedPlanetContext);
       this.calculateDynamicScale();
-      this.expandedNodes.add(this._getKey(tree.id, tree.type));
 
-      if (this.pendingExpandedNodes && this.pendingExpandedNodes.size > 0) {
-        this.pendingExpandedNodes.forEach(key => {
-          if (this.nodeData.has(key)) {
-            this.expandedNodes.add(key);
-          }
-        });
-        this.pendingExpandedNodes = null;
-      }
-
-      if (this.pendingSelectedId && this.pendingSelectedType) {
-        const key = this._getKey(this.pendingSelectedId, this.pendingSelectedType);
-        const node = this.nodeData.get(key);
-        if (node) {
-          this.selectedId = this.pendingSelectedId;
-          this.selectedType = this.pendingSelectedType;
-          if (this.isCelestialNode(node)) {
-            this.focusNode = node;
-          }
-        }
-        this.pendingSelectedId = null;
-        this.pendingSelectedType = null;
+      const selectedNode = this.model.getSelectedNode();
+      if (selectedNode && this.isCelestialNode(selectedNode)) {
+        this.focusNode = selectedNode;
       }
 
       this.rebuildVisibleNodes();
@@ -1064,13 +1038,12 @@ export class ViewBounds {
 
   rebuildVisibleNodes() {
     this.clearNodes();
-    if (!this.tree) return;
+    if (!this.model.tree) return;
 
-    this.addVisibleNode(this.tree);
+    this.addVisibleNode(this.model.tree);
 
     const addExpandedChildren = (node) => {
-      const key = this._getKey(node.id, node.type);
-      if (this.expandedNodes.has(key) && node.children) {
+      if (this.model.isNodeExpanded(node) && node.children) {
         node.children.forEach(child => {
           this.addVisibleNode(child);
           addExpandedChildren(child);
@@ -1078,7 +1051,7 @@ export class ViewBounds {
       }
     };
 
-    addExpandedChildren(this.tree);
+    addExpandedChildren(this.model.tree);
     this.updateGridPosition();
 
     // Update orbital positions to match current simulation time (even when paused)
@@ -1137,9 +1110,10 @@ export class ViewBounds {
     const worldRot = node._worldRot;
     const bound = this.getEffectiveBound(node);
 
-    const isSelected = node.id === this.selectedId && node.type === this.selectedType;
+    const selectedNode = this.model.getSelectedNode();
+    const isSelected = selectedNode && node.id === selectedNode.id && node.type === selectedNode.type;
     const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
-    const isExpanded = this.expandedNodes.has(key);
+    const isExpanded = this.model.isNodeExpanded(node);
 
     const isCelestial = this.isCelestialNode(node);
     let scaledData = null;
@@ -1466,10 +1440,6 @@ export class ViewBounds {
   }
 
   selectNode(id, type) {
-    this.selectedId = id;
-    this.selectedType = type;
-
-    // Update focus node if selected node is celestial
     const key = this._getKey(id, type);
     const node = this.nodeData.get(key);
     if (node && this.isCelestialNode(node)) {
@@ -1520,21 +1490,13 @@ export class ViewBounds {
   }
 
   expandNode(node) {
-    const key = this._getKey(node.id, node.type);
-    if (!this.expandedNodes.has(key)) {
-      this.expandedNodes.add(key);
-      this.rebuildVisibleNodes();
-      this.saveState();
-    }
+    this.rebuildVisibleNodes();
+    this.saveState();
   }
 
   collapseNode(node) {
-    const key = this._getKey(node.id, node.type);
-    if (this.expandedNodes.has(key)) {
-      this.expandedNodes.delete(key);
-      this.rebuildVisibleNodes();
-      this.saveState();
-    }
+    this.rebuildVisibleNodes();
+    this.saveState();
   }
 
   addChildren(parentNode, children) {
@@ -1883,8 +1845,7 @@ export class ViewBounds {
   // If getChildPosAndScale is provided, uses scaled space; otherwise uses world space
   // If recursive is true, traverse children regardless of expansion state (for ancestor bounds)
   calculateBoundsFromChildren(node, parentPos, getChildPosAndScale = null, recursive = false) {
-    const key = this._getKey(node.id, node.type);
-    const isExpanded = this.expandedNodes.has(key);
+    const isExpanded = this.model.isNodeExpanded(node);
 
     // For non-recursive calls, require node to be expanded
     // For recursive calls (ancestor bounds), traverse children regardless
@@ -2017,28 +1978,20 @@ export class ViewBounds {
   saveState() {
     if (!this.stateManager) return;
 
-    const expandedIds = Array.from(this.expandedNodes);
     const typeFilterArray = Array.from(this.typeFilter);
 
     const slider = document.getElementById('timescale-slider');
     const timeScaleIndex = slider ? parseInt(slider.value) : 4;
 
     this.stateManager.updateSection('viewBounds', {
-      expandedNodeIds: expandedIds,
       typeFilter: typeFilterArray,
       timeScaleIndex: timeScaleIndex,
-      orbitsVisible: this.orbitsVisible,
-      selectedId: this.selectedId,
-      selectedType: this.selectedType
+      orbitsVisible: this.orbitsVisible
     });
   }
 
   restoreState(state) {
     state = state || this.stateManager?.getSection('viewBounds') || {};
-
-    if (state.expandedNodeIds && Array.isArray(state.expandedNodeIds)) {
-      this.pendingExpandedNodes = new Set(state.expandedNodeIds);
-    }
 
     if (state.typeFilter && Array.isArray(state.typeFilter)) {
       this.typeFilter = new Set(state.typeFilter);
@@ -2067,10 +2020,6 @@ export class ViewBounds {
       }
     }
 
-    if (state.selectedId && state.selectedType) {
-      this.pendingSelectedId = state.selectedId;
-      this.pendingSelectedType = state.selectedType;
-    }
   }
 
   dispose() {

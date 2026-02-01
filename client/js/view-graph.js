@@ -80,7 +80,6 @@ export class ViewGraph {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
     this.msfLoadCallbacks = [];
-    this.selectedId = null;
     this.highlightMesh = null;
 
     this.animationFrameId = null;
@@ -645,7 +644,6 @@ export class ViewGraph {
       this.linkLines = null;
     }
 
-    this.selectedId = null;
     this.graphNodes = [];
     this.graphLinks = [];
   }
@@ -824,8 +822,6 @@ export class ViewGraph {
       this.highlightMesh.material.dispose();
       this.highlightMesh = null;
     }
-
-    this.selectedId = key;
 
     // Highlight new
     const mesh = this.nodeMeshes.get(key);

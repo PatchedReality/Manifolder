@@ -579,26 +579,6 @@ export class HierarchyPanel {
     return this.nodeData.get(`node-${uid}`);
   }
 
-  getPathToNode(nodeOrKey) {
-    const nodeKey = this._nodeKey(nodeOrKey);
-    const element = this.nodes.get(nodeKey);
-    if (!element) return null;
-
-    const path = [];
-    let current = element;
-
-    while (current && current.classList.contains('tree-node')) {
-      const uid = current.dataset.uid;
-      const nodeData = this.nodeData.get(`node-${uid}`);
-      if (nodeData) {
-        path.unshift({ id: nodeData.id, type: nodeData.type });
-      }
-      current = current.parentElement?.closest('.tree-node');
-    }
-
-    return path;
-  }
-
   getChildren(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
     const nodeData = this.nodeData.get(nodeKey);
@@ -942,7 +922,7 @@ export class HierarchyPanel {
 
     // Expand ancestors in order (root to leaf), loading children as needed
     for (const ancestor of sortedPaths) {
-      const existingNode = this.findNodeByTypeAndId(ancestor.type, ancestor.id);
+      const existingNode = this.model.findNodeByTypeAndId(ancestor.type, ancestor.id);
 
       if (existingNode) {
         const nodeKey = this._nodeKey(existingNode);
@@ -961,7 +941,7 @@ export class HierarchyPanel {
 
     // Collect match node keys
     for (const match of results.matches) {
-      const matchNode = this.findNodeByTypeAndId(match.type, match.id);
+      const matchNode = this.model.findNodeByTypeAndId(match.type, match.id);
       if (matchNode) {
         const nodeKey = this._nodeKey(matchNode);
         visibleKeys.add(nodeKey);
@@ -985,12 +965,4 @@ export class HierarchyPanel {
     }
   }
 
-  findNodeByTypeAndId(type, id) {
-    for (const [, nodeData] of this.nodeData) {
-      if (nodeData.type === type && nodeData.id === id) {
-        return nodeData;
-      }
-    }
-    return null;
-  }
 }
