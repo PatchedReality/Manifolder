@@ -28,12 +28,9 @@ const DEFAULT_STATE = {
     showResource: false
   },
   viewBounds: {
-    expandedNodeIds: [],
     typeFilter: null,
     timeScaleIndex: 4,
-    orbitsVisible: true,
-    selectedId: null,
-    selectedType: null
+    orbitsVisible: true
   },
   viewResource: {
     showBounds: false

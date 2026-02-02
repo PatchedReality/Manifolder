@@ -96,8 +96,6 @@ export class ViewBounds {
     this.controls = null;
     this.globe = null;
 
-    this.nodeData = new Map();
-    this.nodeParents = new Map();
     this.nodeMeshes = new Map();
     this.orbitPaths = new Map();
     this.focusNode = null;
@@ -529,8 +527,6 @@ export class ViewBounds {
   setData(tree, inheritedPlanetContext = null) {
     this.inheritedPlanetContext = inheritedPlanetContext;
     this.clearNodes();
-    this.nodeData.clear();
-    this.nodeParents.clear();
     this.focusNode = null;
 
     if (tree) {
@@ -552,7 +548,7 @@ export class ViewBounds {
     let maxExtent = 0;
     let nodeCount = 0;
 
-    this.nodeData.forEach(node => {
+    this.model.nodes.forEach(node => {
       if (node._worldPos) {
         const pos = node._worldPos;
         const bound = node._bound || { x: 0, y: 0, z: 0 };
@@ -684,17 +680,12 @@ export class ViewBounds {
       let parentNode = null;
 
       if (orbitalParentId) {
-        // Search for the orbital parent in nodeData
-        this.nodeData.forEach((n, k) => {
-          if (n.id === orbitalParentId && n.type === 'RMCObject') {
-            parentNode = n;
-          }
-        });
+        parentNode = this.model.getNode('RMCObject', orbitalParentId);
       }
 
       // Fallback to tree parent if orbital parent not found
       if (!parentNode) {
-        parentNode = this.nodeParents.get(key);
+        parentNode = node._parent;
       }
 
       if (!parentNode) return;
@@ -770,7 +761,7 @@ export class ViewBounds {
       const node = mesh.userData.nodeData;
       if (!node || node._orbitData) return; // Skip if has orbital data (already updated)
 
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (!parentNode) return;
 
       // Check if any ancestor moved (has orbital data)
@@ -781,8 +772,7 @@ export class ViewBounds {
           hasMovingAncestor = true;
           break;
         }
-        const ancestorKey = this._getKey(ancestor.id, ancestor.type);
-        ancestor = this.nodeParents.get(ancestorKey);
+        ancestor = ancestor._parent;
       }
       if (!hasMovingAncestor) return;
 
@@ -795,10 +785,10 @@ export class ViewBounds {
 
     // Third pass: update orbit path positions (centered on parent)
     this.orbitPaths.forEach((orbitLine, key) => {
-      const node = this.nodeData.get(key);
+      const node = this.model.nodes.get(key);
       if (!node) return;
 
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (!parentNode) return;
 
       // Get parent's animated position (handles hidden orbital parents)
@@ -845,15 +835,11 @@ export class ViewBounds {
       let parentNode = null;
 
       if (orbitalParentId) {
-        this.nodeData.forEach((n) => {
-          if (n.id === orbitalParentId && n.type === 'RMCObject') {
-            parentNode = n;
-          }
-        });
+        parentNode = this.model.getNode('RMCObject', orbitalParentId);
       }
 
       if (!parentNode) {
-        parentNode = this.nodeParents.get(key);
+        parentNode = node._parent;
       }
 
       if (parentNode) {
@@ -1013,20 +999,12 @@ export class ViewBounds {
       worldRot = { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
     }
 
-    const key = this._getKey(node.id, node.type);
-    this.nodeData.set(key, node);
-
     node._worldPos = worldPos;
     node._worldRot = worldRot;
     node._bound = bound;
     node._orbitData = orbitData;
     if (planetContext) {
       node._planetContext = planetContext;
-    }
-
-    // Store parent ref in separate map to avoid circular JSON
-    if (parentNode) {
-      this.nodeParents.set(key, parentNode);
     }
 
     if (node.children && node.children.length > 0) {
@@ -1092,7 +1070,7 @@ export class ViewBounds {
 
     // Create orbit path even for filtered nodes (orbit should still be visible)
     if (node._orbitData && !this.orbitPaths.has(key)) {
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (parentNode) {
         const orbitPath = this.createOrbitPath(node, parentNode);
         if (orbitPath) {
@@ -1441,7 +1419,7 @@ export class ViewBounds {
 
   selectNode(id, type) {
     const key = this._getKey(id, type);
-    const node = this.nodeData.get(key);
+    const node = this.model.nodes.get(key);
     if (node && this.isCelestialNode(node)) {
       this.focusNode = node;
     }
@@ -1503,7 +1481,7 @@ export class ViewBounds {
     if (!children || children.length === 0) return;
 
     const parentKey = this._getKey(parentNode.id, parentNode.type);
-    const parent = this.nodeData.get(parentKey);
+    const parent = this.model.nodes.get(parentKey);
     if (!parent) return;
 
     const parentWorldPos = parent._worldPos;
@@ -1538,10 +1516,10 @@ export class ViewBounds {
   updateNode(node) {
     if (!node) return;
     const key = this._getKey(node.id, node.type);
-    const existing = this.nodeData.get(key);
+    const existing = this.model.nodes.get(key);
     if (!existing) return;
 
-    const parentNode = this.nodeParents.get(key);
+    const parentNode = existing._parent;
     const parentWorldPos = parentNode?._worldPos || null;
     const parentWorldRot = parentNode?._worldRot || null;
     const planetContext = existing._planetContext || null;
@@ -1557,7 +1535,7 @@ export class ViewBounds {
     let targetNode = node;
     if (!node._worldPos) {
       const key = this._getKey(node.id, node.type);
-      targetNode = this.nodeData.get(key);
+      targetNode = this.model.nodes.get(key);
       if (!targetNode || !targetNode._worldPos) return;
     }
 
@@ -1649,7 +1627,7 @@ export class ViewBounds {
     let count = 0;
 
     // Calculate bounding box of all visible nodes
-    this.nodeData.forEach(node => {
+    this.model.nodes.forEach(node => {
       if (node._worldPos) {
         const r = Math.sqrt(node._worldPos.x ** 2 + node._worldPos.y ** 2 + node._worldPos.z ** 2);
         if (r > 1000) {
@@ -1785,15 +1763,12 @@ export class ViewBounds {
     // Focus node itself
     if (node === this.focusNode) return true;
 
-    const focusKey = this._getKey(this.focusNode.id, this.focusNode.type);
-    const nodeKey = this._getKey(node.id, node.type);
-
     // Parent of focus
-    const focusParent = this.nodeParents.get(focusKey);
+    const focusParent = this.focusNode._parent;
     if (focusParent === node) return true;
 
     // Children of focus (check if node's parent is focus)
-    const nodeParent = this.nodeParents.get(nodeKey);
+    const nodeParent = node._parent;
     if (nodeParent === this.focusNode) return true;
 
     // Siblings (same parent as focus)
@@ -1803,14 +1778,12 @@ export class ViewBounds {
   }
 
   findCelestialParent(node) {
-    let currentKey = this._getKey(node.id, node.type);
-    let current = this.nodeParents.get(currentKey);
+    let current = node._parent;
     while (current) {
       if (this.isCelestialNode(current)) {
         return current;
       }
-      currentKey = this._getKey(current.id, current.type);
-      current = this.nodeParents.get(currentKey);
+      current = current._parent;
     }
     return null;
   }
@@ -2100,7 +2073,7 @@ export class ViewBounds {
   getPlanetContext(node) {
     if (!node) return null;
     const key = this._getKey(node.id, node.type);
-    const nodeData = this.nodeData.get(key);
+    const nodeData = this.model.nodes.get(key);
     return nodeData?._planetContext || this.inheritedPlanetContext || null;
   }
 }
