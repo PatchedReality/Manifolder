@@ -13,7 +13,7 @@ import Hls from 'hls.js';
 import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
 import { calculateSunPosition, getSunLightingParams, calculateLatLong } from './geo-utils.js';
-import { NODE_TYPES } from '../shared/node-types.js';
+import { NODE_COLORS } from '../shared/node-types.js';
 
 export class ViewResource {
   constructor(containerSelector, stateManager, model) {
@@ -46,7 +46,6 @@ export class ViewResource {
 
     this.currentResourceUrl = null;
     this.currentNode = null;
-    this.currentExpandedDescendants = [];
     this.isLoading = false;
     this.loadRequestId = 0;  // Increments on each load to handle race conditions
 
@@ -87,15 +86,13 @@ export class ViewResource {
         this.setLocation(0, 0);
       }
 
-      const expandedDescendants = this.model.getExpandedDescendants(node);
-      this.setNode(node, expandedDescendants);
+      this.setNode(node);
     });
 
     this.model.on('nodeChildrenChanged', () => {
       const selectedNode = this.model.getSelectedNode();
       if (selectedNode) {
-        const expandedDescendants = this.model.getExpandedDescendants(selectedNode);
-        this.setNode(selectedNode, expandedDescendants);
+        this.setNode(selectedNode);
       }
     });
   }
@@ -113,7 +110,7 @@ export class ViewResource {
     const height = this.container.clientHeight || 600;
 
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100000);
-    this.camera.position.set(5, 5, 10);
+    this.camera.position.set(50, 30, 50);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setSize(width, height);
@@ -515,68 +512,20 @@ export class ViewResource {
     }
   }
 
-  async addNodeResource(node, cumulativeTransform, localTransform, parentId, parentCumulativeTransform) {
-    if (!node.resourceUrl || !this.contentGroup) return;
+  setNode(node) {
+    this.currentNode = node;
 
-    const requestId = this.loadRequestId;
+    if (!this.container.offsetHeight) return;
 
-    let targetGroup = this.contentGroup;
-    let effectiveTransform = cumulativeTransform;
-
-    if (parentId) {
-      if (!this._parentGroups) this._parentGroups = new Map();
-      if (!this._parentGroups.has(parentId)) {
-        const group = new THREE.Group();
-        if (parentCumulativeTransform) {
-          this.applyNodeTransform(group, parentCumulativeTransform);
-        }
-        this.contentGroup.add(group);
-        this._parentGroups.set(parentId, group);
-      }
-      targetGroup = this._parentGroups.get(parentId);
-      effectiveTransform = localTransform || cumulativeTransform;
-    }
-
-    const lower = node.resourceUrl.toLowerCase();
-
-    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-      await this.loadDirectGlb(node.resourceUrl, effectiveTransform, requestId, targetGroup);
-    } else {
-      await this.loadResourceWithTransform(node.resourceUrl, effectiveTransform, requestId, targetGroup);
-    }
-
+    clearTimeout(this._setNodeDebounce);
+    this._setNodeDebounce = setTimeout(() => this._applySetNode(node), 150);
   }
 
-  setNode(node, expandedDescendants = []) {
-    this.currentNode = node;
-    this.currentExpandedDescendants = expandedDescendants;
+  _applySetNode(node) {
+    if (node !== this.currentNode) return;
 
-    const resourcesToLoad = [];
-
-    if (node.resourceUrl) {
-      resourcesToLoad.push({
-        url: node.resourceUrl,
-        resourceRef: node.resourceRef,
-        resourceName: node.resourceName,
-        transform: null
-      });
-    }
-
-    for (const { node: childNode, cumulativeTransform, localTransform, parentId, parentCumulativeTransform } of expandedDescendants) {
-      if (childNode.resourceUrl) {
-        resourcesToLoad.push({
-          url: childNode.resourceUrl,
-          resourceRef: childNode.resourceRef,
-          resourceName: childNode.resourceName,
-          transform: cumulativeTransform,
-          localTransform: localTransform,
-          parentId: parentId,
-          parentCumulativeTransform: parentCumulativeTransform
-        });
-      }
-    }
-
-    if (resourcesToLoad.length === 0) {
+    const resourceUrls = this._collectResourceUrls(node);
+    if (resourceUrls.length === 0) {
       this.clearScene();
       this.currentResourceUrl = null;
       this.setStatus('No resource', '');
@@ -584,75 +533,52 @@ export class ViewResource {
       return;
     }
 
-    // Include node identity so selecting different nodes triggers refresh
     const nodeKey = `${node.type}_${node.id}`;
-    const cacheKey = `${nodeKey}:${resourcesToLoad.map(r => r.url).sort().join('|')}`;
+    const cacheKey = `${nodeKey}:${resourceUrls.sort().join('|')}`;
     if (cacheKey === this.currentResourceUrl) {
       return;
     }
 
     this.currentResourceUrl = cacheKey;
-    this.loadMultipleResources(resourcesToLoad);
+    this.loadNodeHierarchy(node, resourceUrls.length);
   }
 
-  async loadMultipleResources(resourcesToLoad) {
-    // Increment request ID to invalidate any in-progress loads
+  _collectResourceUrls(node) {
+    const urls = [];
+    if (node.resourceUrl) urls.push(node.resourceUrl);
+    if (this.model.isNodeExpanded(node) && node.children) {
+      for (const child of node.children) {
+        urls.push(...this._collectResourceUrls(child));
+      }
+    }
+    return urls;
+  }
+
+  async loadNodeHierarchy(rootNode, resourceCount) {
     const requestId = ++this.loadRequestId;
     this.isLoading = true;
 
     this.clearScene();
     this.contentGroup = new THREE.Group();
     this.scene.add(this.contentGroup);
-    this.setStatus(`Loading ${resourcesToLoad.length} resource(s)...`, 'loading');
+    this._precomputeScale(rootNode);
+    this.setStatus(`Loading ${resourceCount} resource(s)...`, 'loading');
 
     const isCancelled = () => requestId !== this.loadRequestId;
 
     try {
-      const parentGroups = new Map();
+      await this._loadNodeRecursive(rootNode, this.contentGroup, requestId, true);
 
-      for (const { url, resourceRef, resourceName, transform, localTransform, parentId, parentCumulativeTransform } of resourcesToLoad) {
-        if (isCancelled()) {
-          this.cleanupCancelledLoad();
-          return;
-        }
-
-        // Get or create a sub-group for this parent so siblings share a group
-        // Sub-group gets the parent's cumulative transform; children use local transforms
-        let targetGroup = this.contentGroup;
-        if (!targetGroup) break;
-        let effectiveTransform = transform;
-
-        if (parentId) {
-          if (!parentGroups.has(parentId)) {
-            const group = new THREE.Group();
-            if (parentCumulativeTransform) {
-              this.applyNodeTransform(group, parentCumulativeTransform);
-            }
-            targetGroup.add(group);
-            parentGroups.set(parentId, group);
-          }
-          targetGroup = parentGroups.get(parentId);
-          effectiveTransform = localTransform || transform;
-        }
-
-        const lower = url.toLowerCase();
-
-        if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-          await this.loadDirectGlb(url, effectiveTransform, requestId, targetGroup);
-        } else {
-          await this.loadResourceWithTransform(url, effectiveTransform, requestId, targetGroup);
-        }
-      }
-
-      // Final check before updating UI
       if (isCancelled()) {
         this.cleanupCancelledLoad();
         return;
       }
 
+      this._precomputedScale = false;
       this.centerContentAtOrigin();
-      this.applyWorldOrientation();
       this.fitCameraToContent();
+      this.applyWorldOrientation();
+      this.animateCameraToContent();
       this.updateGridFromContent();
       this.updateBoundsDisplay();
       this.setStatus('', '');
@@ -666,6 +592,49 @@ export class ViewResource {
       if (requestId === this.loadRequestId) {
         this.isLoading = false;
       }
+    }
+  }
+
+  _applyNodeTransformToGroup(group, transform) {
+    const pos = transform.position || { x: 0, y: 0, z: 0 };
+    const rot = transform.rotation || { x: 0, y: 0, z: 0, w: 1 };
+    const scl = transform.scale || { x: 1, y: 1, z: 1 };
+    group.position.set(pos.x, pos.y, pos.z);
+    group.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+    group.scale.set(scl.x, scl.y, scl.z);
+  }
+
+  async _loadNodeRecursive(node, parentGroup, requestId, isRoot = false) {
+    if (requestId !== this.loadRequestId) return;
+
+    const hasResource = !!node.resourceUrl;
+    const expandedChildren = this.model.isNodeExpanded(node) && node.children;
+    const hasTransform = !isRoot && node.transform;
+
+    const needsGroup = hasTransform && (hasResource || expandedChildren);
+    let target = parentGroup;
+
+    if (needsGroup) {
+      target = new THREE.Group();
+      target.name = node.name || 'node';
+      this._applyNodeTransformToGroup(target, node.transform);
+      parentGroup.add(target);
+    }
+
+    if (hasResource) {
+      const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
+      const lower = node.resourceUrl.toLowerCase();
+      if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+        await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, target);
+      } else {
+        await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, target);
+      }
+    }
+
+    if (expandedChildren) {
+      await Promise.all(node.children.map(child =>
+        this._loadNodeRecursive(child, target, requestId)
+      ));
     }
   }
 
@@ -779,7 +748,7 @@ export class ViewResource {
 
       const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       const data = await response.json();
-      await this.processResourceData(data, nodeTransform, requestId, baseDir);
+      await this.processResourceData(data, nodeTransform, requestId, baseDir, targetGroup);
     } catch (error) {
       console.warn(`Error loading resource ${url}:`, error);
     }
@@ -830,7 +799,9 @@ export class ViewResource {
     }
   }
 
-  async processResourceData(data, nodeTransform = null, requestId = null, baseDir = null) {
+  async processResourceData(data, nodeTransform = null, requestId = null, baseDir = null, targetGroup = null) {
+    const group = targetGroup || this.contentGroup;
+
     // Handle metadata files (have lods, no blueprint)
     const lods = data?.lods || data?.LODs;
     if (lods && lods.length > 0) {
@@ -839,12 +810,12 @@ export class ViewResource {
       if (glbName) {
         const glbUrl = glbName.startsWith('http') ? glbName : (baseDir ? baseDir + glbName : glbName);
         const model = await this.loadGlb(glbUrl, requestId);
-        if (model && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
+        if (model && group && (requestId === null || requestId === this.loadRequestId)) {
           this.setupModelMaterials(model);
           if (nodeTransform) {
             this.applyNodeTransform(model, nodeTransform);
           }
-          this.contentGroup.add(model);
+          group.add(model);
           this.loadedModels.push(model);
           if (this.loadedModels.length === 1) {
             this.centerContentAtOrigin();
@@ -860,22 +831,19 @@ export class ViewResource {
       return;
     }
 
-    // Fabric files with simple physical root (RMPObject-style) default to Earth at 0/0
     if (!this.isEarthBased && this.isSimplePhysicalBlueprint(blueprint)) {
       this.setLocation(0, 0);
     }
 
-    // Check if this request is still current
     if (requestId !== null && requestId !== this.loadRequestId) return;
 
-    // Process blueprint recursively to preserve group hierarchy (needed for rotators)
     const result = await this.processBlueprintNode(blueprint, requestId);
-    if (result && this.contentGroup && (requestId === null || requestId === this.loadRequestId)) {
+    if (result && group && (requestId === null || requestId === this.loadRequestId)) {
       this.setupModelMaterials(result);
       if (nodeTransform) {
         this.applyNodeTransform(result, nodeTransform);
       }
-      this.contentGroup.add(result);
+      group.add(result);
       this.loadedModels.push(result);
       if (this.loadedModels.length === 1) {
         this.centerContentAtOrigin();
@@ -1391,70 +1359,106 @@ export class ViewResource {
     });
   }
 
-  centerContentAtOrigin() {
-    if (!this.contentGroup || this.loadedModels.length === 0) return;
+  _nodeTransformToMatrix(transform) {
+    const pos = transform.position || { x: 0, y: 0, z: 0 };
+    const rot = transform.rotation || { x: 0, y: 0, z: 0, w: 1 };
+    const scl = transform.scale || { x: 1, y: 1, z: 1 };
+    return new THREE.Matrix4().compose(
+      new THREE.Vector3(pos.x, pos.y, pos.z),
+      new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w),
+      new THREE.Vector3(scl.x, scl.y, scl.z)
+    );
+  }
 
-    const boundingBox = new THREE.Box3();
-    let validCount = 0;
+  _computeNodeBounds(node, parentMatrix, isRoot = false) {
+    const localMatrix = (!isRoot && node.transform)
+      ? this._nodeTransformToMatrix(node.transform)
+      : new THREE.Matrix4();
 
-    for (const model of this.loadedModels) {
-      const modelBox = new THREE.Box3().setFromObject(model);
-      if (!modelBox.isEmpty() && isFinite(modelBox.min.x) && isFinite(modelBox.max.x)) {
-        boundingBox.union(modelBox);
-        validCount++;
+    const worldMatrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, localMatrix);
+    const bounds = new THREE.Box3();
+
+    if (node.bound && node.bound.x != null && node.bound.y != null && node.bound.z != null) {
+      const halfX = node.bound.x / 2;
+      const halfZ = node.bound.z / 2;
+      const localBox = new THREE.Box3(
+        new THREE.Vector3(-halfX, 0, -halfZ),
+        new THREE.Vector3(halfX, node.bound.y, halfZ)
+      );
+      const corners = [
+        new THREE.Vector3(localBox.min.x, localBox.min.y, localBox.min.z),
+        new THREE.Vector3(localBox.min.x, localBox.min.y, localBox.max.z),
+        new THREE.Vector3(localBox.min.x, localBox.max.y, localBox.min.z),
+        new THREE.Vector3(localBox.min.x, localBox.max.y, localBox.max.z),
+        new THREE.Vector3(localBox.max.x, localBox.min.y, localBox.min.z),
+        new THREE.Vector3(localBox.max.x, localBox.min.y, localBox.max.z),
+        new THREE.Vector3(localBox.max.x, localBox.max.y, localBox.min.z),
+        new THREE.Vector3(localBox.max.x, localBox.max.y, localBox.max.z),
+      ];
+      for (const corner of corners) {
+        corner.applyMatrix4(worldMatrix);
+        bounds.expandByPoint(corner);
+      }
+    } else if (!isRoot && node.transform) {
+      const pos = new THREE.Vector3().setFromMatrixPosition(worldMatrix);
+      bounds.expandByPoint(pos);
+    }
+
+    if (this.model.isNodeExpanded(node) && node.children) {
+      for (const child of node.children) {
+        const childBounds = this._computeNodeBounds(child, worldMatrix);
+        if (!childBounds.isEmpty()) {
+          bounds.union(childBounds);
+        }
       }
     }
 
-    if (boundingBox.isEmpty() || !isFinite(boundingBox.min.x) || validCount === 0) {
-      return;
-    }
-
-    const center = new THREE.Vector3();
-    const size = new THREE.Vector3();
-    boundingBox.getCenter(center);
-    boundingBox.getSize(size);
-
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const targetSize = 1500;
-    const minScale = 0.0001;
-    const maxScale = 10000;
-    let scale = maxDim > 0 ? targetSize / maxDim : 1;
-    scale = Math.max(minScale, Math.min(maxScale, scale));
-
-    if (!isFinite(scale) || !isFinite(center.x)) {
-      return;
-    }
-
-    this.contentGroup.scale.setScalar(scale);
-    this.contentGroup.position.set(
-      -center.x * scale,
-      -boundingBox.min.y * scale,
-      -center.z * scale
-    );
-
+    return bounds;
   }
 
-  applyWorldOrientation() {
-    if (!this.contentGroup || !this.currentNode?._worldRot) return;
+  _precomputeScale(rootNode) {
+    const identity = new THREE.Matrix4();
+    const bounds = this._computeNodeBounds(rootNode, identity, true);
 
-    const worldRot = this.currentNode._worldRot;
-    const quaternion = new THREE.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
-
-    // Extract just the yaw (rotation around Y) - ignore tilt from Earth's curvature
-    const euler = new THREE.Euler().setFromQuaternion(quaternion, 'YXZ');
-    this.contentGroup.rotation.y = euler.y;
-  }
-
-  fitCameraToContent() {
-    if (!this.contentGroup || this.loadedModels.length === 0) {
+    if (bounds.isEmpty() || !isFinite(bounds.min.x) || !isFinite(bounds.max.x)) {
       this.resetCamera();
       return;
     }
 
-    // Force update world matrices after centering transform was applied
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    bounds.getSize(size);
+    bounds.getCenter(center);
+
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (maxDim <= 0) {
+      this.resetCamera();
+      return;
+    }
+
+    const targetSize = 1500;
+    const minScale = 0.0001;
+    const maxScale = 10000;
+    let scale = targetSize / maxDim;
+    scale = Math.max(minScale, Math.min(maxScale, scale));
+
+    this.contentGroup.scale.setScalar(scale);
+    this._precomputedScale = true;
+
+    const scaledSize = size.clone().multiplyScalar(scale);
+    const finalDistance = this._cameraDistanceForSize(scaledSize);
+    const scaledCenter = center.clone().multiplyScalar(scale);
+    const direction = new THREE.Vector3(1, 0.5, 1).normalize();
+    this.camera.position.copy(scaledCenter).add(direction.multiplyScalar(finalDistance));
+    this.controls.target.copy(scaledCenter);
+    this.controls.update();
+  }
+
+  _computeLoadedModelsBounds() {
+    if (!this.contentGroup || this.loadedModels.length === 0) return null;
+
     this.contentGroup.updateMatrixWorld(true);
 
-    // Compute bounds by iterating valid models (setFromObject can return NaN if any child is invalid)
     const boundingBox = new THREE.Box3();
     let validCount = 0;
 
@@ -1468,7 +1472,52 @@ export class ViewResource {
       }
     }
 
-    if (boundingBox.isEmpty() || validCount === 0) {
+    if (boundingBox.isEmpty() || validCount === 0) return null;
+    return boundingBox;
+  }
+
+  centerContentAtOrigin() {
+    const boundingBox = this._computeLoadedModelsBounds();
+    if (!boundingBox) return;
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    boundingBox.getCenter(center);
+    boundingBox.getSize(size);
+
+    if (this._precomputedScale) {
+      this.contentGroup.position.set(0, -boundingBox.min.y, 0);
+    } else {
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const targetSize = 1500;
+      const minScale = 0.0001;
+      const maxScale = 10000;
+      let scale = maxDim > 0 ? targetSize / maxDim : 1;
+      scale = Math.max(minScale, Math.min(maxScale, scale));
+
+      if (!isFinite(scale) || !isFinite(center.x)) {
+        return;
+      }
+
+      this.contentGroup.scale.setScalar(scale);
+      this.contentGroup.position.set(0, -boundingBox.min.y * scale, 0);
+    }
+  }
+
+  applyWorldOrientation() {
+    if (!this.contentGroup || !this.currentNode?._worldRot) return;
+
+    const worldRot = this.currentNode._worldRot;
+    const quaternion = new THREE.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
+
+    // Extract just the yaw (rotation around Y) - ignore tilt from Earth's curvature
+    const euler = new THREE.Euler().setFromQuaternion(quaternion, 'YXZ');
+    this.contentGroup.rotation.y = euler.y;
+  }
+
+  animateCameraToContent() {
+    const boundingBox = this._computeLoadedModelsBounds();
+    if (!boundingBox) {
       this.resetCamera();
       return;
     }
@@ -1478,14 +1527,32 @@ export class ViewResource {
     boundingBox.getCenter(center);
     boundingBox.getSize(size);
 
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const fov = this.camera.fov * (Math.PI / 180);
-    const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
+    const finalDistance = this._cameraDistanceForSize(size);
+    if (!isFinite(finalDistance) || !isFinite(center.x)) {
+      this.resetCamera();
+      return;
+    }
 
-    const minDistance = 5;
-    const maxDistance = 5000;
-    const finalDistance = Math.max(minDistance, Math.min(maxDistance, distance));
+    this._positionGroundPlane(boundingBox.min.y);
 
+    const direction = new THREE.Vector3(1, 0.5, 1).normalize();
+    const targetPosition = center.clone().add(direction.multiplyScalar(finalDistance));
+    this.animateCamera(targetPosition, center);
+  }
+
+  fitCameraToContent() {
+    const boundingBox = this._computeLoadedModelsBounds();
+    if (!boundingBox) {
+      this.resetCamera();
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    boundingBox.getCenter(center);
+    boundingBox.getSize(size);
+
+    const finalDistance = this._cameraDistanceForSize(size);
     if (!isFinite(finalDistance) || !isFinite(center.x)) {
       this.resetCamera();
       return;
@@ -1496,37 +1563,39 @@ export class ViewResource {
     this.controls.target.copy(center);
     this.controls.update();
 
-    if (this.gridHelper && isFinite(boundingBox.min.y)) {
-      this.gridHelper.position.y = boundingBox.min.y;
-      if (this.shadowPlane) this.shadowPlane.position.y = boundingBox.min.y;
-    }
+    this._positionGroundPlane(boundingBox.min.y);
+  }
+
+  _cameraDistanceForSize(size) {
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const fov = this.camera.fov * (Math.PI / 180);
+    const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
+    return Math.max(5, Math.min(5000, distance));
+  }
+
+  _positionGroundPlane(minY) {
+    if (!isFinite(minY)) return;
+    if (this.gridHelper) this.gridHelper.position.y = minY;
+    if (this.shadowPlane) this.shadowPlane.position.y = minY;
   }
 
   resetCamera() {
     this.controls.target.set(0, 0, 0);
     this.camera.position.set(50, 30, 50);
     this.controls.update();
-    if (this.gridHelper) {
-      this.gridHelper.position.y = 0;
-    }
-    if (this.shadowPlane) {
-      this.shadowPlane.position.y = 0;
-    }
+    this._positionGroundPlane(0);
   }
 
   clearScene() {
     if (!this.initialized) return;
 
+    this._precomputedScale = false;
+
     if (this.contentGroup) {
       this.scene.remove(this.contentGroup);
     }
     this.clearBoundsGroup();
-    if (this.gridHelper) {
-      this.gridHelper.position.y = 0;
-    }
-    if (this.shadowPlane) {
-      this.shadowPlane.position.y = 0;
-    }
+    this._positionGroundPlane(0);
     this.loadedModels.forEach(model => {
       model.traverse((child) => {
         if (child.geometry) child.geometry.dispose();
@@ -1751,34 +1820,40 @@ export class ViewResource {
   updateBoundsDisplay() {
     this.clearBoundsGroup();
 
-    if (!this.showBounds || !this.contentGroup) return;
+    if (!this.showBounds || !this.contentGroup || !this.currentNode) return;
 
     this.boundsGroup = new THREE.Group();
     this.boundsGroup.name = 'boundsGroup';
 
-    // Add bounds for the main selected node
-    if (this.currentNode?.bound) {
-      const box = this.createNodeBoundingBox(this.currentNode, null);
-      if (box) {
-        this.boundsGroup.add(box);
-      }
-    }
+    this._addBoundsRecursive(this.currentNode, this.boundsGroup, true);
 
-    // Add bounds for each expanded descendant
-    for (const { node, cumulativeTransform } of this.currentExpandedDescendants) {
-      if (node.bound) {
-        const box = this.createNodeBoundingBox(node, cumulativeTransform);
-        if (box) {
-          this.boundsGroup.add(box);
-        }
-      }
-    }
-
-    // Apply same transform as contentGroup so bounds align with content
     this.boundsGroup.scale.copy(this.contentGroup.scale);
     this.boundsGroup.position.copy(this.contentGroup.position);
 
     this.scene.add(this.boundsGroup);
+  }
+
+  _addBoundsRecursive(node, parentGroup, isRoot = false) {
+    const group = new THREE.Group();
+
+    if (!isRoot && node.transform) {
+      this._applyNodeTransformToGroup(group, node.transform);
+    }
+
+    if (node.bound) {
+      const box = this.createNodeBoundingBox(node);
+      if (box) {
+        group.add(box);
+      }
+    }
+
+    if (this.model.isNodeExpanded(node) && node.children) {
+      for (const child of node.children) {
+        this._addBoundsRecursive(child, group);
+      }
+    }
+
+    parentGroup.add(group);
   }
 
   clearBoundsGroup() {
@@ -1801,7 +1876,7 @@ export class ViewResource {
     this.boundsGroup = null;
   }
 
-  createNodeBoundingBox(node, cumulativeTransform) {
+  createNodeBoundingBox(node) {
     const bound = node.bound;
     if (!bound || bound.x == null || bound.y == null || bound.z == null) return null;
 
@@ -1809,35 +1884,19 @@ export class ViewResource {
     const group = new THREE.Group();
     group.name = `bounds-${node.name || 'node'}`;
 
-    // Create box geometry and edges for wireframe
     const geometry = new THREE.BoxGeometry(bound.x, bound.y, bound.z);
     const edges = new THREE.EdgesGeometry(geometry);
     const material = new THREE.LineBasicMaterial({ color: color });
     const wireframe = new THREE.LineSegments(edges, material);
 
-    // Position box so bottom is at origin (y centered at bound.y/2)
     wireframe.position.y = bound.y / 2;
 
     group.add(wireframe);
 
-    // Create label at top center, sized relative to bound
     const labelHeight = Math.max(bound.x, bound.y, bound.z) * 0.08;
     const label = this.createBoundsLabel(node.name || 'Node', color, labelHeight);
     label.position.set(0, bound.y + labelHeight * 0.6, 0);
     group.add(label);
-
-    // Apply cumulative transform if provided
-    if (cumulativeTransform) {
-      const pos = cumulativeTransform.Position || cumulativeTransform.position || [0, 0, 0];
-      const rot = cumulativeTransform.Rotation || cumulativeTransform.rotation || [0, 0, 0, 1];
-      const scale = cumulativeTransform.Scale || cumulativeTransform.scale || [1, 1, 1];
-
-      if (isFinite(pos[0]) && isFinite(pos[1]) && isFinite(pos[2])) {
-        group.position.set(pos[0], pos[1], pos[2]);
-        group.quaternion.set(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0, rot[3] ?? 1);
-        group.scale.set(scale[0] ?? 1, scale[1] ?? 1, scale[2] ?? 1);
-      }
-    }
 
     geometry.dispose();
 
@@ -1889,7 +1948,6 @@ export class ViewResource {
 
   getNodeColor(node) {
     if (!node.nodeType) return 0xffffff;
-    const typeInfo = NODE_TYPES.find(t => t.name === node.nodeType);
-    return typeInfo?.color ?? 0xffffff;
+    return NODE_COLORS[node.nodeType] ?? 0xffffff;
   }
 }

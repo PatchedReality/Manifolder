@@ -167,20 +167,14 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   onReadyState(pNotice) {
-    console.log('[MVClient] onReadyState', pNotice.pCreator?.constructor?.name, pNotice.pCreator);
-
     if (!this.IsReady()) {
       if (pNotice.pCreator === this.#m_pFabric) {
-        console.log('[MVClient] → Fabric ready state');
         this._handleFabricReadyState();
       } else if (pNotice.pCreator === this.#m_pLnG) {
-        console.log('[MVClient] → LnG ready state');
         this._handleLnGReadyState();
       } else if (pNotice.pCreator === this.#pRMXRoot) {
-        console.log('[MVClient] → Root model ready state');
         this._handleRootModelReadyState(pNotice.pCreator);
       } else if (pNotice.pCreator.IsReady && pNotice.pCreator.IsReady()) {
-        console.log('[MVClient] → Other model ready state');
         this._handleModelReadyState(pNotice.pCreator);
       }
     } else {
@@ -191,15 +185,11 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   _handleFabricReadyState() {
-    console.log('[MVClient] Fabric ReadyState:', this.#m_pFabric.ReadyState(), 'IsReady:', this.#m_pFabric.IsReady());
-
     if (this.#m_pFabric.IsReady()) {
       this._emit('status', 'Connecting to Metaverse server...');
 
       const msfConfig = this.#m_pFabric.pMSFConfig;
-      console.log('[MVClient] MSF Config:', msfConfig);
       const mapConfig = msfConfig?.map;
-      console.log('[MVClient] Map Config:', mapConfig);
 
       this.#sceneWClass = mapConfig?.wClass;
       this.#sceneObjectIx = mapConfig?.twObjectIx;
@@ -236,7 +226,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
   _handleLnGReadyState() {
     const state = this.#m_pLnG.ReadyState();
-    console.log('[MVClient] LnG ReadyState:', state, 'eSTATE:', this.#m_pLnG.eSTATE);
 
     switch (state) {
       case this.#m_pLnG.eSTATE.DISCONNECTED:
@@ -263,7 +252,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
   _startRootModel() {
     const classId = this._getClassID(this.#sceneWClass);
-    console.log('[MVClient] _startRootModel wClass:', this.#sceneWClass, '→ classId:', classId, 'objectIx:', this.#sceneObjectIx);
 
     if (!classId) {
       clearTimeout(this._loadTimeout);
@@ -278,7 +266,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     }
 
     this.#pRMXRoot = this.#m_pLnG.Model_Open(classId, this.#sceneObjectIx);
-    console.log('[MVClient] Model_Open returned:', this.#pRMXRoot);
     this._safeAttach(this.#pRMXRoot);
   }
 
@@ -286,16 +273,10 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     const state = model.ReadyState();
     const RECOVERED = model.eSTATE?.RECOVERED ?? 3;
 
-    console.log('[MVClient] Root model state:', state, 'RECOVERED:', RECOVERED);
-
     if (state >= RECOVERED) {
       clearTimeout(this._loadTimeout);
 
-      console.log('[MVClient] Root model ready, building tree from:', model);
-      console.log('[MVClient] Model properties:', Object.keys(model));
-
       const tree = this._buildNodeFromModel(model);
-      console.log('[MVClient] Built tree:', tree);
 
       this.#searchableRMCObjectIndices = [];
       this.#searchableRMTObjectIndices = [];
@@ -360,51 +341,43 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     return NodeFactory.createNode(type, data, id);
   }
 
-  _extractModelData(model, skipChildren = false) {
-    const data = {
-      Parent: {}
-    };
+  _extractObjectFields(obj) {
+    const type = obj.sID;
 
-    const parent = data.Parent;
-
-    if (model.sID === 'RMRoot') {
-      parent.twRMRootIx = model.twRMRootIx || model.twObjectIx;
-      parent.pName = model.pName || { wsRMRootId: 'Root' };
-      parent.nChildren = model.nChildren;
-    } else if (model.sID === 'RMCObject') {
-      parent.twRMCObjectIx = model.twRMCObjectIx || model.twObjectIx;
-      parent.pName = model.pName;
-      parent.bType = model.pType?.bType;
-      parent.sClass = model.pType?.sClass;
-      parent.pTransform = this._extractTransform(model);
-      parent.pBound = this._extractBound(model);
-      parent.pOrbit_Spin = model.pOrbit_Spin;
-      parent.pResource = model.pResource;
-      parent.nChildren = model.nChildren;
-    } else if (model.sID === 'RMTObject') {
-      parent.twRMTObjectIx = model.twRMTObjectIx || model.twObjectIx;
-      parent.pName = model.pName;
-      parent.bType = model.pType?.bType;
-      parent.sClass = model.pType?.sClass;
-      parent.pTransform = this._extractTransform(model);
-      parent.pBound = this._extractBound(model);
-      parent.pResource = model.pResource;
-      parent.nChildren = model.nChildren;
-    } else if (model.sID === 'RMPObject') {
-      parent.twRMPObjectIx = model.twRMPObjectIx || model.twObjectIx;
-      parent.pName = model.pName;
-      parent.bType = model.pType?.bType;
-      parent.sClass = model.pType?.sClass;
-      parent.pTransform = this._extractTransform(model);
-      parent.pBound = this._extractBound(model);
-      parent.pResource = model.pResource;
-      parent.sAssetUrl = model.sAssetUrl;
-      parent.nChildren = model.nChildren;
+    if (type === 'RMRoot') {
+      return {
+        twRMRootIx: obj.twRMRootIx || obj.twObjectIx,
+        pName: obj.pName || { wsRMRootId: 'Root' },
+        nChildren: obj.nChildren
+      };
     }
 
-    data.aChild = skipChildren ? [[], [], []] : this._extractChildren(model);
+    const idKey = `tw${type}Ix`;
+    const data = {
+      [idKey]: obj[idKey] || obj.twObjectIx,
+      pName: obj.pName,
+      bType: obj.pType?.bType,
+      sClass: obj.pType?.sClass,
+      pTransform: this._extractTransform(obj),
+      pBound: this._extractBound(obj),
+      pResource: obj.pResource,
+      nChildren: obj.nChildren
+    };
+
+    if (type === 'RMCObject') {
+      data.pOrbit_Spin = obj.pOrbit_Spin;
+    } else if (type === 'RMPObject') {
+      data.sAssetUrl = obj.sAssetUrl;
+    }
 
     return data;
+  }
+
+  _extractModelData(model, skipChildren = false) {
+    return {
+      Parent: this._extractObjectFields(model),
+      aChild: skipChildren ? [[], [], []] : this._extractChildren(model)
+    };
   }
 
   _extractTransform(model) {
@@ -442,8 +415,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   _extractChildren(model) {
     const aChild = [[], [], []];
 
-    console.log('[MVClient] _extractChildren from model:', model.sID, 'nChildren:', model.nChildren);
-
     if (model.Child_Enum) {
       const children = [];
 
@@ -454,8 +425,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       model.Child_Enum('RMCObject', this, enumCallback, children);
       model.Child_Enum('RMTObject', this, enumCallback, children);
       model.Child_Enum('RMPObject', this, enumCallback, children);
-
-      console.log('[MVClient] Enumerated children:', children.length);
 
       for (const child of children) {
         const childData = this._extractChildData(child);
@@ -471,45 +440,12 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       }
     }
 
-    console.log('[MVClient] aChild result:', aChild);
     return aChild;
   }
 
   _extractChildData(child) {
-    const data = {};
-
-    if (child.sID === 'RMCObject') {
-      data.twRMCObjectIx = child.twRMCObjectIx || child.twObjectIx;
-      data.pName = child.pName;
-      data.bType = child.pType?.bType;
-      data.sClass = child.pType?.sClass;
-      data.pTransform = this._extractTransform(child);
-      data.pBound = this._extractBound(child);
-      data.pOrbit_Spin = child.pOrbit_Spin;
-      data.pResource = child.pResource;
-      data.nChildren = child.nChildren;
-    } else if (child.sID === 'RMTObject') {
-      data.twRMTObjectIx = child.twRMTObjectIx || child.twObjectIx;
-      data.pName = child.pName;
-      data.bType = child.pType?.bType;
-      data.sClass = child.pType?.sClass;
-      data.pTransform = this._extractTransform(child);
-      data.pBound = this._extractBound(child);
-      data.pResource = child.pResource;
-      data.nChildren = child.nChildren;
-    } else if (child.sID === 'RMPObject') {
-      data.twRMPObjectIx = child.twRMPObjectIx || child.twObjectIx;
-      data.pName = child.pName;
-      data.bType = child.pType?.bType;
-      data.sClass = child.pType?.sClass;
-      data.pTransform = this._extractTransform(child);
-      data.pBound = this._extractBound(child);
-      data.pResource = child.pResource;
-      data.sAssetUrl = child.sAssetUrl;
-      data.nChildren = child.nChildren;
-    }
-
-    return Object.keys(data).length > 0 ? data : null;
+    if (!child.sID) return null;
+    return this._extractObjectFields(child);
   }
 
   _getClassID(wClass) {
@@ -559,7 +495,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
       const model = this.#m_pLnG.Model_Open(nodeType, id);
       const RECOVERED = model.eSTATE?.RECOVERED ?? 3;
-      console.log('[MVClient] getNode Model_Open returned:', model, 'ReadyState:', model.ReadyState?.(), 'RECOVERED:', RECOVERED);
 
       if (model.ReadyState() >= RECOVERED) {
         const node = this._buildNodeFromModel(model);

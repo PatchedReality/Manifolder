@@ -288,8 +288,12 @@ export class Model {
     const loadPromise = (async () => {
       try {
         const nodeData = await this.client.getNode(node.id, node.type);
-        if (nodeData?.children) {
-          this.setChildren(node, nodeData.children);
+        if (nodeData) {
+          if (nodeData.transform) node.transform = nodeData.transform;
+          if (nodeData.bound) node.bound = nodeData.bound;
+          if (nodeData.children) {
+            this.setChildren(node, nodeData.children);
+          }
         }
       } catch (err) {
         console.error(`Model: Failed to load children for ${key}:`, err);
@@ -319,66 +323,4 @@ export class Model {
     return path;
   }
 
-  getExpandedDescendants(node) {
-    const results = [];
-    if (!node?.children) return results;
-    if (!this.isNodeExpanded(node)) return results;
-
-    const getPosition = (n) => {
-      const pos = n.transform?.position;
-      if (!pos) return [0, 0, 0];
-      return [pos.x ?? 0, pos.y ?? 0, pos.z ?? 0];
-    };
-
-    const getRotation = (n) => {
-      const rot = n.transform?.rotation;
-      if (!rot) return [0, 0, 0, 1];
-      return [rot.x ?? 0, rot.y ?? 0, rot.z ?? 0, rot.w ?? 1];
-    };
-
-    const getScale = (n) => {
-      const scale = n.transform?.scale;
-      if (!scale) return [1, 1, 1];
-      return [scale.x ?? 1, scale.y ?? 1, scale.z ?? 1];
-    };
-
-    const collectExpanded = (children, parentCumulativePos, parentId, parentCumulativeTransform) => {
-      for (const child of children) {
-        const childPos = getPosition(child);
-        const cumulativePos = [
-          parentCumulativePos[0] + childPos[0],
-          parentCumulativePos[1] + childPos[1],
-          parentCumulativePos[2] + childPos[2]
-        ];
-
-        const cumulativeTransform = {
-          Position: cumulativePos,
-          Rotation: getRotation(child),
-          Scale: getScale(child)
-        };
-
-        const localTransform = {
-          Position: childPos,
-          Rotation: getRotation(child),
-          Scale: getScale(child)
-        };
-
-        results.push({ node: child, cumulativeTransform, localTransform, parentId, parentCumulativeTransform });
-
-        if (this.isNodeExpanded(child) && child.children) {
-          const childId = `${child.type}_${child.id}`;
-          collectExpanded(child.children, cumulativePos, childId, cumulativeTransform);
-        }
-      }
-    };
-
-    const rootId = `${node.type}_${node.id}`;
-    const rootTransform = { Position: [0, 0, 0], Rotation: [0, 0, 0, 1], Scale: [1, 1, 1] };
-    collectExpanded(node.children, [0, 0, 0], rootId, rootTransform);
-    return results;
-  }
-
-  findNodeByTypeAndId(type, id) {
-    return this.getNode(type, id);
-  }
 }

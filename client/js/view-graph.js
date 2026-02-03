@@ -6,46 +6,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createInfiniteGrid, updateGridSpacing } from './scene-helpers.js';
-
-const NODE_COLORS = {
-  RMRoot: 0xffd700,
-  RMCObject: 0x4a9eff,
-  RMTObject: 0x50c878,
-  RMPObject: 0xff8c42,
-
-  // Terrestrial types
-  Root: 0xffd700,
-  Water: 0x2266cc,
-  Land: 0x4a9eff,
-  Country: 0x9370db,
-  Territory: 0xff7f50,
-  State: 0x20b2aa,
-  County: 0x87ceeb,
-  City: 0xf08080,
-  Community: 0xdda0dd,
-  Sector: 0x98fb98,
-  Parcel: 0xffaa44,
-
-  // Celestial types
-  Universe: 0xe0e0ff,
-  Supercluster: 0xb8b8ff,
-  GalaxyCluster: 0x9090ff,
-  Galaxy: 0x8080ff,
-  BlackHole: 0x303030,
-  Nebula: 0xff80ff,
-  StarCluster: 0xffffaa,
-  Constellation: 0xaaffff,
-  StarSystem: 0xffdd44,
-  Star: 0xffff00,
-  PlanetSystem: 0x44aaff,
-  Planet: 0x44ff88,
-  Moon: 0xcccccc,
-  Debris: 0x666666,
-  Satellite: 0x88ff88,
-  Transport: 0xff8800,
-  Surface: 0x886644
-};
+import { createStarfield, createInfiniteGrid, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
+import { NODE_COLORS } from '../shared/node-types.js';
 
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
@@ -60,10 +22,13 @@ const SPRING_LENGTH = 50;
 const SPRING_K = 0.02;
 const DAMPING = 0.92;
 const MAX_VELOCITY = 5;
+const SETTLE_THRESHOLD = 0.01;
+const REPULSION_CUTOFF_SQ = 500 * 500;
 
 export class ViewGraph {
-  constructor(containerSelector, model) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
     this.model = model;
     this.scene = null;
     this.camera = null;
@@ -86,6 +51,7 @@ export class ViewGraph {
     this.cameraAnimationId = null;
     this.disposed = false;
     this.initialized = false;
+    this.settled = false;
 
     this._bindModelEvents();
     this.init();
@@ -126,10 +92,6 @@ export class ViewGraph {
         this.addChildren(parentNode, [node]);
       }
     });
-  }
-
-  _getKey(id, type) {
-    return `${type}_${id}`;
   }
 
   _getTextureUrl(nodeData) {
@@ -298,7 +260,7 @@ export class ViewGraph {
   }
 
   zoomToNode(node) {
-    const mesh = this.nodeMeshes.get(this._getKey(node.id, node.type));
+    const mesh = this.nodeMeshes.get(this.model.nodeKey(node));
     if (!mesh) return;
 
     // Calculate camera offset direction (keep current viewing angle)
@@ -362,13 +324,9 @@ export class ViewGraph {
     this.clearScene();
     if (!tree) return;
 
-    // 1. Flatten tree to graph
     this.buildGraph(tree);
-
-    // 2. Create meshes
     this.createVisuals();
-
-    // 3. Initial camera fit (approximate)
+    this.wakePhysics();
     this.controls.reset();
   }
 
@@ -423,7 +381,7 @@ export class ViewGraph {
       mesh.add(label);
 
       this.scene.add(mesh);
-      this.nodeMeshes.set(this._getKey(node.id, node.type), mesh);
+      this.nodeMeshes.set(this.model.nodeKey(node), mesh);
     });
 
     // Links geometry (dynamic)
@@ -446,8 +404,8 @@ export class ViewGraph {
   addChildren(parentNode, children) {
     if (!children || children.length === 0) return;
 
-    const parentKey = this._getKey(parentNode.id, parentNode.type);
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+    const parentKey = this.model.nodeKey(parentNode);
+    const parentIndex = this.graphNodes.findIndex(n => this.model.nodeKey(n) === parentKey);
 
     if (parentIndex === -1) {
       console.warn(`View3D: Parent node ${parentNode.name} not found in graph`);
@@ -457,7 +415,7 @@ export class ViewGraph {
     const parentGraphNode = this.graphNodes[parentIndex];
 
     children.forEach((child) => {
-      const childKey = this._getKey(child.id, child.type);
+      const childKey = this.model.nodeKey(child);
       // Update data reference if node already exists (model may have replaced the object)
       if (this.nodeMeshes.has(childKey)) {
         const existing = this.graphNodes.find(n => n.id === child.id && n.type === child.type);
@@ -509,14 +467,15 @@ export class ViewGraph {
       );
 
       this.scene.add(mesh);
-      this.nodeMeshes.set(this._getKey(child.id, child.type), mesh);
+      this.nodeMeshes.set(this.model.nodeKey(child), mesh);
     });
 
     this.updateLinkLinesGeometry();
+    this.wakePhysics();
   }
 
   removeDescendants(parentNode) {
-    const parentKey = this._getKey(parentNode.id, parentNode.type);
+    const parentKey = this.model.nodeKey(parentNode);
     const indicesToRemove = new Set();
 
     // Build adjacency list for fast lookup
@@ -538,7 +497,7 @@ export class ViewGraph {
        }
     };
 
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+    const parentIndex = this.graphNodes.findIndex(n => this.model.nodeKey(n) === parentKey);
 
     collect(parentIndex);
 
@@ -547,7 +506,7 @@ export class ViewGraph {
     // 1. Remove Meshes
     indicesToRemove.forEach(index => {
         const node = this.graphNodes[index];
-        const key = this._getKey(node.id, node.type);
+        const key = this.model.nodeKey(node);
         const mesh = this.nodeMeshes.get(key);
         if (mesh) {
             this.scene.remove(mesh);
@@ -648,24 +607,29 @@ export class ViewGraph {
     this.graphLinks = [];
   }
 
-  updatePhysics() {
-    if (this.graphNodes.length === 0) return;
+  wakePhysics() {
+    this.settled = false;
+  }
 
-    // Repulsion (simplified O(N^2) for now - optimize if slow)
+  updatePhysics() {
+    if (this.graphNodes.length === 0 || this.settled) return;
+
+    // Repulsion with distance cutoff
     for (let i = 0; i < this.graphNodes.length; i++) {
       const n1 = this.graphNodes[i];
       for (let j = i + 1; j < this.graphNodes.length; j++) {
         const n2 = this.graphNodes[j];
-        
+
         const dx = n1.x - n2.x;
         const dy = n1.y - n2.y;
         const dz = n1.z - n2.z;
-        const distSq = dx*dx + dy*dy + dz*dz + 0.1; // Avoid div/0
+        const distSq = dx*dx + dy*dy + dz*dz + 0.1;
+
+        if (distSq > REPULSION_CUTOFF_SQ) continue;
+
         const dist = Math.sqrt(distSq);
-        
-        // F = k / d^2
         const force = REPULSION / distSq;
-        
+
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         const fz = (dz / dist) * force;
@@ -712,9 +676,9 @@ export class ViewGraph {
       n.vz -= n.z * 0.005;
     }
 
-    // Integrate
+    // Integrate and check for settling
+    let maxVSq = 0;
     for (const n of this.graphNodes) {
-      // Limit velocity
       const vSq = n.vx*n.vx + n.vy*n.vy + n.vz*n.vz;
       if (vSq > MAX_VELOCITY * MAX_VELOCITY) {
         const scale = MAX_VELOCITY / Math.sqrt(vSq);
@@ -728,6 +692,13 @@ export class ViewGraph {
       n.vx *= DAMPING;
       n.vy *= DAMPING;
       n.vz *= DAMPING;
+
+      const newVSq = n.vx*n.vx + n.vy*n.vy + n.vz*n.vz;
+      if (newVSq > maxVSq) maxVSq = newVSq;
+    }
+
+    if (maxVSq < SETTLE_THRESHOLD * SETTLE_THRESHOLD) {
+      this.settled = true;
     }
   }
 
@@ -739,7 +710,7 @@ export class ViewGraph {
 
     // Update node positions
     this.graphNodes.forEach(node => {
-      const mesh = this.nodeMeshes.get(this._getKey(node.id, node.type));
+      const mesh = this.nodeMeshes.get(this.model.nodeKey(node));
       if (mesh) {
         mesh.position.set(node.x, node.y, node.z);
         if (node.y < minY) minY = node.y;
@@ -783,8 +754,12 @@ export class ViewGraph {
 
     this.animationFrameId = requestAnimationFrame(() => this.animate());
 
+    if (!this.container.offsetHeight) return;
+
     this.updatePhysics();
-    this.updateVisuals();
+    if (!this.settled) {
+      this.updateVisuals();
+    }
     this.controls.update();
     this.starfield.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
@@ -811,7 +786,7 @@ export class ViewGraph {
   }
 
   selectNode(node) {
-    const key = this._getKey(node.id, node.type);
+    const key = this.model.nodeKey(node);
 
     // Remove previous highlight
     if (this.highlightMesh) {
@@ -846,64 +821,12 @@ export class ViewGraph {
 
   createLabel(node) {
     const text = node.name || node.type || 'Unknown';
+    const { sprite, aspect } = createLabelSprite(text);
 
-    // High-resolution for sharp text
-    const fontSize = 64; 
-    const font = `bold ${fontSize}px Arial`;
-    
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.font = font;
-    
-    // Measure text
-    const metrics = context.measureText(text);
-    const textWidth = metrics.width;
-    const textHeight = fontSize; // Basic height approximation
-    
-    // Canvas size with padding
-    const padding = 20;
-    canvas.width = textWidth + padding * 2;
-    canvas.height = textHeight + padding * 2;
-    
-    // Draw
-    context.font = font;
-    context.fillStyle = 'white';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    
-    // Shadow/Outline
-    context.strokeStyle = 'black';
-    context.lineWidth = 4;
-    context.lineJoin = 'round';
-    
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
-    
-    context.strokeText(text, cx, cy);
-    context.fillText(text, cx, cy);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false; // Mipmaps can cause blur on sprites sometimes
-    
-    const spriteMaterial = new THREE.SpriteMaterial({ 
-        map: texture, 
-        depthTest: true, 
-        depthWrite: false,
-        sizeAttenuation: true 
-    });
-    
-    const sprite = new THREE.Sprite(spriteMaterial);
-    
-    // Fixed world height for the label (e.g., 3 units high)
-    const labelWorldHeight = 3; 
-    const aspectRatio = canvas.width / canvas.height;
-    
-    sprite.scale.set(labelWorldHeight * aspectRatio, labelWorldHeight, 1);
-    sprite.center.set(0.5, 0); 
+    const labelWorldHeight = 3;
+    sprite.scale.set(labelWorldHeight * aspect, labelWorldHeight, 1);
+    sprite.center.set(0.5, 0);
     sprite.position.y = DEFAULT_NODE_RADIUS + 0.5;
-    sprite.renderOrder = 1;
 
     return sprite;
   }

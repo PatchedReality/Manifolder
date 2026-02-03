@@ -23,7 +23,7 @@ class App {
     this.model = new Model(this.client);
     this.layout = new LayoutManager(this.stateManager);
     this.hierarchy = new HierarchyPanel('#hierarchy-tree', this.model);
-    this.viewGraph = new ViewGraph('#viewport-graph', this.model);
+    this.viewGraph = new ViewGraph('#viewport-graph', this.stateManager, this.model);
     this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager, this.model);
     this.viewResource = new ViewResource('#viewport-resource', this.stateManager, this.model);
     this.inspector = new InspectorPanel('#inspector-content', this.stateManager, this.model);
@@ -388,7 +388,7 @@ class App {
         if (searchId !== currentSearchId) return;
 
         // Always apply filter - with no results, this hides everything
-        await this.hierarchy.revealSearchResults(mergedResults, (node) => this.loadNodeChildren(node));
+        await this.hierarchy.revealSearchResults(mergedResults, (node) => this.model.loadNodeChildren(node));
       }, 300);
     });
 
@@ -611,73 +611,19 @@ class App {
       this.layout.setStatus(msg, 'loading');
     });
 
-    this.model.on('nodeInserted', ({ node, parentNode }) => {
-      this._addNodeResourceIfVisible(node, parentNode);
+    this.model.on('nodeInserted', () => {
+      this._refreshResourceViewIfNeeded();
     });
 
     this.model.on('nodeUpdated', (existing, previousResourceUrl) => {
       if (existing.resourceUrl && existing.resourceUrl !== previousResourceUrl) {
-        this._addNodeResourceIfVisible(existing, existing._parent);
+        this._refreshResourceViewIfNeeded();
       }
     });
 
     this.model.on('nodeDeleted', ({ id, type }) => {
       // View cleanup will be added in later phases
     });
-  }
-
-  _addNodeResourceIfVisible(node, parentNode) {
-    if (!node?.resourceUrl) return;
-
-    const selectedNode = this.model.getSelectedNode();
-    if (!selectedNode) return;
-
-    // Check if the inserted node is a descendant of the selected node
-    const isSelectedOrDescendant =
-      (node.type === selectedNode.type && node.id === selectedNode.id) ||
-      (parentNode && this._isDescendantOfSelected(parentNode, selectedNode));
-
-    if (!isSelectedOrDescendant) return;
-
-    // Build transform info relative to parent
-    const parentId = parentNode ? `${parentNode.type}_${parentNode.id}` : null;
-    const childPos = this.hierarchy.getNodePosition(node);
-    const parentPos = parentNode ? this.hierarchy.getNodePosition(parentNode) : [0, 0, 0];
-    const cumulativePos = [
-      parentPos[0] + childPos[0],
-      parentPos[1] + childPos[1],
-      parentPos[2] + childPos[2]
-    ];
-
-    const cumulativeTransform = {
-      Position: cumulativePos,
-      Rotation: this.hierarchy.getNodeRotation(node),
-      Scale: this.hierarchy.getNodeScale(node)
-    };
-
-    const localTransform = {
-      Position: childPos,
-      Rotation: this.hierarchy.getNodeRotation(node),
-      Scale: this.hierarchy.getNodeScale(node)
-    };
-
-    const parentCumulativeTransform = parentNode ? {
-      Position: parentPos,
-      Rotation: this.hierarchy.getNodeRotation(parentNode),
-      Scale: this.hierarchy.getNodeScale(parentNode)
-    } : null;
-
-    this.viewResource.addNodeResource(node, cumulativeTransform, localTransform, parentId, parentCumulativeTransform);
-  }
-
-  _isDescendantOfSelected(node, selectedNode) {
-    if (node.type === selectedNode.type && node.id === selectedNode.id) return true;
-    if (!selectedNode.children) return false;
-    for (const child of selectedNode.children) {
-      if (child.type === node.type && child.id === node.id) return true;
-      if (this._isDescendantOfSelected(node, child)) return true;
-    }
-    return false;
   }
 
   _debouncedRefreshResourceView() {
@@ -690,8 +636,7 @@ class App {
   _refreshResourceViewIfNeeded() {
     const selectedNode = this.model.getSelectedNode();
     if (selectedNode) {
-      const expandedDescendants = this.model.getExpandedDescendants(selectedNode);
-      this.viewResource.setNode(selectedNode, expandedDescendants);
+      this.viewResource.setNode(selectedNode);
     }
   }
 
@@ -775,7 +720,7 @@ class App {
       // Load children if not already loaded
       if (!currentNode.children || currentNode.children.length === 0) {
         try {
-          await this.loadNodeChildren(currentNode);
+          await this.model.loadNodeChildren(currentNode);
           // Small delay to let UI update
           await new Promise(r => setTimeout(r, 50));
         } catch (err) {
@@ -800,7 +745,7 @@ class App {
       currentNode = nextNode;
     }
 
-    const canonicalNode = this.model.findNodeByTypeAndId(currentNode.type, currentNode.id) || currentNode;
+    const canonicalNode = this.model.getNode(currentNode.type, currentNode.id) || currentNode;
 
     // Expand tree to show the node, then select it
     this.hierarchy.expandToNode(canonicalNode);
@@ -813,9 +758,6 @@ class App {
     }, 100);
   }
 
-  async loadNodeChildren(node) {
-    return this.model.loadNodeChildren(node);
-  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
