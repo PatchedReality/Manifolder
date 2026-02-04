@@ -103,6 +103,14 @@ class App {
         });
       }
     });
+
+    this.model.on('liveUpdateChanged', () => {
+      if (!this._restoringState) {
+        this.stateManager.updateSection('hierarchy', {
+          liveUpdateNodeIds: this.model.getLiveUpdateNodeKeys()
+        });
+      }
+    });
   }
 
   setupResetButton() {
@@ -666,6 +674,9 @@ class App {
           if (hasSavedExpanded) {
             this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
           }
+          if (hierarchyState.liveUpdateNodeIds?.length > 0) {
+            this.model.enableLiveUpdatesByKeys(hierarchyState.liveUpdateNodeIds);
+          }
 
           const navState = this.stateManager.getSection('navigation');
           if (navState.selectedNodePath?.length > 0) {
@@ -704,7 +715,8 @@ class App {
       }
 
       this.stateManager.updateSection('hierarchy', {
-        expandedNodeIds: this.model.getExpandedNodeKeys()
+        expandedNodeIds: this.model.getExpandedNodeKeys(),
+        liveUpdateNodeIds: this.model.getLiveUpdateNodeKeys()
       });
     };
 

@@ -56,6 +56,22 @@ export class HierarchyPanel {
       this.markNodeLoaded(parentNode);
     });
 
+    this.model.on('liveUpdateChanged', (node, enabled) => {
+      const nodeKey = this._nodeKey(node);
+      const element = this.nodeElements.get(nodeKey);
+      if (element) {
+        const content = element.querySelector(':scope > .tree-node-content');
+        if (content) {
+          content.classList.toggle('live-updates', enabled);
+        }
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          this._syncLiveUpdateClass(child);
+        }
+      }
+    });
+
     this.model.on('nodeDeleted', ({ node, parentNode }) => {
       const nodeKey = this._nodeKey(node);
       const element = this.nodeElements.get(nodeKey);
@@ -207,6 +223,22 @@ export class HierarchyPanel {
       }
     }
     this.nodeElements.delete(nodeKey);
+  }
+
+  _syncLiveUpdateClass(node) {
+    const key = this._nodeKey(node);
+    const element = this.nodeElements.get(key);
+    if (element) {
+      const content = element.querySelector(':scope > .tree-node-content');
+      if (content) {
+        content.classList.toggle('live-updates', this.model.isLiveUpdateEnabled(node));
+      }
+    }
+    if (node.children) {
+      for (const child of node.children) {
+        this._syncLiveUpdateClass(child);
+      }
+    }
   }
 
   createNodeElement(nodeData) {
@@ -761,10 +793,33 @@ export class HierarchyPanel {
       this.hideContextMenu();
     });
 
+    const nodeData = this._getNodeData(nodeKey);
+    const isLive = nodeData && this.model.isLiveUpdateEnabled(nodeData);
+
+    const liveUpdateSeparator = document.createElement('div');
+    liveUpdateSeparator.className = 'tree-context-menu-separator';
+
+    const liveUpdateBtn = document.createElement('button');
+    liveUpdateBtn.className = 'tree-context-menu-item';
+    liveUpdateBtn.textContent = isLive ? 'Disable Live Updates' : 'Enable Live Updates';
+    liveUpdateBtn.addEventListener('click', () => {
+      const data = this._getNodeData(nodeKey);
+      if (data) {
+        if (this.model.isLiveUpdateEnabled(data)) {
+          this.model.disableLiveUpdates(data);
+        } else {
+          this.model.enableLiveUpdates(data);
+        }
+      }
+      this.hideContextMenu();
+    });
+
     menu.appendChild(expandChildrenBtn);
     menu.appendChild(expandAllBtn);
     menu.appendChild(separator);
     menu.appendChild(collapseAllBtn);
+    menu.appendChild(liveUpdateSeparator);
+    menu.appendChild(liveUpdateBtn);
 
     document.body.appendChild(menu);
 

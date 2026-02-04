@@ -212,25 +212,47 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
             entry.IsReady = () => true;
             this._normalizeStubEntry(entry);
             children.push(entry);
-
-            // Attach to MVMF model for live update notifications
-            const mvmfModel = this.#m_pLnG.Model_Open(typeName, entry[field]);
-            this._safeAttach(mvmfModel);
-
-            if (!mvmfModel.IsReady()) {
-              this.#pendingModelOpen.set(`${typeName}_${entry[field]}`, {
-                child: mvmfModel,
-                parentType: model.sID,
-                parentId: model.twObjectIx
-              });
-            }
-
             break;
           }
         }
       }
     }
     return children;
+  }
+
+  enableLiveUpdates({ sID, twObjectIx }) {
+    if (!this.#m_pLnG) {
+      this.#pendingModelOpen.set(`${sID}_${twObjectIx}`, {
+        child: null,
+        parentType: sID,
+        parentId: twObjectIx
+      });
+      return;
+    }
+    const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
+    this._safeAttach(mvmfModel);
+    if (!mvmfModel.IsReady()) {
+      this.#pendingModelOpen.set(`${sID}_${twObjectIx}`, {
+        child: mvmfModel,
+        parentType: sID,
+        parentId: twObjectIx
+      });
+    }
+  }
+
+  disableLiveUpdates({ sID, twObjectIx }) {
+    const key = `${sID}_${twObjectIx}`;
+    this.#pendingModelOpen.delete(key);
+    if (this.#m_pLnG) {
+      const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
+      this._safeDetach(mvmfModel);
+    }
+  }
+
+  isLiveUpdatesEnabled(sID, twObjectIx) {
+    if (!this.#m_pLnG) return false;
+    const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
+    return this.#attachedModels.has(mvmfModel);
   }
 
   _normalizeStubEntry(entry) {

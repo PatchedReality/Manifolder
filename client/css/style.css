@@ -922,6 +922,16 @@ body {
   background: var(--accent-dim);
 }
 
+.tree-node-content.live-updates::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-connected);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .tree-loading {
   color: var(--text-muted);
   font-style: italic;
