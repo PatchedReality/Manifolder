@@ -1,9 +1,14 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * InspectorPanel - Displays details about the selected map node
  * Shows basic info, transform, bounds, and raw JSON data
  */
 
-import { getResourceUrl } from './node-helpers.js';
+import { NodeFactory } from './node-factory.js';
+import { calculateLatLong, formatLatLong } from './geo-utils.js';
 
 const TYPE_COLORS = {
   RMRoot: 'var(--node-rmroot)',
@@ -43,12 +48,44 @@ const TYPE_COLORS = {
 };
 
 export class InspectorPanel {
-  constructor(containerSelector) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
+    this.model = model;
     this.currentNode = null;
     this.showRawJson = false;
     this.showResource = false;
-    this.resourceCache = new Map();
+    this.restoreState();
+
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.showNode(node);
+      }
+    });
+
+    this.model.on('dataChanged', () => {
+      const node = this.model.getSelectedNode();
+      if (node) this.showNode(node);
+    });
+
+    this.model.on('treeChanged', () => {
+      this.clear();
+    });
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+    this.stateManager.updateSection('inspector', {
+      showRawJson: this.showRawJson,
+      showResource: this.showResource
+    });
+  }
+
+  restoreState() {
+    if (!this.stateManager) return;
+    const state = this.stateManager.getSection('inspector');
+    this.showRawJson = state.showRawJson || false;
+    this.showResource = state.showResource || false;
   }
 
   showNode(nodeData) {
@@ -60,6 +97,7 @@ export class InspectorPanel {
     this.container.innerHTML = '';
 
     this._renderBasicInfo(nodeData);
+    this._renderLocation(nodeData);
     this._renderTransform(nodeData);
     this._renderBounds(nodeData);
     this._renderRawJson(nodeData);
@@ -72,7 +110,6 @@ export class InspectorPanel {
     }
 
     this.currentNode = null;
-    this.showRawJson = false;
     this.container.innerHTML = '<div class="inspector-empty">Select an object to inspect</div>';
   }
 
@@ -96,6 +133,23 @@ export class InspectorPanel {
 
     this._addRow(section, 'ID', node.id !== undefined ? String(node.id) : '(none)');
 
+    this.container.appendChild(section);
+  }
+
+  _renderLocation(node) {
+    const planetContext = this.model.getPlanetContext(node);
+    if (!node._worldPos || !planetContext) return;
+
+    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    if (!coords) return;
+
+    const section = this._createSection('Location');
+
+    const valueContainer = document.createElement('span');
+    valueContainer.className = 'inspector-value inspector-location-value';
+    valueContainer.innerHTML = `${formatLatLong(coords.latitude, coords.longitude)}<span class="inspector-planet-name"> (${planetContext.planetName})</span>`;
+
+    this._addRowWithElement(section, 'Lat/Long', valueContainer);
     this.container.appendChild(section);
   }
 
@@ -158,11 +212,13 @@ export class InspectorPanel {
     this.container.appendChild(section);
   }
 
-  _renderRawJson(node) {
-    const rawDiv = document.createElement('div');
-    rawDiv.className = 'inspector-raw';
-    if (this.showRawJson) {
-      rawDiv.classList.add('expanded');
+  _createCollapsibleSection(options) {
+    const { title, isExpanded, stateKey, getCopyText, extraElements = [] } = options;
+
+    const container = document.createElement('div');
+    container.className = 'inspector-raw';
+    if (isExpanded) {
+      container.classList.add('expanded');
     }
 
     const header = document.createElement('div');
@@ -170,146 +226,196 @@ export class InspectorPanel {
 
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'inspector-toggle-btn';
-    toggleBtn.innerHTML = this.showRawJson ? '▼' : '▶';
-    toggleBtn.title = this.showRawJson ? 'Hide JSON' : 'Show JSON';
+    toggleBtn.innerHTML = isExpanded ? '▼' : '▶';
+    toggleBtn.title = isExpanded ? `Hide ${title}` : `Show ${title}`;
 
-    const title = document.createElement('span');
-    title.textContent = 'Raw JSON';
-    title.className = 'inspector-raw-title';
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = title;
+    titleSpan.className = 'inspector-raw-title';
 
     const copyBtn = document.createElement('button');
     copyBtn.className = 'inspector-copy-btn';
     copyBtn.title = 'Copy to clipboard';
     copyBtn.innerHTML = '&#128203;';
 
-    const jsonText = JSON.stringify(node, null, 2);
-
     const content = document.createElement('pre');
     content.className = 'inspector-raw-content';
-    content.textContent = jsonText;
-    content.style.display = this.showRawJson ? 'block' : 'none';
+    content.style.display = isExpanded ? 'block' : 'none';
 
-    const toggleJson = () => {
-      this.showRawJson = !this.showRawJson;
-      content.style.display = this.showRawJson ? 'block' : 'none';
-      toggleBtn.innerHTML = this.showRawJson ? '▼' : '▶';
-      toggleBtn.title = this.showRawJson ? 'Hide JSON' : 'Show JSON';
-      rawDiv.classList.toggle('expanded', this.showRawJson);
+    const toggle = () => {
+      this[stateKey] = !this[stateKey];
+      content.style.display = this[stateKey] ? 'block' : 'none';
+      toggleBtn.innerHTML = this[stateKey] ? '▼' : '▶';
+      toggleBtn.title = this[stateKey] ? `Hide ${title}` : `Show ${title}`;
+      container.classList.toggle('expanded', this[stateKey]);
+      for (const el of extraElements) {
+        el.style.display = this[stateKey] ? 'block' : 'none';
+      }
+      this.saveState();
     };
 
-    toggleBtn.addEventListener('click', toggleJson);
-    title.addEventListener('click', toggleJson);
-    title.style.cursor = 'pointer';
+    toggleBtn.addEventListener('click', toggle);
+    titleSpan.addEventListener('click', toggle);
+    titleSpan.style.cursor = 'pointer';
 
     copyBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
-        await navigator.clipboard.writeText(jsonText);
+        await navigator.clipboard.writeText(getCopyText());
         copyBtn.innerHTML = '&#10003;';
         setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
       } catch (err) {
-        console.error('Failed to copy:', err);
+        console.error('Failed to copy to clipboard:', err);
+        copyBtn.innerHTML = '!';
+        setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
       }
     });
 
     header.appendChild(toggleBtn);
-    header.appendChild(title);
+    header.appendChild(titleSpan);
     header.appendChild(copyBtn);
+    container.appendChild(header);
+    container.appendChild(content);
 
-    rawDiv.appendChild(header);
-    rawDiv.appendChild(content);
-    this.container.appendChild(rawDiv);
+    return { container, content };
   }
 
+  _renderRawJson(node) {
+    const jsonText = JSON.stringify(node.rawData || node, null, 2);
+    const linkedHtml = this._linkifyRawJson(jsonText, node);
+
+    const { container, content } = this._createCollapsibleSection({
+      title: 'Raw JSON',
+      isExpanded: this.showRawJson,
+      stateKey: 'showRawJson',
+      getCopyText: () => jsonText
+    });
+
+    content.innerHTML = linkedHtml;
+    this.container.appendChild(container);
+  }
 
   _renderResource(node) {
-    const resourceUrl = getResourceUrl(node);
-    if (!resourceUrl) {
+    if (!node.resourceUrl) {
       return;
     }
 
-    const resourceDiv = document.createElement('div');
-    resourceDiv.className = 'inspector-raw';
-    if (this.showResource) {
-      resourceDiv.classList.add('expanded');
-    }
+    const urlHeader = document.createElement('div');
+    urlHeader.className = 'inspector-resource-url';
+    const urlLink = document.createElement('a');
+    urlLink.href = node.resourceUrl;
+    urlLink.target = '_blank';
+    urlLink.textContent = node.resourceUrl;
+    urlHeader.appendChild(urlLink);
+    urlHeader.style.display = this.showResource ? 'block' : 'none';
 
-    const header = document.createElement('div');
-    header.className = 'inspector-raw-header';
-
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'inspector-toggle-btn';
-    toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
-    toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
-
-    const title = document.createElement('span');
-    title.textContent = 'Resource';
-    title.className = 'inspector-raw-title';
-
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'inspector-copy-btn';
-    copyBtn.title = 'Copy to clipboard';
-    copyBtn.innerHTML = '&#128203;';
-
-    const content = document.createElement('pre');
-    content.className = 'inspector-raw-content';
-    content.textContent = 'Loading...';
-    content.style.display = this.showResource ? 'block' : 'none';
-
-    const toggleResource = () => {
-      this.showResource = !this.showResource;
-      content.style.display = this.showResource ? 'block' : 'none';
-      toggleBtn.innerHTML = this.showResource ? '▼' : '▶';
-      toggleBtn.title = this.showResource ? 'Hide Resource' : 'Show Resource';
-      resourceDiv.classList.toggle('expanded', this.showResource);
-    };
-
-    toggleBtn.addEventListener('click', toggleResource);
-    title.addEventListener('click', toggleResource);
-    title.style.cursor = 'pointer';
-
-    copyBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(content.textContent);
-        copyBtn.innerHTML = '&#10003;';
-        setTimeout(() => { copyBtn.innerHTML = '&#128203;'; }, 1500);
-      } catch (err) {
-        console.error('Failed to copy:', err);
-      }
+    const { container, content } = this._createCollapsibleSection({
+      title: 'Resource',
+      isExpanded: this.showResource,
+      stateKey: 'showResource',
+      getCopyText: () => content.textContent,
+      extraElements: [urlHeader]
     });
 
-    header.appendChild(toggleBtn);
-    header.appendChild(title);
-    header.appendChild(copyBtn);
+    content.textContent = 'Loading...';
+    container.insertBefore(urlHeader, content);
+    this.container.appendChild(container);
 
-    resourceDiv.appendChild(header);
-    resourceDiv.appendChild(content);
-    this.container.appendChild(resourceDiv);
-
-    // Fetch the resource JSON
-    this._loadResource(resourceUrl, content);
+    this._loadResource(node, content);
   }
 
-  async _loadResource(url, contentElement) {
-    // Check cache first
-    if (this.resourceCache.has(url)) {
-      contentElement.textContent = this.resourceCache.get(url);
-      return;
-    }
-
+  async _loadResource(node, contentElement) {
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      const data = await NodeFactory.getResourceData(node);
+      if (!data) {
+        contentElement.textContent = 'No resource metadata';
+        return;
       }
-      const json = await response.json();
-      const jsonText = JSON.stringify(json, null, 2);
-      this.resourceCache.set(url, jsonText);
-      contentElement.textContent = jsonText;
+      contentElement.innerHTML = this._formatResourceJson(data);
     } catch (err) {
       contentElement.textContent = `Failed to load: ${err.message}`;
     }
+  }
+
+  _formatResourceJson(data, indent = 0) {
+    const pad = '  '.repeat(indent);
+    const pad1 = '  '.repeat(indent + 1);
+
+    if (data === null) return 'null';
+    if (typeof data === 'boolean') return data.toString();
+    if (typeof data === 'number') return data.toString();
+    if (typeof data === 'string') {
+      const escaped = data.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `"${escaped}"`;
+    }
+
+    if (Array.isArray(data)) {
+      if (data.length === 0) return '[]';
+      const items = data.map(item => pad1 + this._formatResourceJson(item, indent + 1));
+      return `[\n${items.join(',\n')}\n${pad}]`;
+    }
+
+    if (typeof data === 'object') {
+      const keys = Object.keys(data).filter(k => !k.startsWith('_'));
+      if (keys.length === 0) return '{}';
+
+      const lines = keys.map(key => {
+        const value = data[key];
+        const escaped = key.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        let formattedValue;
+
+        // Check for corresponding _url property
+        const urlKey = `_${key}Url`;
+        const url = data[urlKey] || data._url;
+
+        if (url && typeof value === 'string') {
+          const escapedValue = value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          formattedValue = `"<a href="${url}" target="_blank" class="inspector-file-link">${escapedValue}</a>"`;
+        } else {
+          formattedValue = this._formatResourceJson(value, indent + 1);
+        }
+
+        return `${pad1}"${escaped}": ${formattedValue}`;
+      });
+
+      return `{\n${lines.join(',\n')}\n${pad}}`;
+    }
+
+    return String(data);
+  }
+
+  _linkifyRawJson(jsonText, node) {
+    let html = jsonText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const pResource = node?.rawData?.pResource || node?.properties?.pResource;
+
+    if (node?.resourceUrl) {
+      // Link sName if it has a value and contributed to resourceUrl
+      if (pResource?.sName) {
+        html = html.replace(
+          `"sName": "${pResource.sName}"`,
+          `"sName": "<a href="${node.resourceUrl}" target="_blank" class="inspector-file-link">${pResource.sName}</a>"`
+        );
+      }
+      // Link sReference if it's not action:// (those use sName for the actual file)
+      if (pResource?.sReference && !pResource.sReference.startsWith('action://')) {
+        html = html.replace(
+          `"sReference": "${pResource.sReference}"`,
+          `"sReference": "<a href="${node.resourceUrl}" target="_blank" class="inspector-file-link">${pResource.sReference}</a>"`
+        );
+      }
+    } else if (pResource?.sReference?.startsWith('http')) {
+      // Link sReference if it's already a full URL (textures, images, etc.)
+      html = html.replace(
+        `"sReference": "${pResource.sReference}"`,
+        `"sReference": "<a href="${pResource.sReference}" target="_blank" class="inspector-file-link">${pResource.sReference}</a>"`
+      );
+    }
+
+    return html;
   }
 
   _createSection(title) {
@@ -354,27 +460,23 @@ export class InspectorPanel {
     section.appendChild(row);
   }
 
-  _createVector3(vec) {
+  _createVectorDisplay(vec, components) {
     const div = document.createElement('div');
     div.className = 'inspector-vector';
 
-    div.appendChild(this._createVectorComponent('x', vec.x));
-    div.appendChild(this._createVectorComponent('y', vec.y));
-    div.appendChild(this._createVectorComponent('z', vec.z));
+    for (const axis of components) {
+      div.appendChild(this._createVectorComponent(axis, vec[axis]));
+    }
 
     return div;
   }
 
+  _createVector3(vec) {
+    return this._createVectorDisplay(vec, 'xyz');
+  }
+
   _createVector4(vec) {
-    const div = document.createElement('div');
-    div.className = 'inspector-vector';
-
-    div.appendChild(this._createVectorComponent('x', vec.x));
-    div.appendChild(this._createVectorComponent('y', vec.y));
-    div.appendChild(this._createVectorComponent('z', vec.z));
-    div.appendChild(this._createVectorComponent('w', vec.w));
-
-    return div;
+    return this._createVectorDisplay(vec, 'xyzw');
   }
 
   _createVectorComponent(axis, value) {

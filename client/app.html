@@ -1,0 +1,171 @@
+<!--
+  Copyright (c) 2026 Patched Reality, Inc.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manifolder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=1770138119">
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <div class="toolbar-section">
+      <label class="toolbar-label">URL:</label>
+      <div class="url-combo">
+        <input type="text" id="url-input" value="https://cdn2.rp1.com/config/enter.msf" placeholder="Enter MSF URL...">
+        <button id="url-dropdown-btn" type="button" title="Recent URLs">▼</button>
+        <div id="url-dropdown" class="url-dropdown hidden">
+          <div class="url-dropdown-list"></div>
+        </div>
+      </div>
+      <button id="load-btn">Load</button>
+      <button id="reset-view-btn" title="Reset all view settings to defaults">Reset View</button>
+      <button id="follow-link-btn" class="hidden">Follow Link</button>
+    </div>
+    <div class="toolbar-section bookmark-section">
+      <a id="rp1-go-btn" class="hidden" target="rp1" title="Open location in RP1">Go To→</a>
+      <button id="share-btn" title="Copy shareable link to clipboard">Share ↗</button>
+      <button id="add-bookmark-btn" title="Bookmark current view">★</button>
+      <div class="bookmark-dropdown-wrapper">
+        <button id="bookmarks-btn" title="Bookmarks">Bookmarks ▼</button>
+        <div id="bookmark-dropdown" class="bookmark-dropdown hidden">
+          <div class="bookmark-list"></div>
+          <div class="bookmark-empty">No bookmarks saved</div>
+        </div>
+      </div>
+    </div>
+    <div id="share-toast" class="share-toast hidden">Link copied to clipboard</div>
+  </div>
+
+  <!-- Main panels container -->
+  <div id="main-container">
+    <!-- Restore buttons for minimized panels -->
+    <button id="restore-hierarchy" class="panel-restore hidden" title="Show Hierarchy">
+      <span class="panel-icon">╠</span>
+    </button>
+
+    <!-- Hierarchy Panel -->
+    <div id="hierarchy-panel" class="panel">
+      <div class="panel-header">
+        <span class="panel-title"><span class="panel-icon">╠</span> Hierarchy</span>
+        <button class="panel-minimize" data-panel="hierarchy" title="Minimize">−</button>
+      </div>
+      <div class="hierarchy-search-bar">
+        <div class="hierarchy-search-bar-inner">
+          <input type="text" id="hierarchy-search" class="search-input" placeholder="Search...">
+          <button id="hierarchy-search-clear" class="search-clear" title="Clear (Esc)">×</button>
+        </div>
+      </div>
+      <div class="panel-content">
+        <div id="hierarchy-tree"></div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" data-resize="hierarchy"></div>
+
+    <!-- Viewport Panel -->
+    <div id="viewport-panel" class="panel">
+      <div class="panel-header">
+        <span>Viewport</span>
+        <div class="viewport-controls">
+          <div class="view-toggles">
+            <button class="view-toggle active" data-view="graph">Graph</button>
+            <button class="view-toggle active" data-view="bounds">Bounds</button>
+            <button class="view-toggle" data-view="resource">Resource</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel-content viewport-content split-view">
+        <div id="viewport-graph" class="viewport"></div>
+        <div id="viewport-bounds" class="viewport">
+          <div class="bounds-toolbar">
+            <div class="timescale-control">
+              <label>Time: <span id="timescale-label">1 day/sec</span></label>
+              <input type="range" id="timescale-slider" min="0" max="7" value="4" step="1">
+            </div>
+            <div class="type-filter">
+              <button id="type-filter-btn" class="filter-btn">Filter Types ▼</button>
+              <div id="type-filter-dropdown" class="filter-dropdown hidden"></div>
+            </div>
+          </div>
+        </div>
+        <div id="viewport-resource" class="viewport" style="display: none;">
+          <div class="resource-toolbar-left">
+            <div class="time-control">
+              <label>Time of Day</label>
+              <input type="range" id="time-slider" min="0" max="24" step="0.0167" value="12">
+              <input type="text" id="time-hour" maxlength="2" value="12"><span class="time-separator">:</span><input type="text" id="time-minute" maxlength="2" value="00">
+            </div>
+          </div>
+          <div class="resource-toolbar">
+            <label class="bounds-toggle-label">
+              <input type="checkbox" id="resource-bounds-toggle">
+              Show Bounds
+            </label>
+          </div>
+          <div class="resource-status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="resize-handle" data-resize="inspector"></div>
+
+    <!-- Restore button for inspector -->
+    <button id="restore-inspector" class="panel-restore hidden" title="Show Inspector">
+      <span class="panel-icon">ℹ</span>
+    </button>
+
+    <!-- Inspector Panel -->
+    <div id="inspector-panel" class="panel">
+      <div class="panel-header">
+        <span class="panel-title"><span class="panel-icon">ℹ</span> Inspector</span>
+        <button class="panel-minimize" data-panel="inspector" title="Minimize">−</button>
+      </div>
+      <div class="panel-content">
+        <div id="inspector-content">
+          <div class="inspector-empty">Select an object to inspect</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-message">Disconnected</span>
+    <span id="search-status"></span>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "hls.js": "https://unpkg.com/hls.js@1.5.7/dist/hls.mjs"
+    }
+  }
+  </script>
+  <!-- Compression library for URL sharing -->
+  <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+
+  <!-- lib/mvmf libraries (order matters) -->
+  <script src="lib/mvmf/MVMF.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVSB.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVXP.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVRest.js?v=1770138119"></script>
+  <script src="lib/mvmf/socket.io.min.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVIO.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVRP.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVRP_Dev.js?v=1770138119"></script>
+  <script src="lib/mvmf/MVRP_Map.js?v=1770138119"></script>
+
+  <script type="module" src="dist/app.bundle.js?v=1770138119"></script>
+</body>
+</html>

@@ -1,37 +1,417 @@
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
 import { LayoutManager } from './layout.js';
 import { HierarchyPanel } from './hierarchy-panel.js';
 import { ViewGraph } from './view-graph.js';
 import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
-import { RP1Client } from './rp1-client.js';
-import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '/shared/node-types.js';
+import { MVClient } from './mv-client.js';
+import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
+import { UIStateManager } from './ui-state-manager.js';
+import { BookmarkManager } from './bookmark-manager.js';
+import { calculateLatLong } from './geo-utils.js';
+import { Model } from './model.js';
 
 class App {
   constructor() {
-    this.layout = new LayoutManager();
-    this.hierarchy = new HierarchyPanel('#hierarchy-tree');
-    this.viewGraph = new ViewGraph('#viewport-graph');
-    this.viewBounds = new ViewBounds('#viewport-bounds');
-    this.viewResource = new ViewResource('#viewport-resource');
-    this.inspector = new InspectorPanel('#inspector-content');
-    this.client = new RP1Client();
+    this.stateManager = new UIStateManager();
+    this.client = new MVClient();
+    this.model = new Model(this.client);
+    this.layout = new LayoutManager(this.stateManager);
+    this.hierarchy = new HierarchyPanel('#hierarchy-tree', this.model);
+    this.viewGraph = new ViewGraph('#viewport-graph', this.stateManager, this.model);
+    this.viewBounds = new ViewBounds('#viewport-bounds', this.stateManager, this.model);
+    this.viewResource = new ViewResource('#viewport-resource', this.stateManager, this.model);
+    this.inspector = new InspectorPanel('#inspector-content', this.stateManager, this.model);
+    this.bookmarkManager = new BookmarkManager(this.stateManager);
 
-    this.tree = null;
+    this.rp1GoBtn = document.getElementById('rp1-go-btn');
     this.init();
   }
 
+  updateRP1GoButton(node) {
+    if (!this.rp1GoBtn) return;
+
+    const planetContext = this.model.getPlanetContext(node);
+    if (!node?._worldPos || !planetContext?.celestialId) {
+      this.rp1GoBtn.classList.add('hidden');
+      return;
+    }
+
+    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    if (!coords) {
+      this.rp1GoBtn.classList.add('hidden');
+      return;
+    }
+
+    const url = `https://enter.rp1.com/?start_cid=${planetContext.celestialId}&start_geo=[${coords.latitude.toFixed(5)},${coords.longitude.toFixed(5)},${planetContext.radius}]`;
+
+    this.rp1GoBtn.href = url;
+    this.rp1GoBtn.classList.remove('hidden');
+  }
+
   init() {
+    this.setupModelEvents();
     this.setupHierarchyEvents();
     this.setupViewEvents();
     this.setupLayoutEvents();
     this.setupClientEvents();
     this.setupTypeFilter();
+    this.setupResetButton();
+    this.setupAsyncSearch();
+    this.setupBookmarks();
+    this.setupShareButton();
 
-    this.inspector.clear();
+    this.layout.restoreState();
     this.layout.setFollowLink(null);
     this.layout.setStatus('Disconnected', 'disconnected');
+
+    this.checkUrlForSharedState();
+  }
+
+  setupModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (!node) return;
+
+      getMsfReference(node).then(url => this.layout.setFollowLink(url));
+      this.updateRP1GoButton(node);
+
+      if (this._zoomOnSelectionKey && this.model.nodeKey(node) === this._zoomOnSelectionKey) {
+        this._zoomOnSelectionKey = null;
+        this.viewBounds.zoomToNode(node);
+        setTimeout(() => this.viewGraph.zoomToNode(node), 100);
+      }
+
+      if (!this._restoringState) {
+        const path = this.model.getPathToNode(node);
+        this.stateManager.updateSection('navigation', {
+          selectedNodePath: path || []
+        });
+      }
+    });
+
+    this.model.on('expansionChanged', (node) => {
+      this.viewGraph.zoomToNode(node);
+      this.viewBounds.zoomToNode(node);
+
+      if (!this._restoringState) {
+        this.stateManager.updateSection('hierarchy', {
+          expandedNodeIds: this.model.getExpandedNodeKeys()
+        });
+      }
+    });
+  }
+
+  setupResetButton() {
+    const resetBtn = document.getElementById('reset-view-btn');
+    resetBtn?.addEventListener('click', () => {
+      this.stateManager.resetAndReload();
+    });
+  }
+
+  setupBookmarks() {
+    const addBtn = document.getElementById('add-bookmark-btn');
+    const bookmarksBtn = document.getElementById('bookmarks-btn');
+    const dropdown = document.getElementById('bookmark-dropdown');
+    const bookmarkList = dropdown?.querySelector('.bookmark-list');
+
+    if (!addBtn || !bookmarksBtn || !dropdown || !bookmarkList) return;
+
+    addBtn.addEventListener('click', () => {
+      const selectedNode = this.model.getSelectedNode();
+      const name = selectedNode?.name || selectedNode?.type || 'Untitled';
+      this.bookmarkManager.save(name);
+      this.renderBookmarkList(bookmarkList);
+    });
+
+    bookmarksBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.renderBookmarkList(bookmarkList);
+      dropdown.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', () => {
+      dropdown.classList.add('hidden');
+    });
+
+    dropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  setupShareButton() {
+    const shareBtn = document.getElementById('share-btn');
+    const toast = document.getElementById('share-toast');
+
+    if (!shareBtn) return;
+
+    shareBtn.addEventListener('click', async () => {
+      const url = this.bookmarkManager.encodeStateToUrl();
+
+      try {
+        await navigator.clipboard.writeText(url);
+        this.showShareToast(toast);
+      } catch (e) {
+        console.warn('Failed to copy to clipboard:', e);
+        prompt('Copy this link:', url);
+      }
+    });
+  }
+
+  showShareToast(toast) {
+    if (!toast) return;
+
+    toast.classList.remove('hidden');
+    toast.classList.add('visible');
+
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 300);
+    }, 2000);
+  }
+
+  async checkUrlForSharedState() {
+    let targetWindow;
+    try {
+      targetWindow = window.top;
+      targetWindow.location.search; // Test access
+    } catch {
+      targetWindow = window;
+    }
+
+    const search = targetWindow.location.search;
+    if (!search?.includes('loc=')) return;
+
+    const state = this.bookmarkManager.decodeStateFromUrl(search);
+    if (!state) {
+      console.error('Failed to decode shared link - URL may be corrupted');
+      this.layout.setStatus('Invalid shared link', 'disconnected');
+      return;
+    }
+
+    targetWindow.history.replaceState(null, '', targetWindow.location.pathname);
+
+    try {
+      const success = await this.bookmarkManager.applyState(state, this);
+      if (!success) {
+        console.error('Failed to apply shared state - map may be unavailable');
+        this.layout.setStatus('Failed to load shared link', 'disconnected');
+      }
+    } catch (err) {
+      console.error('Error applying shared state:', err);
+      this.layout.setStatus('Error loading shared link', 'disconnected');
+    }
+  }
+
+  renderBookmarkList(container) {
+    const bookmarks = this.bookmarkManager.list();
+    container.innerHTML = '';
+
+    bookmarks.forEach(bookmark => {
+      const item = document.createElement('div');
+      item.className = 'bookmark-item';
+      item.dataset.id = bookmark.id;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'bookmark-item-name';
+      nameSpan.textContent = bookmark.name;
+      nameSpan.title = bookmark.name;
+
+      item.addEventListener('click', async () => {
+        const state = this.bookmarkManager.load(bookmark.id);
+        if (state) {
+          document.getElementById('bookmark-dropdown')?.classList.add('hidden');
+          try {
+            const success = await this.bookmarkManager.applyState(state, this);
+            if (!success) {
+              this.layout.setStatus('Failed to load bookmark', 'disconnected');
+            }
+          } catch (err) {
+            console.error('Error loading bookmark:', err);
+            this.layout.setStatus('Error loading bookmark', 'disconnected');
+          }
+        }
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'bookmark-item-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'bookmark-item-btn';
+      editBtn.textContent = '✎';
+      editBtn.title = 'Rename';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.startBookmarkEdit(item, bookmark);
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'bookmark-item-btn';
+      deleteBtn.textContent = '×';
+      deleteBtn.title = 'Delete';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.bookmarkManager.delete(bookmark.id);
+        this.renderBookmarkList(container);
+      });
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+
+      item.appendChild(nameSpan);
+      item.appendChild(actions);
+      container.appendChild(item);
+    });
+  }
+
+  startBookmarkEdit(item, bookmark) {
+    const nameSpan = item.querySelector('.bookmark-item-name');
+    const actions = item.querySelector('.bookmark-item-actions');
+
+    nameSpan.style.display = 'none';
+    actions.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bookmark-edit-input';
+    input.value = bookmark.name;
+
+    let finished = false;
+    const finishEdit = () => {
+      if (finished) return;
+      finished = true;
+      const newName = input.value.trim() || bookmark.name;
+      this.bookmarkManager.rename(bookmark.id, newName);
+      input.remove();
+      nameSpan.textContent = newName;
+      nameSpan.style.display = '';
+      actions.style.display = '';
+    };
+
+    input.addEventListener('blur', finishEdit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        finishEdit();
+      } else if (e.key === 'Escape') {
+        input.value = bookmark.name;
+        finishEdit();
+      }
+    });
+
+    item.insertBefore(input, nameSpan);
+    input.focus();
+    input.select();
+  }
+
+  setupAsyncSearch() {
+    const searchInput = document.getElementById('hierarchy-search');
+    const clearBtn = document.getElementById('hierarchy-search-clear');
+    const searchStatus = document.getElementById('search-status');
+    if (!searchInput) return;
+
+    let asyncDebounceTimer;
+    let currentSearchId = 0;
+
+    const clearSearch = () => {
+      searchInput.value = '';
+      clearBtn?.classList.remove('visible');
+      if (searchStatus) searchStatus.textContent = '';
+      currentSearchId++;
+      this.hierarchy.clearSearchFilter();
+    };
+
+    const updateClearButton = () => {
+      clearBtn?.classList.toggle('visible', !!searchInput.value);
+    };
+
+    const updateSearchStatus = (unavailable) => {
+      if (!searchStatus) return;
+      searchStatus.textContent = unavailable?.length > 0 ? 'Server search unavailable' : '';
+    };
+
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(asyncDebounceTimer);
+      updateClearButton();
+
+      const searchText = e.target.value.trim();
+
+      if (!searchText || searchText.length < 2) {
+        if (!searchText) {
+          currentSearchId++;
+          this.hierarchy.clearSearchFilter();
+          updateSearchStatus([]);
+        }
+        return;
+      }
+
+      asyncDebounceTimer = setTimeout(async () => {
+        const searchId = ++currentSearchId;
+
+        // Do local search on already-loaded nodes
+        const localMatches = this.hierarchy.searchLocalNodes(searchText.toLowerCase());
+
+        // Do server search if connected
+        let serverResults = { matches: [], paths: [], unavailable: [] };
+        if (this.client.connected) {
+          serverResults = await this.client.searchNodes(searchText);
+        }
+
+        // Check if this search is still current (newer search may have started)
+        if (searchId !== currentSearchId) return;
+
+        updateSearchStatus(serverResults.unavailable);
+
+        // Merge and dedupe results
+        const seenKeys = new Set();
+        const mergedMatches = [];
+
+        // Add server matches first
+        for (const match of serverResults.matches) {
+          const key = `${match.type}_${match.id}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            mergedMatches.push(match);
+          }
+        }
+
+        // Add local matches
+        for (const match of localMatches) {
+          const key = `${match.type}_${match.id}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            mergedMatches.push(match);
+          }
+        }
+
+        const mergedResults = {
+          matches: mergedMatches,
+          paths: serverResults.paths
+        };
+
+        // Final check before applying results
+        if (searchId !== currentSearchId) return;
+
+        // Always apply filter - with no results, this hides everything
+        await this.hierarchy.revealSearchResults(mergedResults, (node) => this.model.loadNodeChildren(node));
+      }, 300);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        clearSearch();
+      }
+    });
+
+    clearBtn?.addEventListener('click', () => {
+      clearSearch();
+      searchInput.focus();
+    });
   }
 
   setupTypeFilter() {
@@ -47,7 +427,6 @@ class App {
     const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name) && t.name !== 'Root');
     const placementTypesList = NODE_TYPES.filter(t => PLACEMENT_NAMES.has(t.name));
 
-    // Helper to create a category
     const createCategory = (name, types) => {
       const category = document.createElement('div');
       category.className = 'filter-category';
@@ -60,10 +439,11 @@ class App {
       const items = document.createElement('div');
       items.className = 'filter-category-items';
 
-      types.forEach(type => {
+      for (const type of types) {
         const label = document.createElement('label');
         const isCelestial = CELESTIAL_NAMES.has(type.name);
         const isPlacement = PLACEMENT_NAMES.has(type.name);
+
         let shapeClass, colorStyle;
         if (isCelestial) {
           shapeClass = 'type-triangle';
@@ -75,9 +455,10 @@ class App {
           shapeClass = 'type-dot';
           colorStyle = 'background';
         }
+
         label.innerHTML = `<input type="checkbox" value="${type.name}" checked><span class="${shapeClass}" style="${colorStyle}: var(${type.cssVar})"></span> ${type.name}`;
         items.appendChild(label);
-      });
+      }
 
       category.appendChild(items);
       return category;
@@ -103,6 +484,16 @@ class App {
     dropdown.appendChild(celestialCategory);
     dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
     dropdown.appendChild(createCategory('Placement', placementTypesList));
+
+    // Add reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'filter-reset-btn';
+    resetBtn.textContent = 'Reset to Defaults';
+    resetBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.viewBounds.resetTypeFilter();
+    });
+    dropdown.appendChild(resetBtn);
 
     // Handle Orbits toggle
     const orbitsToggle = document.getElementById('orbits-toggle');
@@ -161,110 +552,38 @@ class App {
         this.updateTypeFilter(dropdown);
       });
     });
+
+    // Sync checkboxes with restored state
+    this.viewBounds.syncTypeFilterCheckboxes();
+
+    // Sync orbits checkbox separately (excluded from type filter sync)
+    if (orbitsToggle) {
+      orbitsToggle.checked = this.viewBounds.orbitsVisible;
+    }
   }
 
   updateTypeFilter(dropdown) {
-    // Collect from both category items and standalone checkboxes
-    const categoryTypes = Array.from(dropdown.querySelectorAll('.filter-category-items input[type="checkbox"]'))
-      .filter(cb => cb.checked)
-      .map(cb => cb.value);
-    const standaloneTypes = Array.from(dropdown.querySelectorAll('.filter-standalone input[type="checkbox"]'))
-      .filter(cb => cb.checked)
-      .map(cb => cb.value);
-    const enabledTypes = [...standaloneTypes, ...categoryTypes];
-    this.viewBounds.setTypeFilter(enabledTypes);
+    const getCheckedValues = (selector) =>
+      Array.from(dropdown.querySelectorAll(selector))
+        .filter(cb => cb.checked)
+        .map(cb => cb.value);
+
+    const categoryTypes = getCheckedValues('.filter-category-items input[type="checkbox"]');
+    const standaloneTypes = getCheckedValues('.filter-standalone input[type="checkbox"]');
+    this.viewBounds.setTypeFilter([...standaloneTypes, ...categoryTypes]);
   }
 
   setupHierarchyEvents() {
-    this.hierarchy.onSelect(node => {
-      this.viewGraph.selectNode(node);
-      this.viewBounds.selectNode(node.id, node.type);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
-
-      localStorage.setItem('selectedNodeId', node.id);
-      localStorage.setItem('selectedNodeType', node.type);
-
-      // Save path from root to this node for restoration
-      const path = this.hierarchy.getPathToNode(node);
-      if (path) {
-        localStorage.setItem('selectedNodePath', JSON.stringify(path));
-      }
-    });
-
     this.hierarchy.onZoom(node => {
       this.viewGraph.zoomToNode(node);
       this.viewBounds.zoomToNode(node);
     });
-
-    this.hierarchy.onToggle((node, expanded) => {
-      if (expanded) {
-        const children = this.hierarchy.getChildren(node);
-        if (children && children.length > 0) {
-          this.viewGraph.addChildren(node, children);
-          this.viewBounds.addChildren(node, children);
-        }
-        this.viewBounds.expandNode(node);
-      } else {
-        this.viewGraph.removeDescendants(node);
-        this.viewBounds.collapseNode(node);
-      }
-
-      this.viewGraph.selectNode(node);
-      this.viewGraph.zoomToNode(node);
-      this.viewBounds.zoomToNode(node);
-    });
-
-    this.hierarchy.onExpand(node => {
-      this.loadNodeChildren(node);
-    });
   }
 
   setupViewEvents() {
-    this.viewGraph.onSelect(node => {
-      this.hierarchy.selectNode(node);
-      this.hierarchy.expandToNode(node);
-      this.viewBounds.selectNode(node.id, node.type);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
-    });
-
-    this.viewGraph.onToggle(node => {
-      this.hierarchy.toggleNode(node);
-      this.viewBounds.zoomToNode(node);
-    });
-
     this.viewGraph.onMsfLoad(url => {
       this.layout.setUrl(url);
       this.handleLoadMap(url);
-    });
-
-    this.viewBounds.onSelect(node => {
-      this.hierarchy.selectNode(node);
-      this.hierarchy.expandToNode(node);
-      this.viewGraph.selectNode(node);
-      const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-      this.viewResource.setNode(node, expandedDescendants);
-      this.inspector.showNode(node);
-      this.layout.setFollowLink(getMsfReference(node));
-    });
-
-    this.viewBounds.onToggle((node, expanded) => {
-      if (expanded) {
-        this.hierarchy.expandNode(node);
-        const children = this.hierarchy.getChildren(node);
-        if (children && children.length > 0) {
-          this.viewBounds.addChildren(node, children);
-        }
-      } else {
-        this.hierarchy.collapseNode(node);
-      }
-      this.viewBounds.zoomToNode(node);
-      this.viewGraph.zoomToNode(node);
     });
 
     this.viewBounds.onMsfLoad(url => {
@@ -275,6 +594,11 @@ class App {
 
   setupLayoutEvents() {
     this.layout.onLoad(async ({ url }) => {
+      // Capture planet context from selected node before loading new map
+      const selectedNode = this.model.getSelectedNode();
+      if (selectedNode) {
+        this.model.inheritedPlanetContext = this.model.getPlanetContext(selectedNode);
+      }
       await this.handleLoadMap(url);
     });
   }
@@ -289,63 +613,69 @@ class App {
     });
 
     this.client.on('error', (error) => {
-      console.error('RP1 Client error:', error);
+      console.error('MV Client error:', error);
       this.layout.setStatus('Error: ' + error.message, 'disconnected');
     });
 
     this.client.on('status', (msg) => {
       this.layout.setStatus(msg, 'loading');
     });
+
   }
 
-  async handleLoadMap(url) {
+  async handleLoadMap(url, { skipStateRestore = false } = {}) {
     try {
-      // Auto-connect if not connected
-      if (!this.client.connected) {
-        this.layout.setStatus('Connecting...', 'loading');
-        await this.client.connect();
-      }
-
       this.layout.setStatus('Loading map...', 'loading');
 
       const tree = await this.client.loadMap(url);
-      this.tree = tree;
 
-      this.hierarchy.setData(tree);
-      this.viewGraph.setData(tree);
-      this.viewBounds.setData(tree);
-      this.viewResource.setResourceBaseUrl(url);
-      this.inspector.clear();
+      // Detect Earth MSF and set default planet context
+      let planetContext = this.model.inheritedPlanetContext;
+      if (!planetContext && url.includes('earth.msf')) {
+        planetContext = {
+          planetName: 'Earth',
+          celestialId: 104,
+          radius: 6371000
+        };
+      }
+
+      this.model.setTree(tree, planetContext);
+
       this.layout.setFollowLink(null);
+      this.rp1GoBtn?.classList.add('hidden');
 
       this.layout.setStatus('Map loaded', 'connected');
+      this.stateManager.updateSection('navigation', { mapUrl: url });
 
-      if (tree) {
-        // Expand all nodes at top 3 levels
-        const expandLevel = (nodes, depth) => {
-          if (depth > 3 || !nodes) return;
-          nodes.forEach(node => {
-            this.hierarchy.expandNode(node);
-            if (node.children && node.children.length > 0) {
-              expandLevel(node.children, depth + 1);
-            }
-          });
-        };
-
-        this.hierarchy.expandNode(tree);
-        if (tree.children) {
-          expandLevel(tree.children, 2);
-        }
-
-        // Try to restore previously selected node via path
-        const savedPath = localStorage.getItem('selectedNodePath');
-        if (savedPath) {
-          await this.restoreNodePath(JSON.parse(savedPath));
+      const root = this.model.tree;
+      if (root) {
+        if (skipStateRestore) {
+          this.model.expandNode(root);
         } else {
-          this.hierarchy.selectNode(tree);
-          setTimeout(() => {
-            this.viewGraph.zoomToNode(tree);
-          }, 100);
+          this._restoringState = true;
+          try {
+            const hierarchyState = this.stateManager.getSection('hierarchy');
+            const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
+
+            if (!hasSavedExpanded) {
+              this.model.expandNode(root);
+            } else {
+              this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
+            }
+
+            // Try to restore previously selected node via path
+            const navState = this.stateManager.getSection('navigation');
+            if (navState.selectedNodePath?.length > 0) {
+              this.restoreNodePath(navState.selectedNodePath);
+            } else {
+              this.model.selectNode(root);
+              setTimeout(() => {
+                this.viewGraph.zoomToNode(root);
+              }, 100);
+            }
+          } finally {
+            this._restoringState = false;
+          }
         }
       }
     } catch (error) {
@@ -353,90 +683,46 @@ class App {
     }
   }
 
-  findNodeById(tree, id) {
-    if (tree.id === id) return tree;
-    if (tree.children) {
-      for (const child of tree.children) {
-        const found = this.findNodeById(child, id);
-        if (found) return found;
-      }
-    }
-    return null;
-  }
-
-  async restoreNodePath(path) {
-    if (!path || path.length === 0 || !this.tree) {
-      this.hierarchy.selectNode(this.tree);
+  restoreNodePath(path) {
+    if (!this.model.tree) return;
+    if (!path || path.length === 0) {
+      this.model.selectNode(this.model.tree);
       return;
     }
 
-    let currentNode = this.tree;
-
-    for (let i = 1; i < path.length; i++) {
-      const targetId = path[i].id;
-      const targetType = path[i].type;
-
-      // Expand current node first
-      this.hierarchy.expandNode(currentNode);
-
-      // Load children if not already loaded
-      if (!currentNode.children || currentNode.children.length === 0) {
-        try {
-          await this.loadNodeChildren(currentNode);
-          // Small delay to let UI update
-          await new Promise(r => setTimeout(r, 50));
-        } catch (err) {
-          console.warn('Failed to load children during restore:', err);
-          break;
-        }
-      }
-
-      // Find target child in the loaded children
-      let nextNode = currentNode.children?.find(c => c.id === targetId && c.type === targetType);
-
-      if (!nextNode) {
-        // Try by id only if type match failed
-        nextNode = currentNode.children?.find(c => c.id === targetId);
-      }
-
-      if (!nextNode) {
-        console.warn('Could not find node in path:', targetId, targetType);
-        break;
-      }
-
-      currentNode = nextNode;
+    let startIndex = path.findIndex(p => p.id === this.model.tree.id && p.type === this.model.tree.type);
+    if (startIndex === -1) {
+      this.model.selectNode(this.model.tree);
+      return;
     }
 
-    // Expand tree to show the node, then select it
-    this.hierarchy.expandToNode(currentNode);
-    this.hierarchy.selectNode(currentNode);
-    this.viewBounds.selectNode(currentNode.id, currentNode.type);
-    this.viewBounds.zoomToNode(currentNode);
-    setTimeout(() => {
-      this.viewGraph.zoomToNode(currentNode);
-    }, 100);
-  }
-
-  async loadNodeChildren(node) {
-    try {
-      const nodeData = await this.client.getNode(node.id, node.type);
-      if (nodeData && nodeData.children) {
-        this.hierarchy.setChildren(node, nodeData.children);
-        this.viewGraph.addChildren(node, nodeData.children);
-        this.viewBounds.addChildren(node, nodeData.children);
-
-        const selectedNode = this.hierarchy.getSelectedNode();
-        if (selectedNode && selectedNode._uid === node._uid) {
-          const expandedDescendants = this.hierarchy.getExpandedDescendants(node);
-          this.viewResource.setNode(node, expandedDescendants);
-        }
+    // Ensure all intermediate nodes in the path are expanded (or pending expansion)
+    // so the MVMF event cascade will load their children, eventually reaching the target
+    for (let i = startIndex; i < path.length - 1; i++) {
+      const key = `${path[i].type}_${path[i].id}`;
+      const node = this.model.getNode(path[i].type, path[i].id);
+      if (node) {
+        this.model.expandNode(node);
+      } else {
+        this.model.addPendingExpandedKey(key);
       }
-      this.hierarchy.markNodeLoaded(node);
-    } catch (error) {
-      console.error('Failed to load children:', error);
-      this.hierarchy.markNodeLoaded(node);
+    }
+
+    // Select the target node now if it exists, otherwise set pending selection
+    const targetStep = path[path.length - 1];
+    const targetKey = `${targetStep.type}_${targetStep.id}`;
+    const targetNode = this.model.getNode(targetStep.type, targetStep.id);
+
+    if (targetNode) {
+      this.model.selectNode(targetNode);
+      this.viewBounds.zoomToNode(targetNode);
+      setTimeout(() => this.viewGraph.zoomToNode(targetNode), 100);
+    } else {
+      this.model._pendingSelectedKey = targetKey;
+      this._zoomOnSelectionKey = targetKey;
     }
   }
+
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -1,44 +1,83 @@
 /**
- * Gets MSF reference URL from a node's pResource property.
- * Returns the URL if it points to an MSF file, null otherwise.
+ * Copyright (c) 2026 Patched Reality, Inc.
  */
-export function getMsfReference(node) {
-  const ref = node?.properties?.pResource?.sReference;
-  if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
-    return ref;
+
+let resourceBaseUrl = null;
+
+/**
+ * Sets the base URL for resolving relative resource paths.
+ * This must be set from the MSF's sRootUrl before loading resources.
+ */
+export function setResourceBaseUrl(url) {
+  if (!url) {
+    resourceBaseUrl = null;
+    return;
   }
-  return null;
+  try {
+    new URL(url);
+    resourceBaseUrl = url.endsWith('/') ? url : url + '/';
+  } catch (e) {
+    console.error('Invalid resource base URL:', url, e);
+    resourceBaseUrl = null;
+  }
 }
 
 /**
- * Gets the resource URL from a node's pResource property.
- * Returns URLs for JSON scene files or direct GLB/GLTF models.
- * Checks sReference first, then falls back to sName.
+ * Gets the current resource base URL.
  */
-export function getResourceUrl(node) {
-  const pResource = node?.properties?.pResource;
-  if (!pResource) return null;
+export function getResourceBaseUrl() {
+  return resourceBaseUrl;
+}
 
-  const ref = pResource.sReference;
-  if (ref && typeof ref === 'string') {
-    const lower = ref.toLowerCase();
-    // Full URL to JSON
-    if (lower.endsWith('.json') && (ref.startsWith('http://') || ref.startsWith('https://'))) {
-      return { url: ref, type: 'json' };
-    }
-    // Direct GLB/GLTF path (server-relative or full URL)
-    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-      return { url: ref, type: 'glb' };
-    }
+/**
+ * Resolves a resource reference to a full URL.
+ * Handles action:// protocol, full URLs, and relative paths.
+ */
+export function resolveResourceUrl(ref) {
+  if (!ref || typeof ref !== 'string') return null;
+
+  // Handle action:// protocol
+  if (ref.startsWith('action://')) {
+    const path = ref.slice('action://'.length);
+    return resourceBaseUrl ? resourceBaseUrl + path : null;
   }
 
-  const name = pResource.sName;
-  if (name && typeof name === 'string') {
-    const lower = name.toLowerCase();
-    if (lower.endsWith('.json') && (name.startsWith('http://') || name.startsWith('https://'))) {
-      return { url: name, type: 'json' };
+  // Handle full URLs - pass through unchanged
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    return ref;
+  }
+
+  // Relative paths: use resourceBaseUrl
+  return resourceBaseUrl ? resourceBaseUrl + ref : null;
+}
+
+/**
+ * Gets MSF reference URL from a node's pResource property.
+ * Returns the URL if it points to an MSF file, null otherwise.
+ */
+export async function getMsfReference(node) {
+  const ref = node?.resourceRef || node?.properties?.pResource?.sReference;
+  if (!ref || typeof ref !== 'string') return null;
+
+  if (ref.endsWith('.msf') || ref.endsWith('.msf.json')) {
+    return ref;
+  }
+
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    try {
+      const response = await fetch(ref);
+      if (!response.ok) return null;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('json')) return null;
+      const data = await response.json();
+      if (data?.map?.sRequire && data?.map?.wClass !== undefined) {
+        return ref;
+      }
+    } catch (e) {
+      return null;
     }
   }
 
   return null;
 }
+

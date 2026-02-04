@@ -1,4 +1,8 @@
 /**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+/**
  * Shared node type definitions for server and client
  * This is the single source of truth for node type mappings
  */
@@ -88,18 +92,11 @@ export const NODE_TYPES = [
   { name: 'Placement', color: 0xff8c42, cssVar: '--node-placement', category: 'placement' }
 ];
 
-// Helper to get display type from raw RM type
-export function getDisplayType(nodeType, rawType) {
-  // If nodeType is already a display type, return it
-  if (CELESTIAL_NAMES.has(nodeType) || TERRESTRIAL_NAMES.has(nodeType) || PLACEMENT_NAMES.has(nodeType)) {
-    return nodeType;
-  }
-
-  // Map raw RM types to display types
-  if (nodeType === 'RMRoot' || rawType === 'RMRoot') return 'Root';
-  if (nodeType === 'RMTObject' || rawType === 'RMTObject') return 'Territory';
-  if (nodeType === 'RMCObject' || rawType === 'RMCObject') return 'Land';
-  if (nodeType === 'RMPObject' || rawType === 'RMPObject') return 'Placement';
-
-  return nodeType;
-}
+// Color lookup by type name, including RM-type entries
+export const NODE_COLORS = {
+  RMRoot: 0xffd700,
+  RMCObject: 0x4a9eff,
+  RMTObject: 0x50c878,
+  RMPObject: 0xff8c42,
+  ...Object.fromEntries(NODE_TYPES.map(t => [t.name, t.color]))
+};

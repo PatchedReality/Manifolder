@@ -11,7 +11,7 @@ require ('@metaversalcorp/mvsb');
 require ('@metaversalcorp/mvxp');
 */
 
-MV.MVRP     = MV.Library ('MVRP',     'Copyright 2023-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Platform', '0.23.21');
+MV.MVRP     = MV.Library ('MVRP',     'Copyright 2023-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Platform', '0.23.24');
 
 MV.MVRP.Class.FLOAT3 = class extends MV.MVMF.Class.BASE
 {
@@ -2463,12 +2463,17 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
                   let pConfig = this.#pMSFConfig["map"];
                   let pRequire;
 
-                  if ((pRequire = MV.MVMF.Core.Require (pConfig.require, pConfig.service, pConfig.namespace)) != null)
+if (pConfig.sRequire)
+   pRequire =  MV.MVMF.Core.Require (pConfig.sRequire, pConfig.sService, pConfig.sNamespace);
+else pRequire = MV.MVMF.Core.Require (pConfig.require, pConfig.service, pConfig.namespace)
+                  if (pRequire != null)
                   {
                      this.#apSvc["map"] = {};
                      this.#apSvc["map"].bAuth       = pConfig.bAuth;
                      this.#apSvc["map"].bRequired   = true;
-                     this.#apSvc["map"].pLnG        = MV.MVMF.Core.LnG_Open (pConfig.namespace, pConfig.service, pConfig.connect);
+if (pConfig.sRequire)
+                     this.#apSvc["map"].pLnG        = MV.MVMF.Core.LnG_Open (pConfig.sNamespace, pConfig.sService, pConfig.sConnect);
+else this.#apSvc["map"].pLnG        = MV.MVMF.Core.LnG_Open (pConfig.namespace, pConfig.service, pConfig.connect);
                      this.#apSvc["map"].pLnG.Attach (this);
                   }
                }
@@ -2604,10 +2609,10 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
       }
   }
 
-   get pLnG ()         { return this.#pLnG;                                             }
+   get pLnG ()         { return this.#pLnG;                                           }
    get twRPersonaIx () { return this.#pRUser ? this.#pRUser.twRPersonaIx_Default : 0; }
-   get XHRError ()     { return this.#XHRError;                                           }
-   get pMSFConfig ()   { return this.#pMSFConfig;                                         }
+   get XHRError ()     { return this.#XHRError;                                       }
+   get pMSF_Map ()     { return this.pMSFConfig["map"];                               }
 
    IsReady ()
    {
@@ -2620,6 +2625,8 @@ MV.MVRP.MSF = class extends MV.MVMF.NOTIFICATION
    {
       return this.#apSvc[sName] ? this.#apSvc[sName].pLnG : '';
    }
+
+   get pMSFConfig ()   { return this.#pMSFConfig;                                         }
 
    GetMapRootUrl ()
    {

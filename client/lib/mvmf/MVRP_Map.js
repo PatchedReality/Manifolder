@@ -14,7 +14,7 @@ require ('@metaversalcorp/mvrest');
 require ('@metaversalcorp/mvio');
 */
 
-MV.MVRP.Map = MV.Library ('MVRP_Map', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Map', '0.23.10');
+MV.MVRP.Map = MV.Library ('MVRP_Map', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Map', '0.23.11');
 
 MV.MVRP.Map.Class.RMCOMMON_TYPE = class extends MV.MVMF.Class.BASE
 {
@@ -1890,7 +1890,7 @@ MV.MVRP.Map.IO_RMROOT.apAction =
                                     "RMRoot:rmcobject_close",
                                     {
                                        twRMRootIx              : 0,
-                                       twRMCObjectIx           : 0,
+                                       twRMCObjectIx_Close     : 0,
                                        bDeleteAll              : 0
                                     }
                                  ),
@@ -1927,7 +1927,7 @@ MV.MVRP.Map.IO_RMROOT.apAction =
                                     "RMRoot:rmtobject_close",
                                     {
                                        twRMRootIx              : 0,
-                                       twRMTObjectIx           : 0,
+                                       twRMTObjectIx_Close     : 0,
                                        bDeleteAll              : 0
                                     }
                                  ),
@@ -1962,7 +1962,7 @@ MV.MVRP.Map.IO_RMROOT.apAction =
                                     "RMRoot:rmpobject_close",
                                     {
                                        twRMRootIx              : 0,
-                                       twRMPObjectIx           : 0,
+                                       twRMPObjectIx_Close     : 0,
                                        bDeleteAll              : 0
                                     }
                                  )

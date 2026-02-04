@@ -1,0 +1,200 @@
+# Manifolder (Open Metaverse Map Explorer)
+
+## Overview
+Manifolder is a web-based tool for exploring and visualizing hierarchical spatial data structures used in the Open Metaverse. It provides interactive 2D and 3D views of map data, allowing developers and content creators to inspect node hierarchies, spatial bounds, and properties.
+
+## Accessing Manifolder
+The first version of Manifolder was developed by [Patched Reality, Inc](https://patchedreality.com). You can access it at [patchedreality.com/manifolder](https://patchedreality.com/manifolder).
+
+Details and timing for open sourcing of Manifolder are being worked on, and will be available soon.
+
+## User Interface
+
+### Layout Overview
+
+Manifolder uses a three-panel layout:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                           Toolbar                               │
+├───────────┬─────────────────────────────────┬───────────────────┤
+│           │                                 │                   │
+│ Hierarchy │           Viewport              │     Inspector     │
+│   Panel   │    (Graph / Bounds / Resource)  │       Panel       │
+│           │                                 │                   │
+├───────────┴─────────────────────────────────┴───────────────────┤
+│                          Status Bar                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Toolbar
+
+The toolbar provides:
+- **URL Input**: Enter an MSF (Metaverse Spatial Fabric) file URL to load
+- **URL History**: Dropdown of recently loaded URLs
+- **Load Button**: Fetch and parse the specified MSF file
+- **Follow Link**: Navigate to linked MSF files from a selected node when one exists
+
+### Hierarchy Panel (Left)
+
+A tree view displaying the node hierarchy:
+- **Search**: Filter nodes by name
+- **Expand/Collapse**: Click toggle arrows or double-click nodes
+- **Selection**: Click to select and inspect a node
+- **Context Menu**: Right-click (or long-press on mobile) for bulk expand/collapse options:
+  - **Expand Children**: Expands only the immediate children of the selected node
+  - **Expand All**: Recursively expands the selected node and all currently loaded descendants (use multiple times to truly fully expand)
+  - **Collapse All**: Recursively collapses the selected node and all descendants
+
+> **Caution**: Using "Expand All" on nodes with extremely deep hierarchies (e.g., a Galaxy or Continent with hundreds of descendants) can cause the tool to freeze or become unresponsive. Use "Expand Children" to incrementally explore large hierarchies.
+
+Node icons are color-coded by type (celestial bodies, terrestrial regions, etc.).
+
+### Viewport Panel (Center)
+
+The viewport supports multiple visualization modes, toggled via buttons. Multiple views can be enabled simultaneously to show side-by-side.
+
+#### How Selection and Expansion Affect Views
+
+Selection and hierarchy expansion control what's displayed in each view:
+
+- **Selection is synchronized**: Selecting a node in any panel (Hierarchy, Graph, or Bounds) updates the selection in all other panels and shows details in the Inspector.
+
+- **Graph View**: Displays the entire loaded tree structure. Expanding/collapsing nodes in the hierarchy will update the graph to show more or fewer nodes.
+
+- **Bounds View**: Displays 3D spatial bounds for nodes that are expanded in the hierarchy and not filtered out by the Type Filter. Expanding a node in the hierarchy adds its children to the 3D scene.
+
+- **Resource View**: Displays 3D models for the **selected node and all its expanded descendants**. This means expanding more children in the hierarchy will load and display more 3D models in the Resource view.
+
+#### Common Controls (All Views)
+
+- **Orbit**: Click and drag to rotate the camera
+- **Zoom**: Scroll wheel or pinch gesture
+- **Pan**: Right-click drag or two-finger drag
+- **Select**: Click on a node/object to select it
+- **Focus**: Double-click to zoom to a node
+
+#### Graph View
+
+A 3D force-directed graph showing node relationships and hierarchy structure.
+
+#### Bounds View
+
+A 3D visualization using Three.js showing:
+- Spatial bounding volumes (cuboids for terrestrial, spheroids for celestial)
+- Orbital paths for celestial bodies
+- Surface textures when available
+- Labels for node identification
+
+**Bounds-specific Controls:**
+- **Time Scale**: Slider to control orbital animation speed (Paused → 1 year/sec)
+- **Type Filter**: Show/hide specific node types
+
+#### Resource View
+
+A 3D model viewer for GLB (GLTF Binary) assets associated with nodes:
+- Loads and displays 3D models from node resource references
+- Supports blueprint hierarchies with nested physical objects
+- Automatic LOD (Level of Detail) selection
+- Models are centered and scaled to fit the viewport
+
+**Resource-specific Controls:**
+- **Grid**: Adaptive grid that scales based on content size
+
+### Inspector Panel (Right)
+
+Shows detailed information about the selected node:
+- **Basic Info**: Name, type, class, ID
+- **Transform**: Position, rotation, scale
+- **Bounds**: Spatial dimensions
+- **Raw JSON**: Expandable view of the complete node data
+- **Resource**: Expandable view of linked resource data (if available)
+
+### Panel Management
+
+- **Resize**: Drag the borders between panels to adjust widths
+- **Minimize**: Click the `−` button in panel headers to collapse
+- **Restore**: Click the restore button that appears when minimized
+- **Mobile**: Horizontal scrolling enabled on narrow screens
+
+### Keyboard Shortcuts
+
+- `Ctrl/Cmd + 1`: Toggle Graph view
+- `Ctrl/Cmd + 2`: Toggle Bounds view
+- `Ctrl/Cmd + 3`: Toggle Resource view
+
+---
+
+## Data Model
+
+Manifolder visualizes data from the Metaverse Spatial Fabric (MSF), a hierarchical spatial data structure organized into three tiers: Celestial, Terrestrial, and Physical objects.
+
+For more complete documentation on the MSF architecture, see the [Spatial Fabric Architecture](https://wiki.rp1.com/en/home/spatial-fabric/architecture) wiki page.
+
+### How Manifolder Displays MSF Data
+
+- **Celestial objects**: Rendered as spheres with orbital paths in the Bounds view
+- **Terrestrial objects**: Rendered as bounding boxes representing surface regions
+- **Physical objects**: Loaded as 3D GLB models in the Resource view
+- **Attachment points**: Show the "Follow Link" button (see above)
+
+Node icons in the Hierarchy panel are color-coded by type to help identify the object class at a glance. (although the number of object types means some types do overlap in the color space)
+
+---
+
+## 3D Rendering Details
+
+### Coordinate System
+
+- Right-handed coordinate system
+- Y-axis up
+- Units in meters (for celestial) or implementation-specific (for terrestrial)
+
+### Visual Scaling
+
+For Celestial objects, the Bounds view uses several techniques to make astronomical distances and size differences viewable in a single scene.
+
+This may not be the optimal way to display this information, but it was considered a good First Stab™.
+
+#### Position Scaling (Logarithmic Compression)
+
+Distances are compressed using a logarithmic scale relative to the focused node's size:
+- 1× focus node distance → ~30 scene units away
+- 10× focus node distance → ~50 scene units away
+- 1000× focus node distance → ~150 scene units away
+
+This keeps nearby objects well-separated while preventing distant objects from being infinitely far away.
+
+#### Size Scaling (Cube Root Compression)
+
+Object sizes use cube root compression to keep extreme size differences manageable:
+- The focused node always renders at a fixed visual size
+- An object 8× larger renders at 2× visual size
+- An object 1000× larger renders at 10× visual size
+- An object 1/8th the size renders at 0.5× visual size
+
+#### Culling
+
+Nodes whose bounds exceed 10× the focus node's bounds are hidden entirely—they're considered too large to visualize meaningfully when focused on something much smaller inside them.
+
+### Visual Elements
+
+- **Bounding Volumes**: Wireframe boxes (terrestrial) or spheres (celestial)
+- **Orbit Paths**: Elliptical lines showing orbital trajectories
+- **Labels**: Sprite-based text labels that scale with distance
+- **Grid**: Infinite grid plane for spatial reference
+- **Starfield**: Background particle system for context
+
+### Animation
+
+Orbital positions are animated based on simulation time:
+- Timescale controllable from paused to 1 year per second
+- Positions calculated using Keplerian orbital mechanics
+- Spin rotation for bodies with axial rotation data
+
+---
+
+## Mobile Support
+
+Manifolder is designed to work on mobile devices (for the most part):
+- **Touch Gestures**: Pinch to zoom, drag to orbit, tap to select, long press for context menus

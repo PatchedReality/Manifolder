@@ -1,8 +1,13 @@
-const URL_HISTORY_KEY = 'rp1-url-history';
+/**
+ * Copyright (c) 2026 Patched Reality, Inc.
+ */
+
+const URL_HISTORY_KEY = 'mv-url-history';
 const MAX_URL_HISTORY = 10;
 
 export class LayoutManager {
-  constructor() {
+  constructor(stateManager) {
+    this.stateManager = stateManager;
     this.panels = {
       hierarchy: document.getElementById('hierarchy-panel'),
       viewport: document.getElementById('viewport-panel'),
@@ -20,6 +25,7 @@ export class LayoutManager {
     this.setupViewTabs();
     this.setupUrlHistory();
     this.setupKeyboardShortcuts();
+    this.setupPanelMinimize();
   }
 
   setupResizers() {
@@ -27,74 +33,123 @@ export class LayoutManager {
 
     handles.forEach(handle => {
       handle.addEventListener('mousedown', (e) => this.startResize(e, handle));
+      handle.addEventListener('touchstart', (e) => this.startResize(e, handle), { passive: false });
     });
 
     document.addEventListener('mousemove', (e) => this.doResize(e));
     document.addEventListener('mouseup', () => this.stopResize());
+    document.addEventListener('touchmove', (e) => this.doResize(e), { passive: false });
+    document.addEventListener('touchend', () => this.stopResize());
+    document.addEventListener('touchcancel', () => this.stopResize());
   }
 
   startResize(e, handle) {
     e.preventDefault();
 
     const target = handle.dataset.resize;
-    let panel;
-    let direction;
+    const panelConfig = {
+      hierarchy: { panel: this.panels.hierarchy, direction: 'right' },
+      inspector: { panel: this.panels.inspector, direction: 'left' }
+    };
 
-    if (target === 'hierarchy') {
-      panel = this.panels.hierarchy;
-      direction = 'right';
-    } else if (target === 'inspector') {
-      panel = this.panels.inspector;
-      direction = 'left';
-    }
+    const config = panelConfig[target];
+    if (!config) return;
 
-    if (panel) {
-      this.resizing = {
-        panel,
-        direction,
-        startX: e.clientX,
-        startWidth: panel.offsetWidth
-      };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    this.resizing = {
+      panel: config.panel,
+      direction: config.direction,
+      startX: clientX,
+      startWidth: config.panel.offsetWidth
+    };
 
-      handle.classList.add('active');
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    }
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
   }
 
   doResize(e) {
-    if (!this.resizing) {
-      return;
-    }
+    if (!this.resizing) return;
 
     const { panel, direction, startX, startWidth } = this.resizing;
-    const deltaX = e.clientX - startX;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const deltaX = clientX - startX;
 
-    let newWidth;
-    if (direction === 'right') {
-      newWidth = startWidth + deltaX;
-    } else {
-      newWidth = startWidth - deltaX;
-    }
+    const rawWidth = direction === 'right' ? startWidth + deltaX : startWidth - deltaX;
 
     const minWidth = parseInt(getComputedStyle(panel).minWidth) || 150;
     const maxWidth = parseInt(getComputedStyle(panel).maxWidth) || 500;
+    const newWidth = Math.max(minWidth, Math.min(maxWidth, rawWidth));
 
-    newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
     panel.style.width = newWidth + 'px';
-
     window.dispatchEvent(new Event('resize'));
   }
 
   stopResize() {
-    if (!this.resizing) {
-      return;
-    }
+    if (!this.resizing) return;
 
     document.querySelectorAll('.resize-handle').forEach(h => h.classList.remove('active'));
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     this.resizing = null;
+    this.saveState();
+  }
+
+  setupPanelMinimize() {
+    // Minimize buttons
+    document.querySelectorAll('.panel-minimize').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const panelName = btn.dataset.panel;
+        this.minimizePanel(panelName);
+      });
+    });
+
+    // Restore buttons
+    document.getElementById('restore-hierarchy')?.addEventListener('click', () => {
+      this.restorePanel('hierarchy');
+    });
+
+    document.getElementById('restore-inspector')?.addEventListener('click', () => {
+      this.restorePanel('inspector');
+    });
+  }
+
+  minimizePanel(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.add('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.remove('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.add('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
+    this.saveState();
+  }
+
+  restorePanel(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.remove('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.add('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.remove('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
+    this.saveState();
   }
 
   setupViewTabs() {
@@ -106,29 +161,8 @@ export class LayoutManager {
 
     toggles.forEach(toggle => {
       toggle.addEventListener('click', () => {
-        const view = toggle.dataset.view;
-
-        if (view === 'graph') {
-          this.graphEnabled = !this.graphEnabled;
-        } else if (view === 'bounds') {
-          this.boundsEnabled = !this.boundsEnabled;
-        } else if (view === 'resource') {
-          this.resourceEnabled = !this.resourceEnabled;
-        }
-
-        // Ensure at least one view is enabled
-        if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
-          if (view === 'graph') {
-            this.boundsEnabled = true;
-          } else if (view === 'bounds') {
-            this.graphEnabled = true;
-          } else {
-            this.graphEnabled = true;
-          }
-        }
-
-        this.updateViewToggles();
-        this.updateViewDisplay();
+        this.toggleView(toggle.dataset.view);
+        this.saveState();
       });
     });
 
@@ -211,7 +245,8 @@ export class LayoutManager {
   }
 
   setupUrlHistory() {
-    const select = document.getElementById('url-history');
+    const dropdownBtn = document.getElementById('url-dropdown-btn');
+    const dropdown = document.getElementById('url-dropdown');
     const input = document.getElementById('url-input');
     const loadBtn = document.getElementById('load-btn');
     const followLinkBtn = document.getElementById('follow-link-btn');
@@ -219,21 +254,36 @@ export class LayoutManager {
     this.followLinkUrl = null;
     this.loadUrlHistory();
 
-    // Default to most recent URL
-    const history = this.getUrlHistory();
-    if (history.length > 0 && input) {
-      input.value = history[0];
-      // Auto-load after a short delay to ensure app is initialized
-      setTimeout(() => {
-        loadBtn?.click();
-      }, 100);
+    // Use saved mapUrl from state, or fall back to most recent URL in history
+    // Skip auto-load if there's a shared URL param - let checkUrlForSharedState handle it
+    let hasSharedUrl = false;
+    try {
+      hasSharedUrl = (window.top.location.search || window.location.search).includes('loc=');
+    } catch (e) {
+      hasSharedUrl = window.location.search.includes('loc=');
+    }
+    if (!hasSharedUrl) {
+      const navState = this.stateManager?.getSection('navigation');
+      const savedUrl = navState?.mapUrl;
+      const history = this.getUrlHistory();
+      const initialUrl = savedUrl || (history.length > 0 ? history[0] : null);
+
+      if (initialUrl && input) {
+        input.value = initialUrl;
+        setTimeout(() => {
+          loadBtn?.click();
+        }, 100);
+      }
     }
 
-    select?.addEventListener('change', () => {
-      if (select.value) {
-        input.value = select.value;
-        select.value = '';
-        loadBtn?.click();
+    dropdownBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!dropdown?.contains(e.target) && e.target !== dropdownBtn) {
+        dropdown?.classList.add('hidden');
       }
     });
 
@@ -260,28 +310,48 @@ export class LayoutManager {
   }
 
   loadUrlHistory() {
-    const select = document.getElementById('url-history');
-    if (!select) {
+    const dropdown = document.getElementById('url-dropdown');
+    const list = dropdown?.querySelector('.url-dropdown-list');
+    if (!list) return;
+
+    const history = this.getUrlHistory();
+    const input = document.getElementById('url-input');
+    const loadBtn = document.getElementById('load-btn');
+
+    list.innerHTML = '';
+
+    if (history.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'url-dropdown-empty';
+      empty.textContent = 'No recent URLs';
+      list.appendChild(empty);
       return;
     }
 
-    const history = this.getUrlHistory();
-
-    select.innerHTML = '<option value="">Recent URLs...</option>';
-
-    history.forEach(url => {
-      const option = document.createElement('option');
-      option.value = url;
-      option.textContent = this.truncateUrl(url);
-      select.appendChild(option);
-    });
+    for (const url of history) {
+      const item = document.createElement('div');
+      item.className = 'url-dropdown-item';
+      item.textContent = this.truncateUrl(url);
+      item.title = url;
+      item.addEventListener('click', () => {
+        input.value = url;
+        dropdown.classList.add('hidden');
+        loadBtn?.click();
+      });
+      list.appendChild(item);
+    }
   }
 
   getUrlHistory() {
+    const defaultUrls = [
+      'https://cdn2.rp1.com/config/enter.msf',
+      'https://cdn2.rp1.com/config/earth.msf'
+    ];
     try {
-      return JSON.parse(localStorage.getItem(URL_HISTORY_KEY)) || [];
+      const stored = JSON.parse(localStorage.getItem(URL_HISTORY_KEY));
+      return stored && stored.length > 0 ? stored : defaultUrls;
     } catch {
-      return [];
+      return defaultUrls;
     }
   }
 
@@ -294,8 +364,8 @@ export class LayoutManager {
 
     try {
       localStorage.setItem(URL_HISTORY_KEY, JSON.stringify(history));
-    } catch {
-      // localStorage unavailable or full
+    } catch (e) {
+      console.warn('localStorage unavailable, URL history not saved:', e.message);
     }
 
     this.loadUrlHistory();
@@ -346,22 +416,24 @@ export class LayoutManager {
   }
 
   toggleView(view) {
-    if (view === 'graph') {
-      this.graphEnabled = !this.graphEnabled;
-    } else if (view === 'bounds') {
-      this.boundsEnabled = !this.boundsEnabled;
-    } else if (view === 'resource') {
-      this.resourceEnabled = !this.resourceEnabled;
+    switch (view) {
+      case 'graph':
+        this.graphEnabled = !this.graphEnabled;
+        break;
+      case 'bounds':
+        this.boundsEnabled = !this.boundsEnabled;
+        break;
+      case 'resource':
+        this.resourceEnabled = !this.resourceEnabled;
+        break;
     }
 
-    // Ensure at least one view is enabled
+    // Ensure at least one view is enabled - default to graph if all disabled
     if (!this.graphEnabled && !this.boundsEnabled && !this.resourceEnabled) {
-      if (view === 'graph') {
-        this.boundsEnabled = true;
-      } else if (view === 'bounds') {
+      if (view === 'bounds' || view === 'resource') {
         this.graphEnabled = true;
       } else {
-        this.graphEnabled = true;
+        this.boundsEnabled = true;
       }
     }
 
@@ -378,10 +450,104 @@ export class LayoutManager {
   }
 
   dispatchEvent(name, detail) {
-    window.dispatchEvent(new CustomEvent(`rp1:${name}`, { detail }));
+    window.dispatchEvent(new CustomEvent(`mv:${name}`, { detail }));
   }
 
   onLoad(callback) {
-    window.addEventListener('rp1:load', (e) => callback(e.detail));
+    window.addEventListener('mv:load', (e) => callback(e.detail));
+  }
+
+  saveState() {
+    if (!this.stateManager) return;
+    this.stateManager.updateSection('layout', {
+      hierarchyWidth: this.panels.hierarchy.offsetWidth,
+      inspectorWidth: this.panels.inspector.offsetWidth,
+      hierarchyMinimized: this.panels.hierarchy.classList.contains('minimized'),
+      inspectorMinimized: this.panels.inspector.classList.contains('minimized'),
+      graphEnabled: this.graphEnabled,
+      boundsEnabled: this.boundsEnabled,
+      resourceEnabled: this.resourceEnabled
+    });
+  }
+
+  restoreStateValues(state) {
+    state = state || this.stateManager?.getSection('layout') || {};
+
+    if (typeof state.graphEnabled === 'boolean') {
+      this.graphEnabled = state.graphEnabled;
+    }
+    if (typeof state.boundsEnabled === 'boolean') {
+      this.boundsEnabled = state.boundsEnabled;
+    }
+    if (typeof state.resourceEnabled === 'boolean') {
+      this.resourceEnabled = state.resourceEnabled;
+    }
+  }
+
+  restoreStateUI(state) {
+    state = state || this.stateManager?.getSection('layout') || {};
+
+    if (state.hierarchyWidth) {
+      this.panels.hierarchy.style.width = state.hierarchyWidth + 'px';
+    }
+    if (state.inspectorWidth) {
+      this.panels.inspector.style.width = state.inspectorWidth + 'px';
+    }
+
+    if (state.hierarchyMinimized) {
+      this.minimizePanelWithoutSave('hierarchy');
+    } else {
+      this.restorePanelWithoutSave('hierarchy');
+    }
+    if (state.inspectorMinimized) {
+      this.minimizePanelWithoutSave('inspector');
+    } else {
+      this.restorePanelWithoutSave('inspector');
+    }
+
+    this.updateViewToggles();
+    this.updateViewDisplay();
+  }
+
+  restoreState() {
+    const state = this.stateManager?.getSection('layout') || {};
+    this.restoreStateValues(state);
+    this.restoreStateUI(state);
+  }
+
+  minimizePanelWithoutSave(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.add('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.remove('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.add('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  restorePanelWithoutSave(panelName) {
+    const panel = this.panels[panelName];
+    const restoreBtn = document.getElementById(`restore-${panelName}`);
+    const resizeHandle = document.querySelector(`.resize-handle[data-resize="${panelName}"]`);
+
+    if (panel) {
+      panel.classList.remove('minimized');
+    }
+    if (restoreBtn) {
+      restoreBtn.classList.add('hidden');
+    }
+    if (resizeHandle) {
+      resizeHandle.classList.remove('hidden');
+    }
+
+    window.dispatchEvent(new Event('resize'));
   }
 }

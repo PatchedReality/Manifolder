@@ -1,0 +1,19 @@
+{
+  "name": "manifolder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "watch": "node scripts/build.js --watch",
+    "inspect": "node scripts/inspect-msf.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.3",
+    "ws": "^8.16.0",
+    "xmlhttprequest-ssl": "^2.1.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}

@@ -26,3 +26,7 @@ build/
 
 # Claude Code
 .claude/
+
+# Local deploy script
+deploy.sh
+docs

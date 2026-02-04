@@ -36,7 +36,7 @@ const MV = new class
 }
 ();
 
-MV.MVMF = MV.Library ('MVMF', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal Model Foundation', '0.23.29');
+MV.MVMF = MV.Library ('MVMF', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal Model Foundation', '0.23.30');
 
 MV.MVMF.Const.BANK_NULL        = 0;
 MV.MVMF.Const.OBJECTIX_NULL    = 0;
@@ -2863,6 +2863,11 @@ MV.MVMF.SERVICE.IREFERENCE = class extends MV.MVMF.SHAREDOBJECT.IREFERENCE
 
             if (i + 1 < this.pConnect.server.length)
                this.wPort = Number (this.pConnect.server.slice (i + 1));
+         }
+
+         if (this.pConnect.port)
+         {
+            this.wPort = Number (this.pConnect.port);
          }
       }
    }
