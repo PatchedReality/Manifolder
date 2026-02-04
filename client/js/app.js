@@ -104,7 +104,7 @@ class App {
       }
     });
 
-    this.model.on('liveUpdateChanged', () => {
+    this.model.on('nodeUpdated', (node) => {
       if (!this._restoringState) {
         this.stateManager.updateSection('hierarchy', {
           liveUpdateNodeIds: this.model.getLiveUpdateNodeKeys()

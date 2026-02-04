@@ -17,7 +17,6 @@ export class Model {
     this.nodes = new Map();
     this.selectedNode = null;
     this.expandedNodes = new Set();
-    this.liveUpdateNodes = new Set();
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
     this._pendingLiveUpdateKeys = null;
@@ -34,7 +33,6 @@ export class Model {
       dataChanged: [],
       selectionChanged: [],
       expansionChanged: [],
-      liveUpdateChanged: [],
       disconnected: []
     };
 
@@ -109,7 +107,6 @@ export class Model {
     this.nodes.clear();
     this.selectedNode = null;
     this.expandedNodes.clear();
-    this.liveUpdateNodes.clear();
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
     this._pendingLiveUpdateKeys = null;
@@ -172,6 +169,17 @@ export class Model {
       }
     }
 
+    if (children) {
+      const parentIsLive = this.client.isLiveUpdatesEnabled(parentNode.type, parentNode.id);
+      for (const child of children) {
+        if (parentIsLive) {
+          this.client.enableLiveUpdates({ sID: child.type, twObjectIx: child.id });
+        } else if (this._pendingLiveUpdateKeys) {
+          this._checkPendingLiveUpdate(child);
+        }
+      }
+    }
+
     this._emit('nodeChildrenChanged', parentNode);
 
     // Check after emit so hierarchy DOM elements exist before selection fires
@@ -182,19 +190,6 @@ export class Model {
     if (children && this._pendingExpandedKeys) {
       for (const child of children) {
         this._checkPendingExpansion(child);
-      }
-    }
-
-    if (children) {
-      const parentKey = this.nodeKey(parentNode);
-      const parentHasLiveUpdates = parentKey && this.liveUpdateNodes.has(parentKey);
-      for (const child of children) {
-        if (parentHasLiveUpdates) {
-          this._enableLiveUpdatesForNode(child);
-          this._emit('liveUpdateChanged', child, true);
-        } else if (this._pendingLiveUpdateKeys) {
-          this._checkPendingLiveUpdate(child);
-        }
       }
     }
   }
@@ -211,7 +206,7 @@ export class Model {
         }
         this._pendingExpandedKeys.add(key);
       }
-      if (this.liveUpdateNodes.delete(key)) {
+      if (this.client.isLiveUpdatesEnabled(node.type, node.id)) {
         if (!this._pendingLiveUpdateKeys) {
           this._pendingLiveUpdateKeys = new Set();
         }
@@ -325,76 +320,52 @@ export class Model {
   // --- Live Updates ---
 
   enableLiveUpdates(node) {
-    this._enableLiveUpdatesRecursive(node);
-    this._refreshLiveUpdateSubtree(node);
-  }
-
-  _enableLiveUpdatesRecursive(node) {
-    this._enableLiveUpdatesForNode(node);
-    if (node.children) {
-      for (const child of node.children) {
-        this._enableLiveUpdatesRecursive(child);
-      }
-    }
-    this._emit('liveUpdateChanged', node, true);
-  }
-
-  _refreshLiveUpdateSubtree(node) {
-    if (node._loaded) {
-      this.loadNodeChildren(node);
-    }
-    if (node.children) {
-      for (const child of node.children) {
-        this._refreshLiveUpdateSubtree(child);
-      }
-    }
-  }
-
-  _inheritLiveUpdates(node, parentNode) {
-    const parentKey = this.nodeKey(parentNode);
-    if (!parentKey || !this.liveUpdateNodes.has(parentKey)) return;
-    this._enableLiveUpdatesForNode(node);
-    this._emit('liveUpdateChanged', node, true);
-  }
-
-  _enableLiveUpdatesForNode(node) {
-    const key = this.nodeKey(node);
-    if (!key || this.liveUpdateNodes.has(key)) return;
-    this.liveUpdateNodes.add(key);
     this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+    this._emit('nodeUpdated', node);
+    if (node.children) {
+      for (const child of node.children) {
+        this.enableLiveUpdates(child);
+      }
+    }
+    this._refreshSubtree(node);
   }
 
   disableLiveUpdates(node) {
-    this._disableLiveUpdatesForNode(node);
+    this.client.disableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+    this._emit('nodeUpdated', node);
     if (node.children) {
       for (const child of node.children) {
         this.disableLiveUpdates(child);
       }
     }
-    this._emit('liveUpdateChanged', node, false);
-  }
-
-  _disableLiveUpdatesForNode(node) {
-    const key = this.nodeKey(node);
-    if (!key || !this.liveUpdateNodes.has(key)) return;
-    this.liveUpdateNodes.delete(key);
-    if (this._pendingLiveUpdateKeys) {
-      this._pendingLiveUpdateKeys.delete(key);
-    }
-    this.client.disableLiveUpdates({ sID: node.type, twObjectIx: node.id });
   }
 
   isLiveUpdateEnabled(node) {
-    return this.liveUpdateNodes.has(this.nodeKey(node));
+    return this.client.isLiveUpdatesEnabled(node.type, node.id);
+  }
+
+  _refreshSubtree(node) {
+    if (node._loaded) {
+      this.loadNodeChildren(node);
+    }
+    if (node.children) {
+      for (const child of node.children) {
+        this._refreshSubtree(child);
+      }
+    }
   }
 
   getLiveUpdateNodeKeys() {
-    if (!this._pendingLiveUpdateKeys) {
-      return Array.from(this.liveUpdateNodes);
+    const keys = new Set();
+    for (const [key, node] of this.nodes) {
+      if (this.client.isLiveUpdatesEnabled(node.type, node.id)) {
+        keys.add(key);
+      }
     }
-    const keys = new Set(this.liveUpdateNodes);
-    for (const key of this._pendingLiveUpdateKeys) {
-      keys.add(key);
+    if (this._pendingLiveUpdateKeys) {
+      for (const key of this._pendingLiveUpdateKeys) {
+        keys.add(key);
+      }
     }
     return Array.from(keys);
   }
@@ -405,12 +376,10 @@ export class Model {
     for (const key of keys) {
       const node = this.nodes.get(key);
       if (node) {
-        this._enableLiveUpdatesForNode(node);
-        this._emit('liveUpdateChanged', node, true);
+        this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+        this._emit('nodeUpdated', node);
       } else {
-        if (!this._pendingLiveUpdateKeys) {
-          this._pendingLiveUpdateKeys = new Set();
-        }
+        if (!this._pendingLiveUpdateKeys) this._pendingLiveUpdateKeys = new Set();
         this._pendingLiveUpdateKeys.add(key);
       }
     }
@@ -421,8 +390,8 @@ export class Model {
     const key = this.nodeKey(node);
     if (this._pendingLiveUpdateKeys.has(key)) {
       this._pendingLiveUpdateKeys.delete(key);
-      this._enableLiveUpdatesForNode(node);
-      this._emit('liveUpdateChanged', node, true);
+      this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+      this._emit('nodeUpdated', node);
       if (this._pendingLiveUpdateKeys.size === 0) {
         this._pendingLiveUpdateKeys = null;
       }
@@ -467,7 +436,6 @@ export class Model {
       parentNode.children.push(existingNode);
       existingNode._parent = parentNode;
       this._emit('nodeInserted', { node: existingNode, parentNode });
-      this._inheritLiveUpdates(existingNode, parentNode);
       this._checkPendingExpansion(existingNode);
       this._checkPendingSelection();
       this._scheduleDataChanged();
@@ -479,7 +447,6 @@ export class Model {
     this._indexNode(adapter, parentNode);
 
     this._emit('nodeInserted', { node: adapter, parentNode });
-    this._inheritLiveUpdates(adapter, parentNode);
     this._checkPendingExpansion(adapter);
     this._checkPendingSelection();
     this._scheduleDataChanged();

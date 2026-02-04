@@ -56,22 +56,6 @@ export class HierarchyPanel {
       this.markNodeLoaded(parentNode);
     });
 
-    this.model.on('liveUpdateChanged', (node, enabled) => {
-      const nodeKey = this._nodeKey(node);
-      const element = this.nodeElements.get(nodeKey);
-      if (element) {
-        const content = element.querySelector(':scope > .tree-node-content');
-        if (content) {
-          content.classList.toggle('live-updates', enabled);
-        }
-      }
-      if (node.children) {
-        for (const child of node.children) {
-          this._syncLiveUpdateClass(child);
-        }
-      }
-    });
-
     this.model.on('nodeDeleted', ({ node, parentNode }) => {
       const nodeKey = this._nodeKey(node);
       const element = this.nodeElements.get(nodeKey);
@@ -225,22 +209,6 @@ export class HierarchyPanel {
     this.nodeElements.delete(nodeKey);
   }
 
-  _syncLiveUpdateClass(node) {
-    const key = this._nodeKey(node);
-    const element = this.nodeElements.get(key);
-    if (element) {
-      const content = element.querySelector(':scope > .tree-node-content');
-      if (content) {
-        content.classList.toggle('live-updates', this.model.isLiveUpdateEnabled(node));
-      }
-    }
-    if (node.children) {
-      for (const child of node.children) {
-        this._syncLiveUpdateClass(child);
-      }
-    }
-  }
-
   createNodeElement(nodeData) {
     const nodeKey = this._nodeKey(nodeData);
 
@@ -254,6 +222,9 @@ export class HierarchyPanel {
 
     const content = document.createElement('div');
     content.className = 'tree-node-content';
+    if (this.model.isLiveUpdateEnabled(nodeData)) {
+      content.classList.add('live-updates');
+    }
 
     const toggle = document.createElement('span');
     toggle.className = 'tree-toggle';
@@ -939,6 +910,11 @@ export class HierarchyPanel {
     const toggle = element.querySelector(':scope > .tree-node-content > .tree-toggle');
     if (toggle && !toggle.textContent && node.hasChildren) {
       toggle.textContent = '▶';
+    }
+
+    const content = element.querySelector(':scope > .tree-node-content');
+    if (content) {
+      content.classList.toggle('live-updates', this.model.isLiveUpdateEnabled(node));
     }
   }
 
