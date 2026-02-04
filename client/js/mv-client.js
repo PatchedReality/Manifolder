@@ -249,12 +249,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     }
   }
 
-  isLiveUpdatesEnabled(sID, twObjectIx) {
-    if (!this.#m_pLnG) return false;
-    const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
-    return this.#attachedModels.has(mvmfModel);
-  }
-
   _normalizeStubEntry(entry) {
     const pt = entry.pTransform;
     if (pt) {
@@ -577,24 +571,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       throw err;
     }
   }
-
-  async refreshNode(id, nodeType) {
-    if (id === undefined || !nodeType) {
-      throw new Error('Missing node id or type');
-    }
-    if (!this.#m_pLnG) {
-      throw new Error('Not connected to MV server');
-    }
-
-    const existing = this.#m_pLnG.Model_Open(nodeType, id);
-    if (existing) {
-      this._safeDetach(existing);
-      this.#m_pLnG.Model_Close(existing);
-    }
-
-    return this.getNode(id, nodeType);
-  }
-
   onInserted(pNotice) {
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild;

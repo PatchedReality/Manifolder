@@ -19,7 +19,7 @@ export class Model {
     this.expandedNodes = new Set();
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
-    this._pendingLiveUpdateKeys = null;
+    this._liveUpdateKeys = new Set();
     this.inheritedPlanetContext = null;
 
     this._dataChangedTimer = null;
@@ -109,7 +109,7 @@ export class Model {
     this.expandedNodes.clear();
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
-    this._pendingLiveUpdateKeys = null;
+    this._liveUpdateKeys = new Set();
     this.inheritedPlanetContext = inheritedPlanetContext;
 
     if (rootModel) {
@@ -135,6 +135,12 @@ export class Model {
       this.nodes.set(key, node);
     }
     node._parent = parent;
+
+    if (parent?.liveUpdatesEnabled || this._liveUpdateKeys.has(key)) {
+      node.liveUpdatesEnabled = true;
+      this._liveUpdateKeys.add(key);
+      this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+    }
 
     if (node.children && node.children.length > 0) {
       for (const child of node.children) {
@@ -169,17 +175,6 @@ export class Model {
       }
     }
 
-    if (children) {
-      const parentIsLive = this.client.isLiveUpdatesEnabled(parentNode.type, parentNode.id);
-      for (const child of children) {
-        if (parentIsLive) {
-          this.client.enableLiveUpdates({ sID: child.type, twObjectIx: child.id });
-        } else if (this._pendingLiveUpdateKeys) {
-          this._checkPendingLiveUpdate(child);
-        }
-      }
-    }
-
     this._emit('nodeChildrenChanged', parentNode);
 
     // Check after emit so hierarchy DOM elements exist before selection fires
@@ -205,12 +200,6 @@ export class Model {
           this._pendingExpandedKeys = new Set();
         }
         this._pendingExpandedKeys.add(key);
-      }
-      if (this.client.isLiveUpdatesEnabled(node.type, node.id)) {
-        if (!this._pendingLiveUpdateKeys) {
-          this._pendingLiveUpdateKeys = new Set();
-        }
-        this._pendingLiveUpdateKeys.add(key);
       }
       if (this.selectedNode && this.nodeKey(this.selectedNode) === key) {
         this._pendingSelectedKey = key;
@@ -320,6 +309,9 @@ export class Model {
   // --- Live Updates ---
 
   enableLiveUpdates(node) {
+    const key = this.nodeKey(node);
+    node.liveUpdatesEnabled = true;
+    this._liveUpdateKeys.add(key);
     this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
     if (node.children) {
@@ -331,6 +323,9 @@ export class Model {
   }
 
   disableLiveUpdates(node) {
+    const key = this.nodeKey(node);
+    node.liveUpdatesEnabled = false;
+    this._liveUpdateKeys.delete(key);
     this.client.disableLiveUpdates({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
     if (node.children) {
@@ -341,7 +336,7 @@ export class Model {
   }
 
   isLiveUpdateEnabled(node) {
-    return this.client.isLiveUpdatesEnabled(node.type, node.id);
+    return node.liveUpdatesEnabled;
   }
 
   _refreshSubtree(node) {
@@ -356,44 +351,18 @@ export class Model {
   }
 
   getLiveUpdateNodeKeys() {
-    const keys = new Set();
-    for (const [key, node] of this.nodes) {
-      if (this.client.isLiveUpdatesEnabled(node.type, node.id)) {
-        keys.add(key);
-      }
-    }
-    if (this._pendingLiveUpdateKeys) {
-      for (const key of this._pendingLiveUpdateKeys) {
-        keys.add(key);
-      }
-    }
-    return Array.from(keys);
+    return Array.from(this._liveUpdateKeys);
   }
 
   enableLiveUpdatesByKeys(keys) {
     if (!keys || keys.length === 0) return;
-    this._pendingLiveUpdateKeys = null;
     for (const key of keys) {
+      this._liveUpdateKeys.add(key);
       const node = this.nodes.get(key);
       if (node) {
+        node.liveUpdatesEnabled = true;
         this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
         this._emit('nodeUpdated', node);
-      } else {
-        if (!this._pendingLiveUpdateKeys) this._pendingLiveUpdateKeys = new Set();
-        this._pendingLiveUpdateKeys.add(key);
-      }
-    }
-  }
-
-  _checkPendingLiveUpdate(node) {
-    if (!this._pendingLiveUpdateKeys) return;
-    const key = this.nodeKey(node);
-    if (this._pendingLiveUpdateKeys.has(key)) {
-      this._pendingLiveUpdateKeys.delete(key);
-      this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
-      this._emit('nodeUpdated', node);
-      if (this._pendingLiveUpdateKeys.size === 0) {
-        this._pendingLiveUpdateKeys = null;
       }
     }
   }
@@ -435,6 +404,11 @@ export class Model {
       existingNode.updateModel(mvmfModel);
       parentNode.children.push(existingNode);
       existingNode._parent = parentNode;
+      if (parentNode.liveUpdatesEnabled && !existingNode.liveUpdatesEnabled) {
+        existingNode.liveUpdatesEnabled = true;
+        this._liveUpdateKeys.add(childKey);
+        this.client.enableLiveUpdates({ sID: existingNode.type, twObjectIx: existingNode.id });
+      }
       this._emit('nodeInserted', { node: existingNode, parentNode });
       this._checkPendingExpansion(existingNode);
       this._checkPendingSelection();

@@ -77,6 +77,7 @@ export function createInfiniteGrid(scene, options = {}) {
 
   const grid = new THREE.Mesh(geometry, material);
   grid.frustumCulled = false;
+  grid.renderOrder = -1;
   scene.add(grid);
 
   return grid;

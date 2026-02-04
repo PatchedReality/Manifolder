@@ -627,12 +627,20 @@ export class ViewResource {
     }
 
     if (hasResource) {
-      const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
-      const lower = node.resourceUrl.toLowerCase();
-      if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-        await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, target);
+      const resourceRef = node.resourceRef;
+      const actionType = resourceRef?.startsWith('action://')
+        ? resourceRef.slice('action://'.length).split(/[:/]/)[0]
+        : null;
+      if (actionType === 'rotator' && node.resourceName) {
+        await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId);
       } else {
-        await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, target);
+        const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
+        const lower = node.resourceUrl.toLowerCase();
+        if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+          await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, target);
+        } else {
+          await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, target);
+        }
       }
     }
 
@@ -1832,10 +1840,7 @@ export class ViewResource {
 
     this._addBoundsRecursive(this.currentNode, this.boundsGroup, true);
 
-    this.boundsGroup.scale.copy(this.contentGroup.scale);
-    this.boundsGroup.position.copy(this.contentGroup.position);
-
-    this.scene.add(this.boundsGroup);
+    this.contentGroup.add(this.boundsGroup);
   }
 
   _addBoundsRecursive(node, parentGroup, isRoot = false) {
@@ -1875,8 +1880,8 @@ export class ViewResource {
         child.material.dispose();
       }
     });
-    if (this.scene) {
-      this.scene.remove(this.boundsGroup);
+    if (this.boundsGroup.parent) {
+      this.boundsGroup.parent.remove(this.boundsGroup);
     }
     this.boundsGroup = null;
   }
