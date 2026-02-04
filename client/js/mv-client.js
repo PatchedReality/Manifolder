@@ -205,7 +205,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
         readyChildren.push(child);
       } else {
         const key = `${child.sID}_${child.twObjectIx}`;
-        console.warn(`[MVClient] enumerateChildren: child ${key} not ready (state=${child.ReadyState?.()}), deferring`);
         this.#pendingEnumeratedChildren.set(key, {
           child,
           parentType: model.sID,
@@ -217,7 +216,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   onReadyState(pNotice) {
-    console.log(`[MVClient] onReadyState: ${pNotice.pCreator?.sID}_${pNotice.pCreator?.twObjectIx} state=${pNotice.pCreator?.ReadyState?.()}, isReady=${pNotice.pCreator?.IsReady?.()}`);
     if (!this.IsReady()) {
       if (pNotice.pCreator === this.#m_pFabric) {
         this._handleFabricReadyState();
@@ -371,14 +369,12 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
     const pendingInsert = this.#pendingInserts.get(key);
     if (pendingInsert) {
-      console.log(`[MVClient] pendingInsert ready: ${key}, emitting nodeInserted`);
       this.#pendingInserts.delete(key);
       this._emit('nodeInserted', pendingInsert);
     }
 
     const pendingEnum = this.#pendingEnumeratedChildren.get(key);
     if (pendingEnum) {
-      console.log(`[MVClient] pendingEnumeratedChild ready: ${key}, emitting nodeInserted`);
       this.#pendingEnumeratedChildren.delete(key);
       this._emit('nodeInserted', {
         mvmfModel: pendingEnum.child,
@@ -493,10 +489,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   onInserted(pNotice) {
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild;
-    console.log(`[MVClient] onInserted: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, childReady=${child?.IsReady?.()}, clientReady=${this.IsReady()}`);
-    if (!creator.IsReady?.()) {
-      console.warn(`[MVClient] onInserted: parent ${creator.sID}_${creator.twObjectIx} not ready`);
-    }
     if (this.IsReady() && child) {
       this._safeAttach(child);
 
@@ -507,11 +499,9 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       };
 
       if (child.IsReady()) {
-        console.log(`[MVClient] onInserted: emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
         this._emit('nodeInserted', insertData);
       } else {
         const key = `${child.sID}_${child.twObjectIx}`;
-        console.log(`[MVClient] onInserted: child ${key} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
         this.#pendingInserts.set(key, insertData);
       }
     }
@@ -521,7 +511,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     if (!this.IsReady()) return;
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild || creator;
-    console.log(`[MVClient] onUpdated: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, hasDataChild=${!!pNotice.pData?.pChild}`);
     if (child?.sID && child.twObjectIx !== undefined) {
       this._safeAttach(child);
       if (!child.IsReady?.()) return;
@@ -537,9 +526,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild;
     const pChange = pNotice.pData?.pChange;
-    console.log(`[MVClient] onChanged: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, pChange.sType=${pChange?.sType}`);
     if (!creator.IsReady?.()) {
-      console.warn(`[MVClient] onChanged: parent ${creator.sID}_${creator.twObjectIx} not ready`);
       return;
     }
 
@@ -547,10 +534,8 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       // RMPOBJECT_OPEN is authoritative: child is being added to this parent.
       // _isChildOf enum lags behind the notification, so bypass it.
       if (pChange?.sType === 'RMPOBJECT_OPEN') {
-        console.log(`[MVClient] onChanged: OPEN — ${child.sID}_${child.twObjectIx} added to ${creator.sID}_${creator.twObjectIx}`);
         this._safeAttach(child);
         if (child.IsReady()) {
-          console.log(`[MVClient] onChanged: OPEN emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
           this._emit('nodeInserted', {
             mvmfModel: child,
             parentType: creator.sID,
@@ -558,7 +543,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
           });
         } else {
           const childKey = `${child.sID}_${child.twObjectIx}`;
-          console.log(`[MVClient] onChanged: OPEN child ${childKey} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
           this.#pendingInserts.set(childKey, {
             mvmfModel: child,
             parentType: creator.sID,
@@ -570,7 +554,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
       const present = this._isChildOf(creator, child);
       if (present === false) {
-        console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} not in parent's Child_Enum, emitting delete`);
         this._emit('nodeDeleted', {
           id: child.twObjectIx,
           type: child.sID,
@@ -580,7 +563,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       } else if (present === true) {
         this._safeAttach(child);
         if (child.IsReady()) {
-          console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} in parent's Child_Enum, emitting nodeInserted`);
           this._emit('nodeInserted', {
             mvmfModel: child,
             parentType: creator.sID,
@@ -588,7 +570,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
           });
         } else {
           const childKey = `${child.sID}_${child.twObjectIx}`;
-          console.log(`[MVClient] onChanged: child ${childKey} not ready, deferring`);
           this.#pendingInserts.set(childKey, {
             mvmfModel: child,
             parentType: creator.sID,
@@ -596,7 +577,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
           });
         }
       } else {
-        console.log(`[MVClient] onChanged: indeterminate for ${child.sID}_${child.twObjectIx}, reloading ${creator.sID}_${creator.twObjectIx}`);
         const model = this.#m_pLnG.Model_Open(creator.sID, creator.twObjectIx);
         this._safeAttach(model);
       }
@@ -609,9 +589,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   onDeleting(pNotice) {
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild;
-    console.log(`[MVClient] onDeleting: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}`);
     if (!creator.IsReady?.()) {
-      console.warn(`[MVClient] onDeleting: parent ${creator.sID}_${creator.twObjectIx} not ready, deferring to onChanged`);
       return;
     }
     if (this.IsReady() && child) {

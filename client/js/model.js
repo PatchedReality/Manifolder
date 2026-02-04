@@ -298,7 +298,6 @@ export class Model {
   _handleNodeInserted(mvmfModel, parentType, parentId) {
     const childKey = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
     if (mvmfModel.IsReady && !mvmfModel.IsReady()) {
-      console.log(`[Model] nodeInserted: ${childKey} not ready, skipping`);
       return;
     }
 
@@ -307,7 +306,6 @@ export class Model {
       : null;
 
     if (!parentNode) {
-      console.log(`[Model] nodeInserted: parent ${parentType}_${parentId} not found, skipping`);
       return;
     }
 
@@ -317,7 +315,6 @@ export class Model {
     if (existingIdx !== -1) {
       const node = parentNode.children[existingIdx];
       node.updateModel(mvmfModel);
-      console.log(`[Model] nodeInserted: ${childKey} → ${parentType}_${parentId} (update-in-place)`);
       this._emit('nodeUpdated', node);
       this._scheduleDataChanged();
       return;
@@ -333,7 +330,6 @@ export class Model {
       existingNode.updateModel(mvmfModel);
       parentNode.children.push(existingNode);
       existingNode._parent = parentNode;
-      console.log(`[Model] nodeInserted: ${childKey} reparented from ${oldParent.type}_${oldParent.id} → ${parentType}_${parentId}`);
       this._emit('nodeInserted', { node: existingNode, parentNode });
       this._checkPendingExpansion(existingNode);
       this._checkPendingSelection();
@@ -344,7 +340,6 @@ export class Model {
     const adapter = new NodeAdapter(mvmfModel);
     parentNode.children.push(adapter);
     this._indexNode(adapter, parentNode);
-    console.log(`[Model] nodeInserted: ${childKey} new child of ${parentType}_${parentId}, parent now has ${parentNode.children.length} children`);
 
     this._emit('nodeInserted', { node: adapter, parentNode });
     this._checkPendingExpansion(adapter);
