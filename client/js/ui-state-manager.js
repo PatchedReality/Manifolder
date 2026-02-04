@@ -28,12 +28,9 @@ const DEFAULT_STATE = {
     showResource: false
   },
   viewBounds: {
-    expandedNodeIds: [],
     typeFilter: null,
     timeScaleIndex: 4,
-    orbitsVisible: true,
-    selectedId: null,
-    selectedType: null
+    orbitsVisible: true
   },
   viewResource: {
     showBounds: false
@@ -113,24 +110,24 @@ export class UIStateManager {
     app.viewBounds.restoreState(viewBoundsState);
     app.viewResource.restoreState(viewResourceState);
 
-    if (newUrl && (newUrl !== currentUrl || !app.tree)) {
+    if (newUrl && (newUrl !== currentUrl || !app.model.tree)) {
       document.getElementById('url-input').value = newUrl;
       await app.handleLoadMap(newUrl, { skipStateRestore: true });
     }
 
     app.layout.restoreStateUI(layoutState);
 
-    if (!app.tree) {
+    if (!app.model.tree) {
       console.error('applyFullState: Map failed to load - tree is null');
       return false;
     }
 
     if (snapshot.hierarchy?.expandedNodeIds?.length > 0) {
-      app.hierarchy.expandNodesByKeys(snapshot.hierarchy.expandedNodeIds);
+      app.model.expandNodesByKeys(snapshot.hierarchy.expandedNodeIds);
     }
 
     if (snapshot.navigation?.selectedNodePath?.length > 0) {
-      await app.restoreNodePath(snapshot.navigation.selectedNodePath);
+      app.restoreNodePath(snapshot.navigation.selectedNodePath);
     }
 
     return true;

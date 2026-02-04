@@ -4,10 +4,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
+import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry, getSpinData, calculateSpinAngle } from './orbital-helpers.js';
 import {
   NODE_TYPES,
+  NODE_COLORS,
   CELESTIAL_NAMES,
   TERRESTRIAL_NAMES,
   PLACEMENT_NAMES
@@ -19,19 +20,9 @@ export { NODE_TYPES };
 // Texture loader for celestial body surfaces
 const textureLoader = new THREE.TextureLoader();
 
-// Build NODE_COLORS lookup from NODE_TYPES
-const NODE_COLORS = {
-  RMRoot: 0xffd700,
-  RMCObject: 0x4a9eff,
-  RMTObject: 0x50c878,
-  RMPObject: 0xff8c42,
-  ...Object.fromEntries(NODE_TYPES.map(t => [t.name, t.color]))
-};
-
 const DEFAULT_COLOR = 0x888888;
 const SELECTION_COLOR = 0xffffff;
 
-// Alias for internal use
 const CELESTIAL_TYPES = CELESTIAL_NAMES;
 
 // Scale factors for logarithmic rendering (tunable)
@@ -86,28 +77,20 @@ function getSurfaceTexture(node) {
 }
 
 export class ViewBounds {
-  constructor(containerSelector, stateManager) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
     this.stateManager = stateManager;
+    this.model = model;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
     this.controls = null;
     this.globe = null;
 
-    this.nodeData = new Map();
-    this.nodeParents = new Map();
     this.nodeMeshes = new Map();
     this.orbitPaths = new Map();
-    this.expandedNodes = new Set();
-    this.pendingExpandedNodes = null;
-    this.tree = null;
-    this.selectedId = null;
-    this.selectedType = null;
     this.focusNode = null;
 
-    this.selectCallbacks = [];
-    this.toggleCallbacks = [];
     this.msfLoadCallbacks = [];
 
     this.raycaster = new THREE.Raycaster();
@@ -128,11 +111,34 @@ export class ViewBounds {
     this.disposed = false;
     this.initialized = false;
 
+    this._bindModelEvents();
     this.init();
     this.restoreState();
     if (this.initialized) {
       this.animate();
     }
+  }
+
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.selectNode(node.id, node.type);
+      }
+    });
+
+    this.model.on('treeChanged', (tree) => {
+      this.setData(tree);
+    });
+
+    this.model.on('expansionChanged', (node, expanded) => {
+      if (expanded) {
+        this.expandNode(node);
+      } else {
+        this.collapseNode(node);
+      }
+    });
+
+    this.model.on('dataChanged', () => this._scheduleRebuild());
   }
 
   init() {
@@ -271,7 +277,7 @@ export class ViewBounds {
 
   setupEventListeners() {
     // Store bound handlers for cleanup
-    this.boundResizeHandler = () => this.onResize();
+    this.boundResizeHandler = () => this.onWindowResize();
     this.boundClickHandler = (e) => {
       if (this.clickTimeout) {
         clearTimeout(this.clickTimeout);
@@ -290,7 +296,7 @@ export class ViewBounds {
     this.renderer.domElement.addEventListener('click', this.boundClickHandler);
 
     // ResizeObserver for container size changes
-    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver = new ResizeObserver(() => this.onWindowResize());
     this.resizeObserver.observe(this.container);
 
     // Timescale slider for orbital animation
@@ -337,7 +343,7 @@ export class ViewBounds {
     this.saveState();
   }
 
-  onResize() {
+  onWindowResize() {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
@@ -347,22 +353,19 @@ export class ViewBounds {
     this.renderer.setSize(width, height);
   }
 
-  onClick(event) {
+  _raycastNodes(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    // Get all polygon meshes
     const meshes = Array.from(this.nodeMeshes.values()).map(n => n.mesh);
     const intersects = this.raycaster.intersectObjects(meshes, false);
 
-    if (intersects.length === 0) return;
-
-    // Deduplicate intersections - keep only nearest hit per node (ray hits front and back faces)
+    // Deduplicate - keep only nearest hit per node (ray hits front and back faces)
     const seen = new Set();
-    const uniqueIntersects = intersects.filter(i => {
+    return intersects.filter(i => {
       const nd = i.object.userData.nodeData;
       if (!nd) return false;
       const key = `${nd.type}_${nd.id}`;
@@ -370,15 +373,23 @@ export class ViewBounds {
       seen.add(key);
       return true;
     });
+  }
 
+  _findSelectedIndex(uniqueIntersects) {
+    const selected = this.model.getSelectedNode();
+    if (!selected) return -1;
+    return uniqueIntersects.findIndex(i => {
+      const nd = i.object.userData.nodeData;
+      return nd && nd.id === selected.id && nd.type === selected.type;
+    });
+  }
+
+  onClick(event) {
+    const uniqueIntersects = this._raycastNodes(event);
     if (uniqueIntersects.length === 0) return;
 
     let targetIndex = 0;
-
-    const currentIndex = uniqueIntersects.findIndex(i => {
-      const nd = i.object.userData.nodeData;
-      return nd && nd.id === this.selectedId && nd.type === this.selectedType;
-    });
+    const currentIndex = this._findSelectedIndex(uniqueIntersects);
 
     if (currentIndex !== -1) {
       targetIndex = (currentIndex + 1) % uniqueIntersects.length;
@@ -386,40 +397,15 @@ export class ViewBounds {
 
     const nodeData = uniqueIntersects[targetIndex].object.userData.nodeData;
     if (nodeData) {
-      this.selectNode(nodeData.id, nodeData.type);
-      this.selectCallbacks.forEach(cb => cb(nodeData));
+      this.model.selectNode(nodeData);
     }
   }
 
   onDoubleClick(event) {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    this.raycaster.setFromCamera(this.mouse, this.camera);
-
-    const meshes = Array.from(this.nodeMeshes.values()).map(n => n.mesh);
-    const intersects = this.raycaster.intersectObjects(meshes, false);
-
-    if (intersects.length === 0) return;
-
-    // Deduplicate intersections - keep only nearest hit per node
-    const seen = new Set();
-    const uniqueIntersects = intersects.filter(i => {
-      const nd = i.object.userData.nodeData;
-      if (!nd) return false;
-      const key = `${nd.type}_${nd.id}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
+    const uniqueIntersects = this._raycastNodes(event);
     if (uniqueIntersects.length === 0) return;
 
-    const currentIndex = uniqueIntersects.findIndex(i => {
-      const nd = i.object.userData.nodeData;
-      return nd && nd.id === this.selectedId && nd.type === this.selectedType;
-    });
+    const currentIndex = this._findSelectedIndex(uniqueIntersects);
 
     let nodeData;
     if (currentIndex !== -1) {
@@ -427,8 +413,7 @@ export class ViewBounds {
     } else {
       nodeData = uniqueIntersects[0].object.userData.nodeData;
       if (nodeData) {
-        this.selectNode(nodeData.id, nodeData.type);
-        this.selectCallbacks.forEach(cb => cb(nodeData));
+        this.model.selectNode(nodeData);
       }
     }
 
@@ -499,43 +484,17 @@ export class ViewBounds {
     this.renderer.render(this.scene, this.camera);
   }
 
-  setData(tree, inheritedPlanetContext = null) {
-    this.tree = tree;
-    this.inheritedPlanetContext = inheritedPlanetContext;
+  setData(tree) {
     this.clearNodes();
-    this.nodeData.clear();
-    this.nodeParents.clear();
-    this.expandedNodes.clear();
-    this.selectedId = null;
-    this.selectedType = null;
     this.focusNode = null;
 
     if (tree) {
-      this.buildNodeData(tree, null, null, null, inheritedPlanetContext);
+      this.buildNodeData(tree, null, null, null, this.model.inheritedPlanetContext);
       this.calculateDynamicScale();
-      this.expandedNodes.add(this._getKey(tree.id, tree.type));
 
-      if (this.pendingExpandedNodes && this.pendingExpandedNodes.size > 0) {
-        this.pendingExpandedNodes.forEach(key => {
-          if (this.nodeData.has(key)) {
-            this.expandedNodes.add(key);
-          }
-        });
-        this.pendingExpandedNodes = null;
-      }
-
-      if (this.pendingSelectedId && this.pendingSelectedType) {
-        const key = this._getKey(this.pendingSelectedId, this.pendingSelectedType);
-        const node = this.nodeData.get(key);
-        if (node) {
-          this.selectedId = this.pendingSelectedId;
-          this.selectedType = this.pendingSelectedType;
-          if (this.isCelestialNode(node)) {
-            this.focusNode = node;
-          }
-        }
-        this.pendingSelectedId = null;
-        this.pendingSelectedType = null;
+      const selectedNode = this.model.getSelectedNode();
+      if (selectedNode && this.isCelestialNode(selectedNode)) {
+        this.focusNode = selectedNode;
       }
 
       this.rebuildVisibleNodes();
@@ -548,7 +507,7 @@ export class ViewBounds {
     let maxExtent = 0;
     let nodeCount = 0;
 
-    this.nodeData.forEach(node => {
+    this.model.nodes.forEach(node => {
       if (node._worldPos) {
         const pos = node._worldPos;
         const bound = node._bound || { x: 0, y: 0, z: 0 };
@@ -579,10 +538,6 @@ export class ViewBounds {
       this.scale = 1 / 100000;
       // Don't mark as calculated - we'll try again when children are added
     }
-  }
-
-  _getKey(id, type) {
-    return `${type}_${id}`;
   }
 
   clearNodes() {
@@ -666,6 +621,58 @@ export class ViewBounds {
     return orbitLine;
   }
 
+  _findOrbitalParent(node) {
+    const orbitalParentId = node.properties?.pObjectHead?.twParentIx;
+    if (orbitalParentId) {
+      const parent = this.model.getNode('RMCObject', orbitalParentId);
+      if (parent) return parent;
+    }
+    return node._parent;
+  }
+
+  _calculateRotatedOrbitalOffset(node) {
+    const orbitalOffset = calculateOrbitalPosition(node._orbitData, this.simulationTime);
+
+    const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
+    let rotated = this.rotateByQuaternion(
+      orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
+      localRot.x, localRot.y, localRot.z, localRot.w
+    );
+
+    const parentNode = this._findOrbitalParent(node);
+    if (parentNode?._worldRot) {
+      rotated = this.rotateByQuaternion(
+        rotated.x, rotated.y, rotated.z,
+        parentNode._worldRot.x, parentNode._worldRot.y, parentNode._worldRot.z, parentNode._worldRot.w
+      );
+    }
+
+    return rotated;
+  }
+
+  _scaleOrbitalOffset(rotatedOrbital) {
+    if (this.focusNode) {
+      const refUnit = this.getNodeBoundSize(this.focusNode);
+      const distance = Math.sqrt(
+        rotatedOrbital.x * rotatedOrbital.x +
+        rotatedOrbital.y * rotatedOrbital.y +
+        rotatedOrbital.z * rotatedOrbital.z
+      );
+      if (distance > 0.001) {
+        const logDistance = Math.log10(1 + distance / refUnit);
+        const scaledDistance = logDistance * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
+        const s = scaledDistance / distance;
+        return { x: rotatedOrbital.x * s, y: rotatedOrbital.y * s, z: rotatedOrbital.z * s };
+      }
+      return { x: 0, y: 0, z: 0 };
+    }
+    return {
+      x: rotatedOrbital.x * this.scale,
+      y: rotatedOrbital.y * this.scale,
+      z: rotatedOrbital.z * this.scale
+    };
+  }
+
   updateOrbitalPositions() {
     // First pass: update positions of orbital bodies
 
@@ -673,89 +680,19 @@ export class ViewBounds {
       const node = mesh.userData.nodeData;
       if (!node || !node._orbitData) return;
 
-      const orbitData = node._orbitData;
-
-      // Find orbital parent using twParentIx (not tree parent)
-      const orbitalParentId = node.properties?.pObjectHead?.twParentIx;
-      let parentNode = null;
-
-      if (orbitalParentId) {
-        // Search for the orbital parent in nodeData
-        this.nodeData.forEach((n, k) => {
-          if (n.id === orbitalParentId && n.type === 'RMCObject') {
-            parentNode = n;
-          }
-        });
-      }
-
-      // Fallback to tree parent if orbital parent not found
-      if (!parentNode) {
-        parentNode = this.nodeParents.get(key);
-      }
-
+      const parentNode = this._findOrbitalParent(node);
       if (!parentNode) return;
 
-      // Calculate new position at current simulation time
-      const orbitalOffset = calculateOrbitalPosition(orbitData, this.simulationTime);
-
-      // Apply node's rotation (orbital plane orientation)
-      const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
-      const rotatedOrbital = this.rotateByQuaternion(
-        orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
-        localRot.x, localRot.y, localRot.z, localRot.w
-      );
-
-      // Apply parent's world rotation
-      if (parentNode._worldRot) {
-        const worldOrbital = this.rotateByQuaternion(
-          rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
-          parentNode._worldRot.x, parentNode._worldRot.y, parentNode._worldRot.z, parentNode._worldRot.w
-        );
-        rotatedOrbital.x = worldOrbital.x;
-        rotatedOrbital.y = worldOrbital.y;
-        rotatedOrbital.z = worldOrbital.z;
-      }
-
-      // Get parent's animated position (handles hidden orbital parents)
+      const rotatedOrbital = this._calculateRotatedOrbitalOffset(node);
       const parentScaledPos = this.getAnimatedNodePosition(parentNode);
+      const scaledOffset = this._scaleOrbitalOffset(rotatedOrbital);
 
-      // Scale orbital offset using same logarithmic formula
-      let scaledOffset;
-      if (this.focusNode) {
-        const refUnit = this.getNodeBoundSize(this.focusNode);
-        const distance = Math.sqrt(
-          rotatedOrbital.x * rotatedOrbital.x +
-          rotatedOrbital.y * rotatedOrbital.y +
-          rotatedOrbital.z * rotatedOrbital.z
-        );
-        if (distance > 0.001) {
-          const logDistance = Math.log10(1 + distance / refUnit);
-          const scaledDistance = logDistance * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
-          const scale = scaledDistance / distance;
-          scaledOffset = {
-            x: rotatedOrbital.x * scale,
-            y: rotatedOrbital.y * scale,
-            z: rotatedOrbital.z * scale
-          };
-        } else {
-          scaledOffset = { x: 0, y: 0, z: 0 };
-        }
-      } else {
-        scaledOffset = {
-          x: rotatedOrbital.x * this.scale,
-          y: rotatedOrbital.y * this.scale,
-          z: rotatedOrbital.z * this.scale
-        };
-      }
-
-      // Update mesh position
       mesh.position.set(
         parentScaledPos.x + scaledOffset.x,
         parentScaledPos.y + scaledOffset.y,
         parentScaledPos.z + scaledOffset.z
       );
 
-      // Update outline and label positions
       const meshData = this.nodeMeshes.get(key);
       if (meshData.outline) meshData.outline.position.copy(mesh.position);
       if (meshData.label) meshData.label.position.copy(mesh.position);
@@ -766,7 +703,7 @@ export class ViewBounds {
       const node = mesh.userData.nodeData;
       if (!node || node._orbitData) return; // Skip if has orbital data (already updated)
 
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (!parentNode) return;
 
       // Check if any ancestor moved (has orbital data)
@@ -777,8 +714,7 @@ export class ViewBounds {
           hasMovingAncestor = true;
           break;
         }
-        const ancestorKey = this._getKey(ancestor.id, ancestor.type);
-        ancestor = this.nodeParents.get(ancestorKey);
+        ancestor = ancestor._parent;
       }
       if (!hasMovingAncestor) return;
 
@@ -791,10 +727,10 @@ export class ViewBounds {
 
     // Third pass: update orbit path positions (centered on parent)
     this.orbitPaths.forEach((orbitLine, key) => {
-      const node = this.nodeData.get(key);
+      const node = this.model.nodes.get(key);
       if (!node) return;
 
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (!parentNode) return;
 
       // Get parent's animated position (handles hidden orbital parents)
@@ -822,7 +758,7 @@ export class ViewBounds {
 
   // Get animated position of a node, recursively calculating for hidden orbital parents
   getAnimatedNodePosition(node) {
-    const key = this._getKey(node.id, node.type);
+    const key = this.model.nodeKey(node);
     const meshData = this.nodeMeshes.get(key);
 
     // If node has a mesh, use its current position
@@ -836,72 +772,11 @@ export class ViewBounds {
 
     // If node has orbital data, calculate its animated position
     if (node._orbitData) {
-      // Find orbital parent
-      const orbitalParentId = node.properties?.pObjectHead?.twParentIx;
-      let parentNode = null;
-
-      if (orbitalParentId) {
-        this.nodeData.forEach((n) => {
-          if (n.id === orbitalParentId && n.type === 'RMCObject') {
-            parentNode = n;
-          }
-        });
-      }
-
-      if (!parentNode) {
-        parentNode = this.nodeParents.get(key);
-      }
-
+      const parentNode = this._findOrbitalParent(node);
       if (parentNode) {
-        // Calculate orbital offset at current time
-        const orbitalOffset = calculateOrbitalPosition(node._orbitData, this.simulationTime);
-
-        // Apply node's rotation (orbital plane orientation)
-        const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
-        let rotatedOrbital = this.rotateByQuaternion(
-          orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
-          localRot.x, localRot.y, localRot.z, localRot.w
-        );
-
-        // Apply parent's world rotation
-        if (parentNode._worldRot) {
-          rotatedOrbital = this.rotateByQuaternion(
-            rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
-            parentNode._worldRot.x, parentNode._worldRot.y, parentNode._worldRot.z, parentNode._worldRot.w
-          );
-        }
-
-        // Get parent's animated position (recursive)
+        const rotatedOrbital = this._calculateRotatedOrbitalOffset(node);
         const parentPos = this.getAnimatedNodePosition(parentNode);
-
-        // Scale orbital offset
-        let scaledOffset;
-        if (this.focusNode) {
-          const refUnit = this.getNodeBoundSize(this.focusNode);
-          const distance = Math.sqrt(
-            rotatedOrbital.x * rotatedOrbital.x +
-            rotatedOrbital.y * rotatedOrbital.y +
-            rotatedOrbital.z * rotatedOrbital.z
-          );
-          if (distance > 0.001) {
-            const logDistance = Math.log10(1 + distance / refUnit);
-            const scaledDistance = logDistance * FOCUS_VISUAL_SIZE * LOG_SCALE_FACTOR / 10;
-            const scale = scaledDistance / distance;
-            scaledOffset = {
-              x: rotatedOrbital.x * scale,
-              y: rotatedOrbital.y * scale,
-              z: rotatedOrbital.z * scale
-            };
-          } else {
-            scaledOffset = { x: 0, y: 0, z: 0 };
-          }
-        } else {
-          scaledOffset = {
-            x: rotatedOrbital.x * this.scale,
-            y: rotatedOrbital.y * this.scale,
-            z: rotatedOrbital.z * this.scale
-          };
-        }
+        const scaledOffset = this._scaleOrbitalOffset(rotatedOrbital);
 
         return {
           x: parentPos.x + scaledOffset.x,
@@ -1009,20 +884,12 @@ export class ViewBounds {
       worldRot = { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
     }
 
-    const key = this._getKey(node.id, node.type);
-    this.nodeData.set(key, node);
-
     node._worldPos = worldPos;
     node._worldRot = worldRot;
     node._bound = bound;
     node._orbitData = orbitData;
     if (planetContext) {
       node._planetContext = planetContext;
-    }
-
-    // Store parent ref in separate map to avoid circular JSON
-    if (parentNode) {
-      this.nodeParents.set(key, parentNode);
     }
 
     if (node.children && node.children.length > 0) {
@@ -1034,13 +901,12 @@ export class ViewBounds {
 
   rebuildVisibleNodes() {
     this.clearNodes();
-    if (!this.tree) return;
+    if (!this.model.tree) return;
 
-    this.addVisibleNode(this.tree);
+    this.addVisibleNode(this.model.tree);
 
     const addExpandedChildren = (node) => {
-      const key = this._getKey(node.id, node.type);
-      if (this.expandedNodes.has(key) && node.children) {
+      if (this.model.isNodeExpanded(node) && node.children) {
         node.children.forEach(child => {
           this.addVisibleNode(child);
           addExpandedChildren(child);
@@ -1048,7 +914,7 @@ export class ViewBounds {
       }
     };
 
-    addExpandedChildren(this.tree);
+    addExpandedChildren(this.model.tree);
     this.updateGridPosition();
 
     // Update orbital positions to match current simulation time (even when paused)
@@ -1080,14 +946,16 @@ export class ViewBounds {
   }
 
   addVisibleNode(node) {
-    const key = this._getKey(node.id, node.type);
+    const key = this.model.nodeKey(node);
 
     // Skip nodes without world position data (not yet processed by buildNodeData)
-    if (!node._worldPos) return;
+    if (!node._worldPos) {
+      return;
+    }
 
     // Create orbit path even for filtered nodes (orbit should still be visible)
     if (node._orbitData && !this.orbitPaths.has(key)) {
-      const parentNode = this.nodeParents.get(key);
+      const parentNode = node._parent;
       if (parentNode) {
         const orbitPath = this.createOrbitPath(node, parentNode);
         if (orbitPath) {
@@ -1097,15 +965,18 @@ export class ViewBounds {
     }
 
     // Check type filter for mesh creation
-    if (!this.isTypeEnabled(node)) return;
+    if (!this.isTypeEnabled(node)) {
+      return;
+    }
 
     const worldPos = node._worldPos;
     const worldRot = node._worldRot;
     const bound = this.getEffectiveBound(node);
 
-    const isSelected = node.id === this.selectedId && node.type === this.selectedType;
+    const selectedNode = this.model.getSelectedNode();
+    const isSelected = selectedNode && node.id === selectedNode.id && node.type === selectedNode.type;
     const hasChildren = node.hasChildren || (node.children && node.children.length > 0);
-    const isExpanded = this.expandedNodes.has(key);
+    const isExpanded = this.model.isNodeExpanded(node);
 
     const isCelestial = this.isCelestialNode(node);
     let scaledData = null;
@@ -1367,77 +1238,27 @@ export class ViewBounds {
   }
 
   createLabel(text, boxHalfWidth, boxHalfHeight) {
-    const fontSize = 64;
-    const font = `bold ${fontSize}px Arial`;
+    const { sprite, aspect } = createLabelSprite(text);
 
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.font = font;
-
-    const metrics = context.measureText(text);
-    const textWidth = metrics.width;
-    const textHeight = fontSize;
-
-    const padding = 20;
-    canvas.width = textWidth + padding * 2;
-    canvas.height = textHeight + padding * 2;
-
-    context.font = font;
-    context.fillStyle = 'white';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-
-    context.strokeStyle = 'black';
-    context.lineWidth = 4;
-    context.lineJoin = 'round';
-
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
-
-    context.strokeText(text, cx, cy);
-    context.fillText(text, cx, cy);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-
-    const spriteMaterial = new THREE.SpriteMaterial({
-      map: texture,
-      depthTest: true,
-      depthWrite: false,
-      sizeAttenuation: true
-    });
-
-    const sprite = new THREE.Sprite(spriteMaterial);
-
-    // Scale label to fit within box bounds (with some padding)
-    const labelAspect = canvas.width / canvas.height;
     const boxWidth = boxHalfWidth * 2 * 0.8;
     const boxHeight = boxHalfHeight * 2 * 0.5;
 
-    // Fit to the smaller constraint
     let labelHeight;
-    if (boxWidth / labelAspect < boxHeight) {
-      labelHeight = boxWidth / labelAspect;
+    if (boxWidth / aspect < boxHeight) {
+      labelHeight = boxWidth / aspect;
     } else {
       labelHeight = boxHeight;
     }
 
-    sprite.scale.set(labelHeight * labelAspect, labelHeight, 1);
+    sprite.scale.set(labelHeight * aspect, labelHeight, 1);
     sprite.center.set(0.5, 0.5);
-    sprite.renderOrder = 1;
 
     return sprite;
   }
 
   selectNode(id, type) {
-    this.selectedId = id;
-    this.selectedType = type;
-
-    // Update focus node if selected node is celestial
-    const key = this._getKey(id, type);
-    const node = this.nodeData.get(key);
+    const key = `${type}_${id}`;
+    const node = this.model.nodes.get(key);
     if (node && this.isCelestialNode(node)) {
       this.focusNode = node;
     }
@@ -1485,44 +1306,21 @@ export class ViewBounds {
     updateGridSpacing(this.gridHelper, spacing);
   }
 
-  toggleNode(node) {
-    const key = this._getKey(node.id, node.type);
-    const wasExpanded = this.expandedNodes.has(key);
-
-    if (wasExpanded) {
-      this.expandedNodes.delete(key);
-    } else {
-      this.expandedNodes.add(key);
-    }
-
+  expandNode(node) {
     this.rebuildVisibleNodes();
-    this.toggleCallbacks.forEach(cb => cb(node, !wasExpanded));
     this.saveState();
   }
 
-  expandNode(node) {
-    const key = this._getKey(node.id, node.type);
-    if (!this.expandedNodes.has(key)) {
-      this.expandedNodes.add(key);
-      this.rebuildVisibleNodes();
-      this.saveState();
-    }
-  }
-
   collapseNode(node) {
-    const key = this._getKey(node.id, node.type);
-    if (this.expandedNodes.has(key)) {
-      this.expandedNodes.delete(key);
-      this.rebuildVisibleNodes();
-      this.saveState();
-    }
+    this.rebuildVisibleNodes();
+    this.saveState();
   }
 
   addChildren(parentNode, children) {
     if (!children || children.length === 0) return;
 
-    const parentKey = this._getKey(parentNode.id, parentNode.type);
-    const parent = this.nodeData.get(parentKey);
+    const parentKey = this.model.nodeKey(parentNode);
+    const parent = this.model.nodes.get(parentKey);
     if (!parent) return;
 
     const parentWorldPos = parent._worldPos;
@@ -1542,8 +1340,33 @@ export class ViewBounds {
       }
     });
 
-    // Recalculate scale as scene extent may have changed
-    this.calculateDynamicScale();
+    this._scheduleRebuild();
+  }
+
+  _scheduleRebuild() {
+    if (this._rebuildTimer) return;
+    this._rebuildTimer = setTimeout(() => {
+      this._rebuildTimer = null;
+      if (this.model.tree) {
+        this.buildNodeData(this.model.tree, null, null, null, this.model.inheritedPlanetContext);
+      }
+      this.calculateDynamicScale();
+      this.rebuildVisibleNodes();
+    }, 250);
+  }
+
+  updateNode(node) {
+    if (!node) return;
+    const key = this.model.nodeKey(node);
+    const existing = this.model.nodes.get(key);
+    if (!existing) return;
+
+    const parentNode = existing._parent;
+    const parentWorldPos = parentNode?._worldPos || null;
+    const parentWorldRot = parentNode?._worldRot || null;
+    const planetContext = existing._planetContext || null;
+
+    this.buildNodeData(node, parentWorldPos, parentWorldRot, parentNode, planetContext);
     this.rebuildVisibleNodes();
   }
 
@@ -1553,13 +1376,13 @@ export class ViewBounds {
     // Use passed node if it has _worldPos, otherwise look it up in our data
     let targetNode = node;
     if (!node._worldPos) {
-      const key = this._getKey(node.id, node.type);
-      targetNode = this.nodeData.get(key);
+      const key = this.model.nodeKey(node);
+      targetNode = this.model.nodes.get(key);
       if (!targetNode || !targetNode._worldPos) return;
     }
 
     const bound = this.getEffectiveBound(targetNode);
-    const key = this._getKey(targetNode.id, targetNode.type);
+    const key = this.model.nodeKey(targetNode);
     const meshData = this.nodeMeshes.get(key);
 
     let targetPos, boxWidth, boxHeight, boxDepth;
@@ -1631,14 +1454,6 @@ export class ViewBounds {
     this.controls.update();
   }
 
-  onSelect(callback) {
-    this.selectCallbacks.push(callback);
-  }
-
-  onToggle(callback) {
-    this.toggleCallbacks.push(callback);
-  }
-
   onMsfLoad(callback) {
     this.msfLoadCallbacks.push(callback);
   }
@@ -1654,7 +1469,7 @@ export class ViewBounds {
     let count = 0;
 
     // Calculate bounding box of all visible nodes
-    this.nodeData.forEach(node => {
+    this.model.nodes.forEach(node => {
       if (node._worldPos) {
         const r = Math.sqrt(node._worldPos.x ** 2 + node._worldPos.y ** 2 + node._worldPos.z ** 2);
         if (r > 1000) {
@@ -1790,15 +1605,12 @@ export class ViewBounds {
     // Focus node itself
     if (node === this.focusNode) return true;
 
-    const focusKey = this._getKey(this.focusNode.id, this.focusNode.type);
-    const nodeKey = this._getKey(node.id, node.type);
-
     // Parent of focus
-    const focusParent = this.nodeParents.get(focusKey);
+    const focusParent = this.focusNode._parent;
     if (focusParent === node) return true;
 
     // Children of focus (check if node's parent is focus)
-    const nodeParent = this.nodeParents.get(nodeKey);
+    const nodeParent = node._parent;
     if (nodeParent === this.focusNode) return true;
 
     // Siblings (same parent as focus)
@@ -1808,14 +1620,12 @@ export class ViewBounds {
   }
 
   findCelestialParent(node) {
-    let currentKey = this._getKey(node.id, node.type);
-    let current = this.nodeParents.get(currentKey);
+    let current = node._parent;
     while (current) {
       if (this.isCelestialNode(current)) {
         return current;
       }
-      currentKey = this._getKey(current.id, current.type);
-      current = this.nodeParents.get(currentKey);
+      current = current._parent;
     }
     return null;
   }
@@ -1850,8 +1660,7 @@ export class ViewBounds {
   // If getChildPosAndScale is provided, uses scaled space; otherwise uses world space
   // If recursive is true, traverse children regardless of expansion state (for ancestor bounds)
   calculateBoundsFromChildren(node, parentPos, getChildPosAndScale = null, recursive = false) {
-    const key = this._getKey(node.id, node.type);
-    const isExpanded = this.expandedNodes.has(key);
+    const isExpanded = this.model.isNodeExpanded(node);
 
     // For non-recursive calls, require node to be expanded
     // For recursive calls (ancestor bounds), traverse children regardless
@@ -1984,28 +1793,20 @@ export class ViewBounds {
   saveState() {
     if (!this.stateManager) return;
 
-    const expandedIds = Array.from(this.expandedNodes);
     const typeFilterArray = Array.from(this.typeFilter);
 
     const slider = document.getElementById('timescale-slider');
     const timeScaleIndex = slider ? parseInt(slider.value) : 4;
 
     this.stateManager.updateSection('viewBounds', {
-      expandedNodeIds: expandedIds,
       typeFilter: typeFilterArray,
       timeScaleIndex: timeScaleIndex,
-      orbitsVisible: this.orbitsVisible,
-      selectedId: this.selectedId,
-      selectedType: this.selectedType
+      orbitsVisible: this.orbitsVisible
     });
   }
 
   restoreState(state) {
     state = state || this.stateManager?.getSection('viewBounds') || {};
-
-    if (state.expandedNodeIds && Array.isArray(state.expandedNodeIds)) {
-      this.pendingExpandedNodes = new Set(state.expandedNodeIds);
-    }
 
     if (state.typeFilter && Array.isArray(state.typeFilter)) {
       this.typeFilter = new Set(state.typeFilter);
@@ -2034,10 +1835,6 @@ export class ViewBounds {
       }
     }
 
-    if (state.selectedId && state.selectedType) {
-      this.pendingSelectedId = state.selectedId;
-      this.pendingSelectedType = state.selectedType;
-    }
   }
 
   dispose() {
@@ -2115,10 +1912,4 @@ export class ViewBounds {
     this.renderer?.dispose();
   }
 
-  getPlanetContext(node) {
-    if (!node) return null;
-    const key = this._getKey(node.id, node.type);
-    const nodeData = this.nodeData.get(key);
-    return nodeData?._planetContext || this.inheritedPlanetContext || null;
-  }
 }

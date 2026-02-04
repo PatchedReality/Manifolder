@@ -48,18 +48,29 @@ const TYPE_COLORS = {
 };
 
 export class InspectorPanel {
-  constructor(containerSelector, stateManager) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
     this.stateManager = stateManager;
+    this.model = model;
     this.currentNode = null;
     this.showRawJson = false;
     this.showResource = false;
-    this.inheritedPlanetContext = null;
     this.restoreState();
-  }
 
-  setInheritedPlanetContext(context) {
-    this.inheritedPlanetContext = context;
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.showNode(node);
+      }
+    });
+
+    this.model.on('dataChanged', () => {
+      const node = this.model.getSelectedNode();
+      if (node) this.showNode(node);
+    });
+
+    this.model.on('treeChanged', () => {
+      this.clear();
+    });
   }
 
   saveState() {
@@ -126,7 +137,7 @@ export class InspectorPanel {
   }
 
   _renderLocation(node) {
-    const planetContext = node._planetContext || this.inheritedPlanetContext;
+    const planetContext = this.model.getPlanetContext(node);
     if (!node._worldPos || !planetContext) return;
 
     const coords = calculateLatLong(node._worldPos, planetContext.radius);

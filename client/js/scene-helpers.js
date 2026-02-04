@@ -220,6 +220,61 @@ export function calculateGridSpacing(characteristicSize) {
  * @param {THREE.Mesh} gridMesh - The grid mesh returned by createInfiniteGrid
  * @param {Object} options - New spacing options
  */
+/**
+ * Creates a label sprite from text using canvas rendering
+ * @param {string} text - The label text
+ * @returns {{ sprite: THREE.Sprite, aspect: number }} The sprite and its aspect ratio
+ */
+export function createLabelSprite(text) {
+  const fontSize = 64;
+  const font = `bold ${fontSize}px Arial`;
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  context.font = font;
+
+  const metrics = context.measureText(text);
+  const textWidth = metrics.width;
+  const textHeight = fontSize;
+
+  const padding = 20;
+  canvas.width = textWidth + padding * 2;
+  canvas.height = textHeight + padding * 2;
+
+  context.font = font;
+  context.fillStyle = 'white';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+
+  context.strokeStyle = 'black';
+  context.lineWidth = 4;
+  context.lineJoin = 'round';
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  context.strokeText(text, cx, cy);
+  context.fillText(text, cx, cy);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+
+  const spriteMaterial = new THREE.SpriteMaterial({
+    map: texture,
+    depthTest: true,
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+
+  const sprite = new THREE.Sprite(spriteMaterial);
+  sprite.renderOrder = 1;
+
+  const aspect = canvas.width / canvas.height;
+  return { sprite, aspect };
+}
+
 export function updateGridSpacing(gridMesh, options = {}) {
   if (!gridMesh || !gridMesh.material || !gridMesh.material.uniforms) {
     return;

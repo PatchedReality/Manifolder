@@ -15,36 +15,34 @@
 
 /**
  * MVClient - Direct browser client for Metaverse server communication
- * Uses lib/rp1 libraries for Socket.io communication
+ * Uses MVMF notification pattern for push-based data flow.
+ * Emits raw MVMF model references — Model layer wraps them in NodeAdapters.
  */
-import { NodeFactory } from './node-factory.js';
 import { setResourceBaseUrl } from './node-helpers.js';
 
-export class MVClient {
+export class MVClient extends MV.MVMF.NOTIFICATION {
   static _initialized = false;
-  static _wClassConfig = null;
 
-  static _getWClassConfig() {
-    if (!MVClient._wClassConfig) {
-      const ioClasses = [
-        MV.MVRP.Map.IO_RMROOT,
-        MV.MVRP.Map.IO_RMCOBJECT,
-        MV.MVRP.Map.IO_RMTOBJECT,
-        MV.MVRP.Map.IO_RMPOBJECT
-      ];
-      MVClient._wClassConfig = {};
-      for (const ioClass of ioClasses) {
-        const factory = ioClass.factory();
-        const ref = factory.pReference;
-        MVClient._wClassConfig[ref.wClass] = {
-          type: ref.sID_Model,
-          action: ioClass.apAction.UPDATE,
-          indexField: `tw${ref.sID_Model}Ix`
-        };
-      }
-    }
-    return MVClient._wClassConfig;
-  }
+  static eSTATE = {
+    NOTREADY: 0,
+    LOADING: 1,
+    READY: 4
+  };
+
+  eSTATE = MVClient.eSTATE;
+
+  #m_pFabric;
+  #m_pLnG;
+  #pRMXRoot;
+  #sceneWClass;
+  #sceneObjectIx;
+
+  #pendingModelLoads = new Map();
+  #pendingInserts = new Map();
+  #pendingEnumeratedChildren = new Map();
+  #searchableRMCObjectIndices = [];
+  #searchableRMTObjectIndices = [];
+  #attachedModels = new Set();
 
   static _initializePlugins() {
     if (MVClient._initialized) return;
@@ -62,15 +60,18 @@ export class MVClient {
   }
 
   constructor() {
+    super();
     MVClient._initializePlugins();
 
-    this.msf = null;
-    this.pLnG = null;
-    this.pClient = null;
-    this.isConnected = false;
-    this.msfConfig = null;
-    this.sceneWClass = null;
-    this.sceneObjectIx = null;
+    this.#m_pFabric = null;
+    this.#m_pLnG = null;
+    this.#pRMXRoot = null;
+    this.#sceneWClass = null;
+    this.#sceneObjectIx = null;
+
+    this._pendingResolve = null;
+    this._pendingReject = null;
+    this._loadTimeout = null;
 
     this.callbacks = {
       connected: [],
@@ -78,26 +79,62 @@ export class MVClient {
       error: [],
       mapData: [],
       nodeData: [],
+      nodeInserted: [],
+      nodeUpdated: [],
+      nodeDeleted: [],
       status: []
     };
   }
 
+  IsReady() {
+    return this.ReadyState() === this.eSTATE.READY;
+  }
+
   get connected() {
-    return this.isConnected;
+    return this.IsReady();
+  }
+
+  destructor() {
+    for (const model of this.#attachedModels) {
+      if (model !== this.#pRMXRoot && model !== this.#m_pLnG && model !== this.#m_pFabric) {
+        try { model.Detach(this); } catch (e) { /* already detached */ }
+      }
+    }
+
+    if (this.#m_pLnG) {
+      if (this.#pRMXRoot) {
+        this._safeDetach(this.#pRMXRoot);
+        this.#m_pLnG.Model_Close(this.#pRMXRoot);
+        this.#pRMXRoot = null;
+      }
+
+      this._safeDetach(this.#m_pLnG);
+      this.#m_pLnG = null;
+    }
+
+    if (this.#m_pFabric) {
+      this._safeDetach(this.#m_pFabric);
+      this.#m_pFabric.destructor();
+      this.#m_pFabric = null;
+    }
+
+    this.#searchableRMCObjectIndices = [];
+    this.#searchableRMTObjectIndices = [];
+    this.#pendingModelLoads.clear();
+    this.#pendingInserts.clear();
+    this.#pendingEnumeratedChildren.clear();
+    this.#attachedModels.clear();
+
+    this.ReadyState(this.eSTATE.NOTREADY);
+  }
+
+  disconnect() {
+    this.destructor();
+    this._emit('disconnected');
   }
 
   connect() {
     return Promise.resolve();
-  }
-
-  disconnect() {
-    if (this.msf) {
-      this.msf.Detach(this);
-      this.msf = this.msf.destructor();
-    }
-    this.pLnG = null;
-    this.pClient = null;
-    this.isConnected = false;
   }
 
   async loadMap(url) {
@@ -108,8 +145,8 @@ export class MVClient {
     try {
       this._emit('status', 'Loading map config...');
 
-      if (this.isConnected) {
-        this.disconnect();
+      if (this.IsReady() || this.#m_pFabric) {
+        this.destructor();
       }
 
       return new Promise((resolve, reject) => {
@@ -122,8 +159,8 @@ export class MVClient {
           reject(new Error('Connection timeout - server unreachable'));
         }, 30000);
 
-        this.msf = new MV.MVRP.MSF(url, MV.MVRP.MSF.eMETHOD.GET);
-        this.msf.Attach(this);
+        this.#m_pFabric = new MV.MVRP.MSF(url, MV.MVRP.MSF.eMETHOD.GET);
+        this._safeAttach(this.#m_pFabric);
       });
 
     } catch (err) {
@@ -132,38 +169,89 @@ export class MVClient {
     }
   }
 
-  onReadyState(pNotice) {
-    if (pNotice.pCreator !== this.msf) {
-      return;
+  // Returns true/false/null (null = indeterminate, collection not populated)
+  _isChildOf(parent, child) {
+    if (!parent.Child_Enum || !parent.IsReady?.()) return null;
+
+    const cpChild = parent.acpChild?.[child.sID];
+    if (!cpChild || cpChild.Length() === 0) {
+      return null;
     }
 
-    const state = this.msf.ReadyState();
+    let found = false;
+    parent.Child_Enum(child.sID, this, (c) => {
+      if (c.twObjectIx === child.twObjectIx) found = true;
+    }, null);
+    return found;
+  }
 
-    if (state === MV.MVRP.MSF.eSTATE.FAILED) {
-      clearTimeout(this._loadTimeout);
-      const err = new Error(this.msf.XHRError || 'Failed to load MSF config');
-      this._emit('error', err);
-      if (this._pendingReject) {
-        this._pendingReject(err);
-        this._pendingResolve = null;
-        this._pendingReject = null;
+  /**
+   * Enumerate immediate children of an MVMF model via Child_Enum.
+   * Returns an array of raw MVMF child objects.
+   */
+  enumerateChildren(model) {
+    const allChildren = [];
+    if (model.Child_Enum) {
+      const enumCallback = (child, arr) => arr.push(child);
+      model.Child_Enum('RMCObject', this, enumCallback, allChildren);
+      model.Child_Enum('RMTObject', this, enumCallback, allChildren);
+      model.Child_Enum('RMPObject', this, enumCallback, allChildren);
+    }
+
+    const readyChildren = [];
+    for (const child of allChildren) {
+      this._safeAttach(child);
+      if (child.IsReady()) {
+        readyChildren.push(child);
+      } else {
+        const key = `${child.sID}_${child.twObjectIx}`;
+        console.warn(`[MVClient] enumerateChildren: child ${key} not ready (state=${child.ReadyState?.()}), deferring`);
+        this.#pendingEnumeratedChildren.set(key, {
+          child,
+          parentType: model.sID,
+          parentId: model.twObjectIx
+        });
       }
-      return;
     }
+    return readyChildren;
+  }
 
-    if (state >= MV.MVRP.MSF.eSTATE.READY_LOGGEDOUT) {
-      clearTimeout(this._loadTimeout);
-      this.msfConfig = this.msf.pMSFConfig;
+  onReadyState(pNotice) {
+    console.log(`[MVClient] onReadyState: ${pNotice.pCreator?.sID}_${pNotice.pCreator?.twObjectIx} state=${pNotice.pCreator?.ReadyState?.()}, isReady=${pNotice.pCreator?.IsReady?.()}`);
+    if (!this.IsReady()) {
+      if (pNotice.pCreator === this.#m_pFabric) {
+        this._handleFabricReadyState();
+      } else if (pNotice.pCreator === this.#m_pLnG) {
+        this._handleLnGReadyState();
+      } else if (pNotice.pCreator === this.#pRMXRoot) {
+        this._handleRootModelReadyState(pNotice.pCreator);
+      } else if (pNotice.pCreator.IsReady && pNotice.pCreator.IsReady()) {
+        this._handleModelReadyState(pNotice.pCreator);
+      }
+    } else {
+      if (pNotice.pCreator.IsReady && pNotice.pCreator.IsReady()) {
+        this._handleModelReadyState(pNotice.pCreator);
+      }
+    }
+  }
 
-      const mapConfig = this.msfConfig?.map;
-      this.sceneWClass = mapConfig?.wClass;
-      this.sceneObjectIx = mapConfig?.twObjectIx;
+  _handleFabricReadyState() {
+    if (this.#m_pFabric.IsReady()) {
+      this._emit('status', 'Connecting to Metaverse server...');
+
+      const msfConfig = this.#m_pFabric.pMSFConfig;
+      const mapConfig = msfConfig?.map;
+
+      this.#sceneWClass = mapConfig?.wClass;
+      this.#sceneObjectIx = mapConfig?.twObjectIx;
+
       const rootUrl = mapConfig?.sRootUrl || mapConfig?.RootUrl || '';
       setResourceBaseUrl(rootUrl);
 
-      this.pLnG = this.msf.GetLnG('map');
+      this.#m_pLnG = this.#m_pFabric.GetLnG('map');
 
-      if (!this.pLnG) {
+      if (!this.#m_pLnG) {
+        clearTimeout(this._loadTimeout);
         const err = new Error('No map service available in MSF config');
         this._emit('error', err);
         if (this._pendingReject) {
@@ -174,53 +262,365 @@ export class MVClient {
         return;
       }
 
-      this.pClient = this.pLnG.pClient;
-      this.isConnected = true;
-
-      this._emit('status', `Connected to ${this.pClient.sEndPoint}`);
-      this._emit('connected');
-
-      this._getMapTree()
-        .then(result => {
-          if (result.error) {
-            throw new Error(result.error);
-          }
-          this._emit('mapData', result.tree);
-          if (this._pendingResolve) {
-            this._pendingResolve(result.tree);
-            this._pendingResolve = null;
-            this._pendingReject = null;
-          }
-        })
-        .catch(err => {
-          this._emit('error', err);
-          if (this._pendingReject) {
-            this._pendingReject(err);
-            this._pendingResolve = null;
-            this._pendingReject = null;
-          }
-        });
+      this._safeAttach(this.#m_pLnG);
+    } else if (this.#m_pFabric.ReadyState() === MV.MVRP.MSF.eSTATE.FAILED) {
+      clearTimeout(this._loadTimeout);
+      const err = new Error(this.#m_pFabric.XHRError || 'Failed to load MSF config');
+      this._emit('error', err);
+      if (this._pendingReject) {
+        this._pendingReject(err);
+        this._pendingResolve = null;
+        this._pendingReject = null;
+      }
     }
   }
 
+  _handleLnGReadyState() {
+    const state = this.#m_pLnG.ReadyState();
+
+    switch (state) {
+      case this.#m_pLnG.eSTATE.DISCONNECTED:
+        this._emit('status', 'Disconnected from server');
+        this._emit('disconnected');
+        break;
+
+      case this.#m_pLnG.eSTATE.CONNECTING:
+        this._emit('status', 'Connecting to server...');
+        break;
+
+      case this.#m_pLnG.eSTATE.LOGGING:
+        this._emit('status', 'Authenticating...');
+        break;
+
+      case this.#m_pLnG.eSTATE.LOGGEDIN:
+      case this.#m_pLnG.eSTATE.LOGGEDOUT:
+        this._emit('status', 'Connected, loading map...');
+        this._emit('connected');
+        this._startRootModel();
+        break;
+    }
+  }
+
+  _startRootModel() {
+    const classId = this._getClassID(this.#sceneWClass);
+
+    if (!classId) {
+      clearTimeout(this._loadTimeout);
+      const err = new Error(`Unknown wClass: ${this.#sceneWClass}`);
+      this._emit('error', err);
+      if (this._pendingReject) {
+        this._pendingReject(err);
+        this._pendingResolve = null;
+        this._pendingReject = null;
+      }
+      return;
+    }
+
+    this.#pRMXRoot = this.#m_pLnG.Model_Open(classId, this.#sceneObjectIx);
+    this._safeAttach(this.#pRMXRoot);
+  }
+
+  _handleRootModelReadyState(model) {
+    if (model.IsReady()) {
+      clearTimeout(this._loadTimeout);
+
+      this.#searchableRMCObjectIndices = [];
+      this.#searchableRMTObjectIndices = [];
+      this._collectSearchableIndices(model);
+
+      this.ReadyState(this.eSTATE.READY);
+
+      this._emit('status', 'Map loaded');
+      this._emit('mapData', model);
+
+      if (this._pendingResolve) {
+        this._pendingResolve(model);
+        this._pendingResolve = null;
+        this._pendingReject = null;
+      }
+    }
+  }
+
+  _collectSearchableIndices(model) {
+    if (model.sID === 'RMCObject') {
+      this.#searchableRMCObjectIndices.push(model.twObjectIx);
+    } else if (model.sID === 'RMTObject') {
+      this.#searchableRMTObjectIndices.push(model.twObjectIx);
+    } else {
+      const children = this.enumerateChildren(model);
+      for (const child of children) {
+        if (child.sID === 'RMCObject') {
+          this.#searchableRMCObjectIndices.push(child.twObjectIx);
+        } else if (child.sID === 'RMTObject') {
+          this.#searchableRMTObjectIndices.push(child.twObjectIx);
+        }
+      }
+    }
+  }
+
+  _handleModelReadyState(model) {
+    if (!model.IsReady()) return;
+
+    const key = `${model.sID}_${model.twObjectIx}`;
+    const pending = this.#pendingModelLoads.get(key);
+
+    if (pending) {
+      this.#pendingModelLoads.delete(key);
+      pending.resolve(model);
+    }
+
+    const pendingInsert = this.#pendingInserts.get(key);
+    if (pendingInsert) {
+      console.log(`[MVClient] pendingInsert ready: ${key}, emitting nodeInserted`);
+      this.#pendingInserts.delete(key);
+      this._emit('nodeInserted', pendingInsert);
+    }
+
+    const pendingEnum = this.#pendingEnumeratedChildren.get(key);
+    if (pendingEnum) {
+      console.log(`[MVClient] pendingEnumeratedChild ready: ${key}, emitting nodeInserted`);
+      this.#pendingEnumeratedChildren.delete(key);
+      this._emit('nodeInserted', {
+        mvmfModel: pendingEnum.child,
+        parentType: pendingEnum.parentType,
+        parentId: pendingEnum.parentId
+      });
+    }
+  }
+
+  _getClassID(wClass) {
+    const classIds = {
+      70: 'RMRoot',
+      71: 'RMCObject',
+      72: 'RMTObject',
+      73: 'RMPObject'
+    };
+    return classIds[wClass];
+  }
+
+  _safeAttach(obj) {
+    if (!obj || this.#attachedModels.has(obj)) {
+      return false;
+    }
+    this.#attachedModels.add(obj);
+    obj.Attach(this);
+    return true;
+  }
+
+  _safeDetach(obj) {
+    if (!obj || !this.#attachedModels.has(obj)) {
+      return false;
+    }
+    this.#attachedModels.delete(obj);
+    obj.Detach(this);
+    return true;
+  }
+
+  /**
+   * Open and return a raw MVMF model for the given node.
+   * Resolves when the model is ready.
+   */
   async getNode(id, nodeType) {
     if (id === undefined || !nodeType) {
       throw new Error('Missing node id or type');
     }
 
-    try {
-      const result = await this._getNode(id, nodeType);
+    if (!this.#m_pLnG) {
+      throw new Error('Not connected to MV server');
+    }
 
-      if (result.error) {
-        throw new Error(result.error);
+    try {
+      const key = `${nodeType}_${id}`;
+
+      const existingPending = this.#pendingModelLoads.get(key);
+      if (existingPending) {
+        return existingPending.promise;
       }
 
-      this._emit('nodeData', result.node);
-      return result.node;
+      const model = this.#m_pLnG.Model_Open(nodeType, id);
+      this._safeAttach(model);
+
+      if (model.IsReady()) {
+        return model;
+      }
+
+      const pendingPromise = new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          this.#pendingModelLoads.delete(key);
+          reject(new Error(`Timeout loading node ${nodeType}/${id}`));
+        }, 30000);
+
+        this.#pendingModelLoads.set(key, {
+          resolve: (m) => {
+            clearTimeout(timeoutId);
+            resolve(m);
+          },
+          reject: (err) => {
+            clearTimeout(timeoutId);
+            reject(err);
+          },
+          model: model
+        });
+      });
+
+      this.#pendingModelLoads.get(key).promise = pendingPromise;
+
+      return pendingPromise;
 
     } catch (err) {
       this._emit('error', err);
       throw err;
+    }
+  }
+
+  async refreshNode(id, nodeType) {
+    if (id === undefined || !nodeType) {
+      throw new Error('Missing node id or type');
+    }
+    if (!this.#m_pLnG) {
+      throw new Error('Not connected to MV server');
+    }
+
+    const existing = this.#m_pLnG.Model_Open(nodeType, id);
+    if (existing) {
+      this._safeDetach(existing);
+      this.#m_pLnG.Model_Close(existing);
+    }
+
+    return this.getNode(id, nodeType);
+  }
+
+  onInserted(pNotice) {
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    console.log(`[MVClient] onInserted: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, childReady=${child?.IsReady?.()}, clientReady=${this.IsReady()}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onInserted: parent ${creator.sID}_${creator.twObjectIx} not ready`);
+    }
+    if (this.IsReady() && child) {
+      this._safeAttach(child);
+
+      const insertData = {
+        mvmfModel: child,
+        parentType: creator.sID,
+        parentId: creator.twObjectIx
+      };
+
+      if (child.IsReady()) {
+        console.log(`[MVClient] onInserted: emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
+        this._emit('nodeInserted', insertData);
+      } else {
+        const key = `${child.sID}_${child.twObjectIx}`;
+        console.log(`[MVClient] onInserted: child ${key} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
+        this.#pendingInserts.set(key, insertData);
+      }
+    }
+  }
+
+  onUpdated(pNotice) {
+    if (!this.IsReady()) return;
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild || creator;
+    console.log(`[MVClient] onUpdated: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, hasDataChild=${!!pNotice.pData?.pChild}`);
+    if (child?.sID && child.twObjectIx !== undefined) {
+      this._safeAttach(child);
+      if (!child.IsReady?.()) return;
+      this._emit('nodeUpdated', {
+        id: child.twObjectIx,
+        type: child.sID,
+        mvmfModel: child
+      });
+    }
+  }
+
+  onChanged(pNotice) {
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    const pChange = pNotice.pData?.pChange;
+    console.log(`[MVClient] onChanged: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, pChange.sType=${pChange?.sType}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onChanged: parent ${creator.sID}_${creator.twObjectIx} not ready`);
+      return;
+    }
+
+    if (child?.sID && child.twObjectIx !== undefined) {
+      // RMPOBJECT_OPEN is authoritative: child is being added to this parent.
+      // _isChildOf enum lags behind the notification, so bypass it.
+      if (pChange?.sType === 'RMPOBJECT_OPEN') {
+        console.log(`[MVClient] onChanged: OPEN — ${child.sID}_${child.twObjectIx} added to ${creator.sID}_${creator.twObjectIx}`);
+        this._safeAttach(child);
+        if (child.IsReady()) {
+          console.log(`[MVClient] onChanged: OPEN emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
+          this._emit('nodeInserted', {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        } else {
+          const childKey = `${child.sID}_${child.twObjectIx}`;
+          console.log(`[MVClient] onChanged: OPEN child ${childKey} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
+          this.#pendingInserts.set(childKey, {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        }
+        return;
+      }
+
+      const present = this._isChildOf(creator, child);
+      if (present === false) {
+        console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} not in parent's Child_Enum, emitting delete`);
+        this._emit('nodeDeleted', {
+          id: child.twObjectIx,
+          type: child.sID,
+          sourceParentType: creator.sID,
+          sourceParentId: creator.twObjectIx
+        });
+      } else if (present === true) {
+        this._safeAttach(child);
+        if (child.IsReady()) {
+          console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} in parent's Child_Enum, emitting nodeInserted`);
+          this._emit('nodeInserted', {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        } else {
+          const childKey = `${child.sID}_${child.twObjectIx}`;
+          console.log(`[MVClient] onChanged: child ${childKey} not ready, deferring`);
+          this.#pendingInserts.set(childKey, {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        }
+      } else {
+        console.log(`[MVClient] onChanged: indeterminate for ${child.sID}_${child.twObjectIx}, reloading ${creator.sID}_${creator.twObjectIx}`);
+        const model = this.#m_pLnG.Model_Open(creator.sID, creator.twObjectIx);
+        this._safeAttach(model);
+      }
+      return;
+    }
+
+    this.onUpdated(pNotice);
+  }
+
+  onDeleting(pNotice) {
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    console.log(`[MVClient] onDeleting: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onDeleting: parent ${creator.sID}_${creator.twObjectIx} not ready, deferring to onChanged`);
+      return;
+    }
+    if (this.IsReady() && child) {
+      this._emit('nodeDeleted', {
+        id: child.twObjectIx,
+        type: child.sID,
+        sourceParentType: creator.sID,
+        sourceParentId: creator.twObjectIx
+      });
     }
   }
 
@@ -249,175 +649,27 @@ export class MVClient {
     });
   }
 
-  _sendRequest(action, timeout = 30000) {
-    if (!this.pClient || !this.isConnected) {
-      return Promise.reject(new Error('Not connected'));
-    }
-
-    const pIAction = this.pClient.Request(action);
-    return this._sendAction(pIAction, timeout);
-  }
-
-  _sendAction(pIAction, timeout = 30000) {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error('Request timeout'));
-      }, timeout);
-
-      pIAction.Send(this, function(pIAction) {
-        clearTimeout(timeoutId);
-        resolve(pIAction.pResponse);
-      });
-    });
-  }
-
-  _buildTree(nodeType, data, objectIx) {
-    return NodeFactory.createNode(nodeType, data, objectIx);
-  }
-
-  async _getMapTree() {
-    if (!this.isConnected) {
-      return { error: 'Not connected to MV server' };
-    }
-
-    this._emit('status', 'Loading map tree...');
-
-    try {
-      const wClass = this.sceneWClass;
-      const twObjectIx = this.sceneObjectIx;
-
-      if (wClass === undefined || twObjectIx === undefined) {
-        return { error: 'MSF config missing wClass or twObjectIx' };
-      }
-
-      const tree = await this._fetchSceneRoot(wClass, twObjectIx);
-      return tree ? { tree } : { error: 'Failed to fetch scene root' };
-    } catch (err) {
-      return { error: err.message };
-    }
-  }
-
-  async _fetchSceneRoot(wClass, twObjectIx) {
-    const config = MVClient._getWClassConfig()[wClass];
-    if (!config) {
-      throw new Error(`Unknown wClass: ${wClass}`);
-    }
-
-    const pIAction = this.pClient.Request(config.action);
-    pIAction.pRequest[config.indexField] = twObjectIx;
-
-    const response = await this._sendAction(pIAction);
-
-    if (!response || (response.nResult !== undefined && response.nResult !== 0)) {
-      return null;
-    }
-
-    return this._buildTree(config.type, response, twObjectIx);
-  }
-
-  async _getNode(nodeId, nodeType) {
-    if (!this.isConnected) {
-      return { error: 'Not connected to MV server' };
-    }
-
-    try {
-      let response;
-      let node;
-
-      switch (nodeType) {
-        case 'RMRoot':
-          if (nodeId === 0) {
-            const result = await this._getMapTree();
-            if (result.tree) {
-              node = result.tree;
-            }
-          } else {
-            const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMROOT.apAction.UPDATE);
-            pIAction.pRequest.twRMRootIx = nodeId;
-
-            response = await this._sendAction(pIAction);
-
-            if (response && (response.nResult === undefined || response.nResult === 0)) {
-              node = this._buildTree('RMRoot', response, nodeId);
-            }
-          }
-          break;
-
-        case 'RMCObject': {
-          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMCOBJECT.apAction.UPDATE);
-          pIAction.pRequest.twRMCObjectIx = nodeId;
-
-          response = await this._sendAction(pIAction);
-
-          if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = NodeFactory.createNode('RMCObject', response, nodeId);
-          }
-          break;
-        }
-
-        case 'RMTObject': {
-          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMTOBJECT.apAction.UPDATE);
-          pIAction.pRequest.twRMTObjectIx = nodeId;
-
-          response = await this._sendAction(pIAction);
-
-          if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = NodeFactory.createNode('RMTObject', response, nodeId);
-          }
-          break;
-        }
-
-        case 'RMPObject': {
-          const pIAction = this.pClient.Request(MV.MVRP.Map.IO_RMPOBJECT.apAction.UPDATE);
-          pIAction.pRequest.twRMPObjectIx = nodeId;
-
-          response = await this._sendAction(pIAction);
-
-          if (response && (response.nResult === undefined || response.nResult === 0)) {
-            node = NodeFactory.createNode('RMPObject', response, nodeId);
-          }
-          break;
-        }
-
-        default:
-          return { error: `Unknown node type: ${nodeType}` };
-      }
-
-      if (node) {
-        return { node };
-      } else {
-        return { error: `Failed to fetch node ${nodeId}` };
-      }
-
-    } catch (err) {
-      return { error: err.message };
-    }
-  }
-
   async searchNodes(searchText) {
-    if (!this.isConnected || !searchText) {
+    if (!this.IsReady() || !searchText) {
       return { matches: [], paths: [], unavailable: [] };
     }
 
     const results = { matches: [], paths: [], unavailable: [] };
-
     const rmcObjectIndices = [];
     const rmtObjectIndices = [];
 
-    try {
-      await this._collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices);
-    } catch (err) {
+    this._collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices);
+
+    if (rmcObjectIndices.length === 0 && rmtObjectIndices.length === 0) {
       return results;
     }
 
     const searchPromises = [];
 
-    // Search ALL RMCObject (celestial) scopes
     for (const objectIx of rmcObjectIndices) {
       searchPromises.push(this._searchObjectType('RMCObject', objectIx, searchText));
     }
 
-    // Search ALL RMTObject (terrestrial) scopes
     for (const objectIx of rmtObjectIndices) {
       searchPromises.push(this._searchObjectType('RMTObject', objectIx, searchText));
     }
@@ -442,11 +694,25 @@ export class MVClient {
     const paths = [];
 
     try {
-      const actionType = objectType === 'RMCObject'
-        ? MV.MVRP.Map.IO_RMCOBJECT.apAction.SEARCH
-        : MV.MVRP.Map.IO_RMTOBJECT.apAction.SEARCH;
+      const model = this.#m_pLnG.Model_Open(objectType, objectIx);
 
-      const pIAction = this.pClient.Request(actionType);
+      await new Promise((resolve) => {
+        if (model.IsReady()) {
+          resolve();
+        } else {
+          const checkReady = () => {
+            if (model.IsReady()) resolve();
+            else setTimeout(checkReady, 50);
+          };
+          this._safeAttach(model);
+          setTimeout(checkReady, 50);
+        }
+      });
+
+      const pIAction = model.Request('SEARCH');
+      if (!pIAction) {
+        return { matches, paths, unavailable: objectType };
+      }
 
       if (objectType === 'RMCObject') {
         pIAction.pRequest.twRMCObjectIx = objectIx;
@@ -460,13 +726,11 @@ export class MVClient {
 
       const response = await this._sendAction(pIAction);
 
-      // Server returns nResult: -1 for unimplemented search (e.g., RMTObject)
       if (response.nResult === -1) {
         return { matches, paths, unavailable: objectType };
       }
 
       if (response.aResultSet && response.aResultSet.length > 0) {
-        // aResultSet[0] = direct matches
         if (response.aResultSet[0] && Array.isArray(response.aResultSet[0])) {
           for (const match of response.aResultSet[0]) {
             matches.push({
@@ -478,7 +742,6 @@ export class MVClient {
           }
         }
 
-        // aResultSet[1] = ancestry paths
         if (response.aResultSet[1] && Array.isArray(response.aResultSet[1])) {
           for (const ancestor of response.aResultSet[1]) {
             paths.push({
@@ -491,63 +754,28 @@ export class MVClient {
           }
         }
       }
-    } catch (err) {
+    } catch {
       // Silently fail individual searches
     }
 
     return { matches, paths };
   }
 
-  async _collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices) {
-    const wClass = this.sceneWClass;
-    const twObjectIx = this.sceneObjectIx;
+  _sendAction(pIAction, timeout = 30000) {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error('Request timeout'));
+      }, timeout);
 
-    if (wClass === undefined || twObjectIx === undefined) {
-      return;
-    }
-
-    const config = MVClient._getWClassConfig()[wClass];
-    if (!config) {
-      return;
-    }
-
-    // If scene root is itself a searchable object type, add it directly
-    if (config.type === 'RMCObject') {
-      rmcObjectIndices.push(twObjectIx);
-      return;
-    }
-    if (config.type === 'RMTObject') {
-      rmtObjectIndices.push(twObjectIx);
-      return;
-    }
-
-    // For RMRoot/RMPObject, fetch and extract child indices
-    const pIAction = this.pClient.Request(config.action);
-    pIAction.pRequest[config.indexField] = twObjectIx;
-
-    const response = await this._sendAction(pIAction);
-
-    if (!response || (response.nResult !== undefined && response.nResult !== 0)) {
-      return;
-    }
-
-    this._extractChildIndices(response, rmcObjectIndices, rmtObjectIndices);
+      pIAction.Send(this, function(pIAction) {
+        clearTimeout(timeoutId);
+        resolve(pIAction.pResponse);
+      });
+    });
   }
 
-  _extractChildIndices(response, rmcObjectIndices, rmtObjectIndices) {
-    if (response.aChild && response.aChild.length > 0) {
-      for (const childArray of response.aChild) {
-        if (Array.isArray(childArray)) {
-          for (const child of childArray) {
-            if (child.twRMCObjectIx) {
-              rmcObjectIndices.push(child.twRMCObjectIx);
-            }
-            if (child.twRMTObjectIx) {
-              rmtObjectIndices.push(child.twRMTObjectIx);
-            }
-          }
-        }
-      }
-    }
+  _collectSearchIndicesFromSceneRoot(rmcObjectIndices, rmtObjectIndices) {
+    rmcObjectIndices.push(...this.#searchableRMCObjectIndices);
+    rmtObjectIndices.push(...this.#searchableRMTObjectIndices);
   }
 }

@@ -6,46 +6,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { createStarfield, createInfiniteGrid, updateGridSpacing } from './scene-helpers.js';
-
-const NODE_COLORS = {
-  RMRoot: 0xffd700,
-  RMCObject: 0x4a9eff,
-  RMTObject: 0x50c878,
-  RMPObject: 0xff8c42,
-
-  // Terrestrial types
-  Root: 0xffd700,
-  Water: 0x2266cc,
-  Land: 0x4a9eff,
-  Country: 0x9370db,
-  Territory: 0xff7f50,
-  State: 0x20b2aa,
-  County: 0x87ceeb,
-  City: 0xf08080,
-  Community: 0xdda0dd,
-  Sector: 0x98fb98,
-  Parcel: 0xffaa44,
-
-  // Celestial types
-  Universe: 0xe0e0ff,
-  Supercluster: 0xb8b8ff,
-  GalaxyCluster: 0x9090ff,
-  Galaxy: 0x8080ff,
-  BlackHole: 0x303030,
-  Nebula: 0xff80ff,
-  StarCluster: 0xffffaa,
-  Constellation: 0xaaffff,
-  StarSystem: 0xffdd44,
-  Star: 0xffff00,
-  PlanetSystem: 0x44aaff,
-  Planet: 0x44ff88,
-  Moon: 0xcccccc,
-  Debris: 0x666666,
-  Satellite: 0x88ff88,
-  Transport: 0xff8800,
-  Surface: 0x886644
-};
+import { createStarfield, createInfiniteGrid, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
+import { NODE_COLORS } from '../shared/node-types.js';
 
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
@@ -60,43 +22,66 @@ const SPRING_LENGTH = 50;
 const SPRING_K = 0.02;
 const DAMPING = 0.92;
 const MAX_VELOCITY = 5;
+const SETTLE_THRESHOLD = 0.01;
+const REPULSION_CUTOFF_SQ = 500 * 500;
 
 export class ViewGraph {
-  constructor(containerSelector) {
+  constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
+    this.stateManager = stateManager;
+    this.model = model;
     this.scene = null;
     this.camera = null;
     this.renderer = null;
     this.controls = null;
-    
+
     // Graph Data
     this.graphNodes = [];
     this.graphLinks = [];
     this.nodeMeshes = new Map(); // id -> Mesh
     this.linkLines = null; // THREE.LineSegments
-    
+
     // Interaction
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
-    this.selectCallbacks = [];
-    this.toggleCallbacks = [];
     this.msfLoadCallbacks = [];
-    this.selectedId = null;
     this.highlightMesh = null;
 
     this.animationFrameId = null;
     this.cameraAnimationId = null;
     this.disposed = false;
     this.initialized = false;
+    this.settled = false;
 
+    this._bindModelEvents();
     this.init();
     if (this.initialized) {
       this.animate();
     }
   }
 
-  _getKey(id, type) {
-    return `${type}_${id}`;
+  _bindModelEvents() {
+    this.model.on('selectionChanged', (node) => {
+      if (node) {
+        this.selectNode(node);
+      }
+    });
+
+    this.model.on('treeChanged', (tree) => {
+      this.setData(tree);
+    });
+
+    this.model.on('expansionChanged', (node, expanded) => {
+      if (expanded) {
+        if (node.children) {
+          this.addChildren(node, node.children);
+        }
+      } else {
+        this.removeDescendants(node);
+      }
+    });
+
+    this.model.on('dataChanged', () => this.syncGraph());
   }
 
   _getTextureUrl(nodeData) {
@@ -113,13 +98,9 @@ export class ViewGraph {
     return null;
   }
 
-  _getMsfReference(nodeData) {
-    // Check for pResource.sReference that points to an MSF file
-    const ref = nodeData?.properties?.pResource?.sReference;
-    if (ref && typeof ref === 'string' && (ref.endsWith('.msf') || ref.endsWith('.msf.json'))) {
-      return ref;
-    }
-    return null;
+  async _getMsfReference(nodeData) {
+    const { getMsfReference } = await import('./node-helpers.js');
+    return getMsfReference(nodeData);
   }
 
   _createNodeMaterial(nodeData, color) {
@@ -236,7 +217,7 @@ export class ViewGraph {
     this.renderer.domElement.addEventListener('dblclick', this.boundDblClickHandler);
   }
 
-  onDoubleClick(event) {
+  async onDoubleClick(event) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -251,20 +232,25 @@ export class ViewGraph {
       const node = this.graphNodes.find(n => n.id === id && n.type === type);
       if (node) {
         // Check for MSF reference - prompt to load instead of toggling
-        const msfUrl = this._getMsfReference(node.data);
+        const msfUrl = await this._getMsfReference(node.data);
         if (msfUrl) {
           if (confirm(`Load map: ${msfUrl}?`)) {
             this.msfLoadCallbacks.forEach(cb => cb(msfUrl));
           }
         } else {
-          this.toggleCallbacks.forEach(cb => cb(node.data));
+          if (this.model.isNodeExpanded(node.data)) {
+            this.model.collapseNode(node.data);
+          } else {
+            this.model.expandNode(node.data);
+          }
+          this.model.selectNode(node.data);
         }
       }
     }
   }
 
   zoomToNode(node) {
-    const mesh = this.nodeMeshes.get(this._getKey(node.id, node.type));
+    const mesh = this.nodeMeshes.get(this.model.nodeKey(node));
     if (!mesh) return;
 
     // Calculate camera offset direction (keep current viewing angle)
@@ -328,13 +314,9 @@ export class ViewGraph {
     this.clearScene();
     if (!tree) return;
 
-    // 1. Flatten tree to graph
     this.buildGraph(tree);
-
-    // 2. Create meshes
     this.createVisuals();
-
-    // 3. Initial camera fit (approximate)
+    this.wakePhysics();
     this.controls.reset();
   }
 
@@ -372,24 +354,33 @@ export class ViewGraph {
     traverse(tree);
   }
 
+  _createNodeMesh(node, index) {
+    const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
+    const material = this._createNodeMaterial(node.data, color);
+    const mesh = new THREE.Mesh(this.nodeGeometry, material);
+    mesh.userData = { id: node.id, type: node.type, index, originalColor: color };
+    const label = this.createLabel(node.data);
+    mesh.add(label);
+    mesh.position.set(node.x, node.y, node.z);
+    this.scene.add(mesh);
+    this.nodeMeshes.set(this.model.nodeKey(node), mesh);
+    return mesh;
+  }
+
+  _updateNodeLabel(mesh, node) {
+    const newName = node.name || node.type || 'Unknown';
+    const currentLabel = mesh.children.find(c => c.userData?.text);
+    if (currentLabel && currentLabel.userData.text !== newName) {
+      mesh.remove(currentLabel);
+      if (currentLabel.material?.map) currentLabel.material.map.dispose();
+      if (currentLabel.material) currentLabel.material.dispose();
+      mesh.add(this.createLabel(node));
+    }
+  }
+
   createVisuals() {
     this.graphNodes.forEach((node, index) => {
-      const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
-      const material = this._createNodeMaterial(node.data, color);
-      const mesh = new THREE.Mesh(this.nodeGeometry, material);
-      
-      mesh.userData = { 
-        id: node.id,
-        type: node.type,
-        index: index,
-        originalColor: color 
-      };
-
-      const label = this.createLabel(node.data);
-      mesh.add(label);
-
-      this.scene.add(mesh);
-      this.nodeMeshes.set(this._getKey(node.id, node.type), mesh);
+      this._createNodeMesh(node, index);
     });
 
     // Links geometry (dynamic)
@@ -412,8 +403,8 @@ export class ViewGraph {
   addChildren(parentNode, children) {
     if (!children || children.length === 0) return;
 
-    const parentKey = this._getKey(parentNode.id, parentNode.type);
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+    const parentKey = this.model.nodeKey(parentNode);
+    const parentIndex = this.graphNodes.findIndex(n => this.model.nodeKey(n) === parentKey);
 
     if (parentIndex === -1) {
       console.warn(`View3D: Parent node ${parentNode.name} not found in graph`);
@@ -423,59 +414,32 @@ export class ViewGraph {
     const parentGraphNode = this.graphNodes[parentIndex];
 
     children.forEach((child) => {
-      // Check for duplicates
-      if (this.nodeMeshes.has(this._getKey(child.id, child.type))) return;
+      const childKey = this.model.nodeKey(child);
+      if (this.nodeMeshes.has(childKey)) {
+        const existing = this.graphNodes.find(n => n.id === child.id && n.type === child.type);
+        if (existing) existing.data = child;
+        return;
+      }
 
       const nodeIndex = this.graphNodes.length;
-
-      // Initialize with position relative to parent to avoid explosions
-      this.graphNodes.push({
-        id: child.id,
-        type: child.type,
-        nodeType: child.nodeType,
-        data: child,
+      const graphNode = {
+        id: child.id, type: child.type, nodeType: child.nodeType, data: child,
         x: parentGraphNode.x + (Math.random() - 0.5) * 10,
         y: parentGraphNode.y + (Math.random() - 0.5) * 10,
         z: parentGraphNode.z + (Math.random() - 0.5) * 10,
         vx: 0, vy: 0, vz: 0
-      });
-
-      this.graphLinks.push({
-        source: parentIndex,
-        target: nodeIndex
-      });
-
-      // Create mesh (use shared geometry)
-      const color = NODE_COLORS[child.nodeType] || NODE_COLORS[child.type] || 0x888888;
-      const material = this._createNodeMaterial(child, color);
-      const mesh = new THREE.Mesh(this.nodeGeometry, material);
-      
-      mesh.userData = { 
-        id: child.id,
-        type: child.type,
-        index: nodeIndex,
-        originalColor: color 
       };
-
-      const label = this.createLabel(child);
-      mesh.add(label);
-
-      // Set initial position
-      mesh.position.set(
-        this.graphNodes[nodeIndex].x,
-        this.graphNodes[nodeIndex].y,
-        this.graphNodes[nodeIndex].z
-      );
-
-      this.scene.add(mesh);
-      this.nodeMeshes.set(this._getKey(child.id, child.type), mesh);
+      this.graphNodes.push(graphNode);
+      this.graphLinks.push({ source: parentIndex, target: nodeIndex });
+      this._createNodeMesh(graphNode, nodeIndex);
     });
 
     this.updateLinkLinesGeometry();
+    this.wakePhysics();
   }
 
   removeDescendants(parentNode) {
-    const parentKey = this._getKey(parentNode.id, parentNode.type);
+    const parentKey = this.model.nodeKey(parentNode);
     const indicesToRemove = new Set();
 
     // Build adjacency list for fast lookup
@@ -497,7 +461,7 @@ export class ViewGraph {
        }
     };
 
-    const parentIndex = this.graphNodes.findIndex(n => this._getKey(n.id, n.type) === parentKey);
+    const parentIndex = this.graphNodes.findIndex(n => this.model.nodeKey(n) === parentKey);
 
     collect(parentIndex);
 
@@ -506,7 +470,7 @@ export class ViewGraph {
     // 1. Remove Meshes
     indicesToRemove.forEach(index => {
         const node = this.graphNodes[index];
-        const key = this._getKey(node.id, node.type);
+        const key = this.model.nodeKey(node);
         const mesh = this.nodeMeshes.get(key);
         if (mesh) {
             this.scene.remove(mesh);
@@ -545,6 +509,100 @@ export class ViewGraph {
     this.graphLinks = newLinks;
     
     this.updateLinkLinesGeometry();
+  }
+
+  syncGraph() {
+    if (!this.model.tree) return;
+
+    // Collect expected node keys by walking the model tree respecting expansion
+    const expectedKeys = new Set();
+    const walkTree = (node) => {
+      expectedKeys.add(this.model.nodeKey(node));
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          walkTree(child);
+        }
+      }
+    };
+    walkTree(this.model.tree);
+
+    // Remove graph nodes not in expected set
+    const keysToRemove = new Set();
+    for (let i = 0; i < this.graphNodes.length; i++) {
+      const key = this.model.nodeKey(this.graphNodes[i]);
+      if (!expectedKeys.has(key)) {
+        keysToRemove.add(key);
+        const mesh = this.nodeMeshes.get(key);
+        if (mesh) {
+          this.scene.remove(mesh);
+          mesh.material.dispose();
+          this.nodeMeshes.delete(key);
+        }
+      }
+    }
+
+    if (keysToRemove.size > 0) {
+      this.graphNodes = this.graphNodes.filter(n => !keysToRemove.has(this.model.nodeKey(n)));
+    }
+
+    // Build set of existing keys for quick lookup
+    const existingKeys = new Set(this.graphNodes.map(n => this.model.nodeKey(n)));
+
+    // Add new nodes and update existing ones
+    const reconcile = (node, parentGraphNode) => {
+      const key = this.model.nodeKey(node);
+      let graphNode;
+
+      if (!existingKeys.has(key)) {
+        const px = parentGraphNode ? parentGraphNode.x + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+        const py = parentGraphNode ? parentGraphNode.y + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+        const pz = parentGraphNode ? parentGraphNode.z + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+
+        graphNode = {
+          id: node.id, type: node.type, nodeType: node.nodeType, data: node,
+          x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0
+        };
+        this.graphNodes.push(graphNode);
+        existingKeys.add(key);
+        this._createNodeMesh(graphNode, this.graphNodes.length - 1);
+      } else {
+        graphNode = this.graphNodes.find(n => this.model.nodeKey(n) === key);
+        graphNode.data = node;
+        const mesh = this.nodeMeshes.get(key);
+        if (mesh) this._updateNodeLabel(mesh, node);
+      }
+
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          reconcile(child, graphNode);
+        }
+      }
+    };
+    reconcile(this.model.tree, null);
+
+    // Rebuild links from parent-child relationships
+    const keyToIndex = new Map();
+    this.graphNodes.forEach((n, i) => keyToIndex.set(this.model.nodeKey(n), i));
+
+    this.graphLinks = [];
+    const buildLinks = (node) => {
+      const parentKey = this.model.nodeKey(node);
+      const parentIndex = keyToIndex.get(parentKey);
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          const childKey = this.model.nodeKey(child);
+          const childIndex = keyToIndex.get(childKey);
+          if (parentIndex !== undefined && childIndex !== undefined) {
+            this.graphLinks.push({ source: parentIndex, target: childIndex });
+          }
+          buildLinks(child);
+        }
+      }
+    };
+    buildLinks(this.model.tree);
+
+    this.updateLinkLinesGeometry();
+    this.wakePhysics();
   }
 
   updateLinkLinesGeometry() {
@@ -603,29 +661,33 @@ export class ViewGraph {
       this.linkLines = null;
     }
 
-    this.selectedId = null;
     this.graphNodes = [];
     this.graphLinks = [];
   }
 
-  updatePhysics() {
-    if (this.graphNodes.length === 0) return;
+  wakePhysics() {
+    this.settled = false;
+  }
 
-    // Repulsion (simplified O(N^2) for now - optimize if slow)
+  updatePhysics() {
+    if (this.graphNodes.length === 0 || this.settled) return;
+
+    // Repulsion with distance cutoff
     for (let i = 0; i < this.graphNodes.length; i++) {
       const n1 = this.graphNodes[i];
       for (let j = i + 1; j < this.graphNodes.length; j++) {
         const n2 = this.graphNodes[j];
-        
+
         const dx = n1.x - n2.x;
         const dy = n1.y - n2.y;
         const dz = n1.z - n2.z;
-        const distSq = dx*dx + dy*dy + dz*dz + 0.1; // Avoid div/0
+        const distSq = dx*dx + dy*dy + dz*dz + 0.1;
+
+        if (distSq > REPULSION_CUTOFF_SQ) continue;
+
         const dist = Math.sqrt(distSq);
-        
-        // F = k / d^2
         const force = REPULSION / distSq;
-        
+
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         const fz = (dz / dist) * force;
@@ -672,9 +734,9 @@ export class ViewGraph {
       n.vz -= n.z * 0.005;
     }
 
-    // Integrate
+    // Integrate and check for settling
+    let maxVSq = 0;
     for (const n of this.graphNodes) {
-      // Limit velocity
       const vSq = n.vx*n.vx + n.vy*n.vy + n.vz*n.vz;
       if (vSq > MAX_VELOCITY * MAX_VELOCITY) {
         const scale = MAX_VELOCITY / Math.sqrt(vSq);
@@ -688,6 +750,13 @@ export class ViewGraph {
       n.vx *= DAMPING;
       n.vy *= DAMPING;
       n.vz *= DAMPING;
+
+      const newVSq = n.vx*n.vx + n.vy*n.vy + n.vz*n.vz;
+      if (newVSq > maxVSq) maxVSq = newVSq;
+    }
+
+    if (maxVSq < SETTLE_THRESHOLD * SETTLE_THRESHOLD) {
+      this.settled = true;
     }
   }
 
@@ -699,7 +768,7 @@ export class ViewGraph {
 
     // Update node positions
     this.graphNodes.forEach(node => {
-      const mesh = this.nodeMeshes.get(this._getKey(node.id, node.type));
+      const mesh = this.nodeMeshes.get(this.model.nodeKey(node));
       if (mesh) {
         mesh.position.set(node.x, node.y, node.z);
         if (node.y < minY) minY = node.y;
@@ -743,8 +812,12 @@ export class ViewGraph {
 
     this.animationFrameId = requestAnimationFrame(() => this.animate());
 
+    if (!this.container.offsetHeight) return;
+
     this.updatePhysics();
-    this.updateVisuals();
+    if (!this.settled) {
+      this.updateVisuals();
+    }
     this.controls.update();
     this.starfield.position.copy(this.camera.position);
     this.renderer.render(this.scene, this.camera);
@@ -763,20 +836,15 @@ export class ViewGraph {
 
     if (nodeIntersect) {
       const { id, type } = nodeIntersect.object.userData;
-      this.selectNode({ id, type });
-      
       const node = this.graphNodes.find(n => n.id === id && n.type === type);
       if (node) {
-        this.selectCallbacks.forEach(cb => cb(node.data));
+        this.model.selectNode(node.data);
       }
-    } else {
-      // Deselect if clicked background? 
-      // Optional, maybe keep selection
     }
   }
 
   selectNode(node) {
-    const key = this._getKey(node.id, node.type);
+    const key = this.model.nodeKey(node);
 
     // Remove previous highlight
     if (this.highlightMesh) {
@@ -787,8 +855,6 @@ export class ViewGraph {
       this.highlightMesh.material.dispose();
       this.highlightMesh = null;
     }
-
-    this.selectedId = key;
 
     // Highlight new
     const mesh = this.nodeMeshes.get(key);
@@ -807,78 +873,19 @@ export class ViewGraph {
     }
   }
 
-  onSelect(callback) {
-    this.selectCallbacks.push(callback);
-  }
-
-  onToggle(callback) {
-    this.toggleCallbacks.push(callback);
-  }
-
   onMsfLoad(callback) {
     this.msfLoadCallbacks.push(callback);
   }
 
   createLabel(node) {
     const text = node.name || node.type || 'Unknown';
+    const { sprite, aspect } = createLabelSprite(text);
 
-    // High-resolution for sharp text
-    const fontSize = 64; 
-    const font = `bold ${fontSize}px Arial`;
-    
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.font = font;
-    
-    // Measure text
-    const metrics = context.measureText(text);
-    const textWidth = metrics.width;
-    const textHeight = fontSize; // Basic height approximation
-    
-    // Canvas size with padding
-    const padding = 20;
-    canvas.width = textWidth + padding * 2;
-    canvas.height = textHeight + padding * 2;
-    
-    // Draw
-    context.font = font;
-    context.fillStyle = 'white';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    
-    // Shadow/Outline
-    context.strokeStyle = 'black';
-    context.lineWidth = 4;
-    context.lineJoin = 'round';
-    
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
-    
-    context.strokeText(text, cx, cy);
-    context.fillText(text, cx, cy);
-    
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false; // Mipmaps can cause blur on sprites sometimes
-    
-    const spriteMaterial = new THREE.SpriteMaterial({ 
-        map: texture, 
-        depthTest: true, 
-        depthWrite: false,
-        sizeAttenuation: true 
-    });
-    
-    const sprite = new THREE.Sprite(spriteMaterial);
-    
-    // Fixed world height for the label (e.g., 3 units high)
-    const labelWorldHeight = 3; 
-    const aspectRatio = canvas.width / canvas.height;
-    
-    sprite.scale.set(labelWorldHeight * aspectRatio, labelWorldHeight, 1);
-    sprite.center.set(0.5, 0); 
+    const labelWorldHeight = 3;
+    sprite.scale.set(labelWorldHeight * aspect, labelWorldHeight, 1);
+    sprite.center.set(0.5, 0);
     sprite.position.y = DEFAULT_NODE_RADIUS + 0.5;
-    sprite.renderOrder = 1;
+    sprite.userData.text = text;
 
     return sprite;
   }

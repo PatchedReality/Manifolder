@@ -91,3 +91,12 @@ export const NODE_TYPES = [
   // Placement type
   { name: 'Placement', color: 0xff8c42, cssVar: '--node-placement', category: 'placement' }
 ];
+
+// Color lookup by type name, including RM-type entries
+export const NODE_COLORS = {
+  RMRoot: 0xffd700,
+  RMCObject: 0x4a9eff,
+  RMTObject: 0x50c878,
+  RMPObject: 0xff8c42,
+  ...Object.fromEntries(NODE_TYPES.map(t => [t.name, t.color]))
+};
