@@ -15,9 +15,9 @@
 
 /**
  * MVClient - Direct browser client for Metaverse server communication
- * Uses MVMF notification pattern for push-based data flow
+ * Uses MVMF notification pattern for push-based data flow.
+ * Emits raw MVMF model references — Model layer wraps them in NodeAdapters.
  */
-import { NodeFactory } from './node-factory.js';
 import { setResourceBaseUrl } from './node-helpers.js';
 
 export class MVClient extends MV.MVMF.NOTIFICATION {
@@ -38,6 +38,8 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   #sceneObjectIx;
 
   #pendingModelLoads = new Map();
+  #pendingInserts = new Map();
+  #pendingEnumeratedChildren = new Map();
   #searchableRMCObjectIndices = [];
   #searchableRMTObjectIndices = [];
   #attachedModels = new Set();
@@ -93,7 +95,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   destructor() {
-    // Detach from all models we attached to (child models from getNode)
     for (const model of this.#attachedModels) {
       if (model !== this.#pRMXRoot && model !== this.#m_pLnG && model !== this.#m_pFabric) {
         try { model.Detach(this); } catch (e) { /* already detached */ }
@@ -120,6 +121,8 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     this.#searchableRMCObjectIndices = [];
     this.#searchableRMTObjectIndices = [];
     this.#pendingModelLoads.clear();
+    this.#pendingInserts.clear();
+    this.#pendingEnumeratedChildren.clear();
     this.#attachedModels.clear();
 
     this.ReadyState(this.eSTATE.NOTREADY);
@@ -166,7 +169,55 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     }
   }
 
+  // Returns true/false/null (null = indeterminate, collection not populated)
+  _isChildOf(parent, child) {
+    if (!parent.Child_Enum || !parent.IsReady?.()) return null;
+
+    const cpChild = parent.acpChild?.[child.sID];
+    if (!cpChild || cpChild.Length() === 0) {
+      return null;
+    }
+
+    let found = false;
+    parent.Child_Enum(child.sID, this, (c) => {
+      if (c.twObjectIx === child.twObjectIx) found = true;
+    }, null);
+    return found;
+  }
+
+  /**
+   * Enumerate immediate children of an MVMF model via Child_Enum.
+   * Returns an array of raw MVMF child objects.
+   */
+  enumerateChildren(model) {
+    const allChildren = [];
+    if (model.Child_Enum) {
+      const enumCallback = (child, arr) => arr.push(child);
+      model.Child_Enum('RMCObject', this, enumCallback, allChildren);
+      model.Child_Enum('RMTObject', this, enumCallback, allChildren);
+      model.Child_Enum('RMPObject', this, enumCallback, allChildren);
+    }
+
+    const readyChildren = [];
+    for (const child of allChildren) {
+      this._safeAttach(child);
+      if (child.IsReady()) {
+        readyChildren.push(child);
+      } else {
+        const key = `${child.sID}_${child.twObjectIx}`;
+        console.warn(`[MVClient] enumerateChildren: child ${key} not ready (state=${child.ReadyState?.()}), deferring`);
+        this.#pendingEnumeratedChildren.set(key, {
+          child,
+          parentType: model.sID,
+          parentId: model.twObjectIx
+        });
+      }
+    }
+    return readyChildren;
+  }
+
   onReadyState(pNotice) {
+    console.log(`[MVClient] onReadyState: ${pNotice.pCreator?.sID}_${pNotice.pCreator?.twObjectIx} state=${pNotice.pCreator?.ReadyState?.()}, isReady=${pNotice.pCreator?.IsReady?.()}`);
     if (!this.IsReady()) {
       if (pNotice.pCreator === this.#m_pFabric) {
         this._handleFabricReadyState();
@@ -270,182 +321,71 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   _handleRootModelReadyState(model) {
-    const state = model.ReadyState();
-    const RECOVERED = model.eSTATE?.RECOVERED ?? 3;
-
-    if (state >= RECOVERED) {
+    if (model.IsReady()) {
       clearTimeout(this._loadTimeout);
-
-      const tree = this._buildNodeFromModel(model);
 
       this.#searchableRMCObjectIndices = [];
       this.#searchableRMTObjectIndices = [];
-      this._collectSearchableIndicesFromTree(tree);
+      this._collectSearchableIndices(model);
 
       this.ReadyState(this.eSTATE.READY);
 
       this._emit('status', 'Map loaded');
-      this._emit('mapData', tree);
+      this._emit('mapData', model);
 
       if (this._pendingResolve) {
-        this._pendingResolve(tree);
+        this._pendingResolve(model);
         this._pendingResolve = null;
         this._pendingReject = null;
       }
     }
   }
 
-  _collectSearchableIndicesFromTree(tree) {
-    if (tree.type === 'RMCObject') {
-      this.#searchableRMCObjectIndices.push(tree.id);
-    } else if (tree.type === 'RMTObject') {
-      this.#searchableRMTObjectIndices.push(tree.id);
-    } else if (tree.children) {
-      for (const child of tree.children) {
-        if (child.type === 'RMCObject') {
-          this.#searchableRMCObjectIndices.push(child.id);
-        } else if (child.type === 'RMTObject') {
-          this.#searchableRMTObjectIndices.push(child.id);
+  _collectSearchableIndices(model) {
+    if (model.sID === 'RMCObject') {
+      this.#searchableRMCObjectIndices.push(model.twObjectIx);
+    } else if (model.sID === 'RMTObject') {
+      this.#searchableRMTObjectIndices.push(model.twObjectIx);
+    } else {
+      const children = this.enumerateChildren(model);
+      for (const child of children) {
+        if (child.sID === 'RMCObject') {
+          this.#searchableRMCObjectIndices.push(child.twObjectIx);
+        } else if (child.sID === 'RMTObject') {
+          this.#searchableRMTObjectIndices.push(child.twObjectIx);
         }
       }
     }
   }
 
   _handleModelReadyState(model) {
-    const RECOVERED = model.eSTATE?.RECOVERED ?? 3;
-    if (model.ReadyState() < RECOVERED) return;
+    if (!model.IsReady()) return;
 
     const key = `${model.sID}_${model.twObjectIx}`;
     const pending = this.#pendingModelLoads.get(key);
 
     if (pending) {
       this.#pendingModelLoads.delete(key);
-      const node = this._buildNodeFromModel(model);
-      pending.resolve(node);
-    }
-  }
-
-  _buildNodeFromModel(model) {
-    const type = model.sID;
-    const id = model.twObjectIx;
-
-    const data = this._extractModelData(model);
-    return NodeFactory.createNode(type, data, id);
-  }
-
-  _buildNodeShallow(model) {
-    const type = model.sID;
-    const id = model.twObjectIx;
-
-    const data = this._extractModelData(model, true);
-    return NodeFactory.createNode(type, data, id);
-  }
-
-  _extractObjectFields(obj) {
-    const type = obj.sID;
-
-    if (type === 'RMRoot') {
-      return {
-        twRMRootIx: obj.twRMRootIx || obj.twObjectIx,
-        pName: obj.pName || { wsRMRootId: 'Root' },
-        nChildren: obj.nChildren
-      };
+      pending.resolve(model);
     }
 
-    const idKey = `tw${type}Ix`;
-    const data = {
-      [idKey]: obj[idKey] || obj.twObjectIx,
-      pName: obj.pName,
-      bType: obj.pType?.bType,
-      sClass: obj.pType?.sClass,
-      pTransform: this._extractTransform(obj),
-      pBound: this._extractBound(obj),
-      pResource: obj.pResource,
-      nChildren: obj.nChildren
-    };
-
-    if (type === 'RMCObject') {
-      data.pOrbit_Spin = obj.pOrbit_Spin;
-    } else if (type === 'RMPObject') {
-      data.sAssetUrl = obj.sAssetUrl;
+    const pendingInsert = this.#pendingInserts.get(key);
+    if (pendingInsert) {
+      console.log(`[MVClient] pendingInsert ready: ${key}, emitting nodeInserted`);
+      this.#pendingInserts.delete(key);
+      this._emit('nodeInserted', pendingInsert);
     }
 
-    return data;
-  }
-
-  _extractModelData(model, skipChildren = false) {
-    return {
-      Parent: this._extractObjectFields(model),
-      aChild: skipChildren ? [[], [], []] : this._extractChildren(model)
-    };
-  }
-
-  _extractTransform(model) {
-    if (!model.pTransform) return null;
-
-    const t = model.pTransform;
-    return {
-      Position: this._toArray3(t.vPosition),
-      Rotation: this._toArray4(t.qRotation),
-      Scale: this._toArray3(t.vScale)
-    };
-  }
-
-  _extractBound(model) {
-    if (!model.pBound) return null;
-
-    const b = model.pBound;
-    return {
-      Max: [b.dX || 0, b.dY || 0, b.dZ || 0]
-    };
-  }
-
-  _toArray3(v) {
-    if (!v) return [0, 0, 0];
-    if (Array.isArray(v)) return v;
-    return [v.dX ?? v.x ?? 0, v.dY ?? v.y ?? 0, v.dZ ?? v.z ?? 0];
-  }
-
-  _toArray4(v) {
-    if (!v) return [0, 0, 0, 1];
-    if (Array.isArray(v)) return v;
-    return [v.dX ?? v.x ?? 0, v.dY ?? v.y ?? 0, v.dZ ?? v.z ?? 0, v.dW ?? v.w ?? 1];
-  }
-
-  _extractChildren(model) {
-    const aChild = [[], [], []];
-
-    if (model.Child_Enum) {
-      const children = [];
-
-      const enumCallback = (child, arr) => {
-        arr.push(child);
-      };
-
-      model.Child_Enum('RMCObject', this, enumCallback, children);
-      model.Child_Enum('RMTObject', this, enumCallback, children);
-      model.Child_Enum('RMPObject', this, enumCallback, children);
-
-      for (const child of children) {
-        const childData = this._extractChildData(child);
-        if (childData) {
-          if (childData.twRMCObjectIx !== undefined) {
-            aChild[0].push(childData);
-          } else if (childData.twRMTObjectIx !== undefined) {
-            aChild[1].push(childData);
-          } else if (childData.twRMPObjectIx !== undefined) {
-            aChild[2].push(childData);
-          }
-        }
-      }
+    const pendingEnum = this.#pendingEnumeratedChildren.get(key);
+    if (pendingEnum) {
+      console.log(`[MVClient] pendingEnumeratedChild ready: ${key}, emitting nodeInserted`);
+      this.#pendingEnumeratedChildren.delete(key);
+      this._emit('nodeInserted', {
+        mvmfModel: pendingEnum.child,
+        parentType: pendingEnum.parentType,
+        parentId: pendingEnum.parentId
+      });
     }
-
-    return aChild;
-  }
-
-  _extractChildData(child) {
-    if (!child.sID) return null;
-    return this._extractObjectFields(child);
   }
 
   _getClassID(wClass) {
@@ -476,6 +416,10 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     return true;
   }
 
+  /**
+   * Open and return a raw MVMF model for the given node.
+   * Resolves when the model is ready.
+   */
   async getNode(id, nodeType) {
     if (id === undefined || !nodeType) {
       throw new Error('Missing node id or type');
@@ -494,12 +438,10 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       }
 
       const model = this.#m_pLnG.Model_Open(nodeType, id);
-      const RECOVERED = model.eSTATE?.RECOVERED ?? 3;
+      this._safeAttach(model);
 
-      if (model.ReadyState() >= RECOVERED) {
-        const node = this._buildNodeFromModel(model);
-        this._emit('nodeData', node);
-        return node;
+      if (model.IsReady()) {
+        return model;
       }
 
       const pendingPromise = new Promise((resolve, reject) => {
@@ -509,10 +451,9 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
         }, 30000);
 
         this.#pendingModelLoads.set(key, {
-          resolve: (node) => {
+          resolve: (m) => {
             clearTimeout(timeoutId);
-            this._emit('nodeData', node);
-            resolve(node);
+            resolve(m);
           },
           reject: (err) => {
             clearTimeout(timeoutId);
@@ -523,7 +464,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       });
 
       this.#pendingModelLoads.get(key).promise = pendingPromise;
-      this._safeAttach(model);
 
       return pendingPromise;
 
@@ -533,32 +473,153 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     }
   }
 
+  async refreshNode(id, nodeType) {
+    if (id === undefined || !nodeType) {
+      throw new Error('Missing node id or type');
+    }
+    if (!this.#m_pLnG) {
+      throw new Error('Not connected to MV server');
+    }
+
+    const existing = this.#m_pLnG.Model_Open(nodeType, id);
+    if (existing) {
+      this._safeDetach(existing);
+      this.#m_pLnG.Model_Close(existing);
+    }
+
+    return this.getNode(id, nodeType);
+  }
+
   onInserted(pNotice) {
-    if (this.IsReady() && pNotice.pData?.pChild) {
-      const child = pNotice.pData.pChild;
-      const node = this._buildNodeFromModel(child);
-      this._emit('nodeInserted', { node, parentModel: pNotice.pCreator });
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    console.log(`[MVClient] onInserted: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, childReady=${child?.IsReady?.()}, clientReady=${this.IsReady()}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onInserted: parent ${creator.sID}_${creator.twObjectIx} not ready`);
+    }
+    if (this.IsReady() && child) {
+      this._safeAttach(child);
+
+      const insertData = {
+        mvmfModel: child,
+        parentType: creator.sID,
+        parentId: creator.twObjectIx
+      };
+
+      if (child.IsReady()) {
+        console.log(`[MVClient] onInserted: emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
+        this._emit('nodeInserted', insertData);
+      } else {
+        const key = `${child.sID}_${child.twObjectIx}`;
+        console.log(`[MVClient] onInserted: child ${key} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
+        this.#pendingInserts.set(key, insertData);
+      }
     }
   }
 
   onUpdated(pNotice) {
-    if (this.IsReady() && pNotice.pData?.pChild) {
-      const child = pNotice.pData.pChild;
-      const node = this._buildNodeShallow(child);
-      this._emit('nodeUpdated', node);
+    if (!this.IsReady()) return;
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild || creator;
+    console.log(`[MVClient] onUpdated: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, hasDataChild=${!!pNotice.pData?.pChild}`);
+    if (child?.sID && child.twObjectIx !== undefined) {
+      this._safeAttach(child);
+      if (!child.IsReady?.()) return;
+      this._emit('nodeUpdated', {
+        id: child.twObjectIx,
+        type: child.sID,
+        mvmfModel: child
+      });
     }
   }
 
   onChanged(pNotice) {
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    const pChange = pNotice.pData?.pChange;
+    console.log(`[MVClient] onChanged: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}, pChange.sType=${pChange?.sType}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onChanged: parent ${creator.sID}_${creator.twObjectIx} not ready`);
+      return;
+    }
+
+    if (child?.sID && child.twObjectIx !== undefined) {
+      // RMPOBJECT_OPEN is authoritative: child is being added to this parent.
+      // _isChildOf enum lags behind the notification, so bypass it.
+      if (pChange?.sType === 'RMPOBJECT_OPEN') {
+        console.log(`[MVClient] onChanged: OPEN — ${child.sID}_${child.twObjectIx} added to ${creator.sID}_${creator.twObjectIx}`);
+        this._safeAttach(child);
+        if (child.IsReady()) {
+          console.log(`[MVClient] onChanged: OPEN emitting nodeInserted ${child.sID}_${child.twObjectIx} → ${creator.sID}_${creator.twObjectIx}`);
+          this._emit('nodeInserted', {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        } else {
+          const childKey = `${child.sID}_${child.twObjectIx}`;
+          console.log(`[MVClient] onChanged: OPEN child ${childKey} not ready, deferring → ${creator.sID}_${creator.twObjectIx}`);
+          this.#pendingInserts.set(childKey, {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        }
+        return;
+      }
+
+      const present = this._isChildOf(creator, child);
+      if (present === false) {
+        console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} not in parent's Child_Enum, emitting delete`);
+        this._emit('nodeDeleted', {
+          id: child.twObjectIx,
+          type: child.sID,
+          sourceParentType: creator.sID,
+          sourceParentId: creator.twObjectIx
+        });
+      } else if (present === true) {
+        this._safeAttach(child);
+        if (child.IsReady()) {
+          console.log(`[MVClient] onChanged: child ${child.sID}_${child.twObjectIx} in parent's Child_Enum, emitting nodeInserted`);
+          this._emit('nodeInserted', {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        } else {
+          const childKey = `${child.sID}_${child.twObjectIx}`;
+          console.log(`[MVClient] onChanged: child ${childKey} not ready, deferring`);
+          this.#pendingInserts.set(childKey, {
+            mvmfModel: child,
+            parentType: creator.sID,
+            parentId: creator.twObjectIx
+          });
+        }
+      } else {
+        console.log(`[MVClient] onChanged: indeterminate for ${child.sID}_${child.twObjectIx}, reloading ${creator.sID}_${creator.twObjectIx}`);
+        const model = this.#m_pLnG.Model_Open(creator.sID, creator.twObjectIx);
+        this._safeAttach(model);
+      }
+      return;
+    }
+
     this.onUpdated(pNotice);
   }
 
   onDeleting(pNotice) {
-    if (this.IsReady() && pNotice.pData?.pChild) {
-      const child = pNotice.pData.pChild;
+    const creator = pNotice.pCreator;
+    const child = pNotice.pData?.pChild;
+    console.log(`[MVClient] onDeleting: creator=${creator?.sID}_${creator?.twObjectIx}, child=${child?.sID}_${child?.twObjectIx}`);
+    if (!creator.IsReady?.()) {
+      console.warn(`[MVClient] onDeleting: parent ${creator.sID}_${creator.twObjectIx} not ready, deferring to onChanged`);
+      return;
+    }
+    if (this.IsReady() && child) {
       this._emit('nodeDeleted', {
         id: child.twObjectIx,
-        type: child.sID
+        type: child.sID,
+        sourceParentType: creator.sID,
+        sourceParentId: creator.twObjectIx
       });
     }
   }

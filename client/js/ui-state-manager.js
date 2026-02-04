@@ -127,7 +127,7 @@ export class UIStateManager {
     }
 
     if (snapshot.navigation?.selectedNodePath?.length > 0) {
-      await app.restoreNodePath(snapshot.navigation.selectedNodePath);
+      app.restoreNodePath(snapshot.navigation.selectedNodePath);
     }
 
     return true;

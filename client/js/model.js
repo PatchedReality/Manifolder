@@ -2,6 +2,8 @@
  * Copyright (c) 2026 Patched Reality, Inc.
  */
 
+import { NodeAdapter } from './node-adapter.js';
+
 /**
  * Model - Single source of truth for shared application state.
  * Subscribes to MVClient server events and maintains the node tree.
@@ -16,7 +18,10 @@ export class Model {
     this.selectedNode = null;
     this.expandedNodes = new Set();
     this._pendingExpandedKeys = null;
+    this._pendingSelectedKey = null;
     this.inheritedPlanetContext = null;
+
+    this._dataChangedTimer = null;
 
     this.callbacks = {
       treeChanged: [],
@@ -24,28 +29,31 @@ export class Model {
       nodeUpdated: [],
       nodeInserted: [],
       nodeDeleted: [],
+      dataChanged: [],
       selectionChanged: [],
-      expansionChanged: []
+      expansionChanged: [],
+      disconnected: []
     };
 
     this._bindClientEvents();
   }
 
   _bindClientEvents() {
-    this.client.on('nodeInserted', ({ node, parentModel }) => {
-      if (!node) return;
-      const parentType = parentModel?.sID;
-      const parentId = parentModel?.twObjectIx;
-      this._handleNodeInserted(node, parentType, parentId);
+    this.client.on('nodeInserted', ({ mvmfModel, parentType, parentId }) => {
+      if (!mvmfModel) return;
+      this._handleNodeInserted(mvmfModel, parentType, parentId);
     });
 
-    this.client.on('nodeUpdated', (node) => {
-      if (!node) return;
-      this._handleNodeUpdated(node);
+    this.client.on('nodeUpdated', ({ id, type, mvmfModel }) => {
+      this._handleNodeUpdated(id, type, mvmfModel);
     });
 
-    this.client.on('nodeDeleted', ({ id, type }) => {
-      this._handleNodeDeleted(id, type);
+    this.client.on('nodeDeleted', ({ id, type, sourceParentType, sourceParentId }) => {
+      this._handleNodeDeleted(id, type, sourceParentType, sourceParentId);
+    });
+
+    this.client.on('disconnected', () => {
+      this._emit('disconnected');
     });
   }
 
@@ -61,6 +69,15 @@ export class Model {
       if (index !== -1) {
         this.callbacks[event].splice(index, 1);
       }
+    }
+  }
+
+  _scheduleDataChanged() {
+    if (!this._dataChangedTimer) {
+      this._dataChangedTimer = setTimeout(() => {
+        this._dataChangedTimer = null;
+        this._emit('dataChanged');
+      }, 0);
     }
   }
 
@@ -81,19 +98,29 @@ export class Model {
 
   // --- Tree Management ---
 
-  setTree(tree, inheritedPlanetContext = null) {
-    this.tree = tree;
+  setTree(rootModel, inheritedPlanetContext = null) {
     this.nodes.clear();
     this.selectedNode = null;
     this.expandedNodes.clear();
     this._pendingExpandedKeys = null;
+    this._pendingSelectedKey = null;
     this.inheritedPlanetContext = inheritedPlanetContext;
 
-    if (tree) {
-      this._indexNode(tree, null);
+    if (rootModel) {
+      this.tree = this._createAdapterTree(rootModel);
+      this._indexNode(this.tree, null);
+    } else {
+      this.tree = null;
     }
 
-    this._emit('treeChanged', tree);
+    this._emit('treeChanged', this.tree);
+  }
+
+  _createAdapterTree(mvmfModel) {
+    const adapter = new NodeAdapter(mvmfModel);
+    const childModels = this.client.enumerateChildren(mvmfModel);
+    adapter.children = childModels.map(c => new NodeAdapter(c));
+    return adapter;
   }
 
   _indexNode(node, parent) {
@@ -104,7 +131,6 @@ export class Model {
     node._parent = parent;
 
     if (node.children && node.children.length > 0) {
-      node._loaded = true;
       for (const child of node.children) {
         this._indexNode(child, node);
       }
@@ -118,11 +144,15 @@ export class Model {
   setChildren(parentNode, children) {
     if (!parentNode) return;
 
-    // Remove old children from index
     if (parentNode.children) {
       for (const oldChild of parentNode.children) {
         this._removeFromIndex(oldChild);
       }
+    }
+    if (!this.selectedNode && this._pendingSelectedKey) {
+      const savedKey = this._pendingSelectedKey;
+      this.selectNode(parentNode);
+      this._pendingSelectedKey = savedKey;
     }
 
     parentNode.children = children;
@@ -133,9 +163,12 @@ export class Model {
       }
     }
 
-    this._emit('nodeChildrenChanged', parentNode);
+    // Restore selectedNode if the new adapter matches the pending key
+    this._checkPendingSelection();
 
-    // Check pending expansions AFTER nodeChildrenChanged so views have created DOM elements
+    this._emit('nodeChildrenChanged', parentNode);
+    this._scheduleDataChanged();
+
     if (children && this._pendingExpandedKeys) {
       for (const child of children) {
         this._checkPendingExpansion(child);
@@ -143,16 +176,36 @@ export class Model {
     }
   }
 
+  // Moves expanded keys to _pendingExpandedKeys instead of discarding them,
+  // so they restore automatically when replacement nodes appear
   _removeFromIndex(node) {
     const key = this.nodeKey(node);
     if (key) {
       this.nodes.delete(key);
-      this.expandedNodes.delete(key);
+      if (this.expandedNodes.delete(key)) {
+        if (!this._pendingExpandedKeys) {
+          this._pendingExpandedKeys = new Set();
+        }
+        this._pendingExpandedKeys.add(key);
+      }
+      if (this.selectedNode && this.nodeKey(this.selectedNode) === key) {
+        this._pendingSelectedKey = key;
+        this.selectedNode = null;
+      }
     }
     if (node.children) {
       for (const child of node.children) {
         this._removeFromIndex(child);
       }
+    }
+  }
+
+  _checkPendingSelection() {
+    if (!this._pendingSelectedKey) return;
+    const newSelected = this.nodes.get(this._pendingSelectedKey);
+    if (newSelected) {
+      this._pendingSelectedKey = null;
+      this.selectNode(newSelected);
     }
   }
 
@@ -163,6 +216,7 @@ export class Model {
     if (previousNode === node) return;
 
     this.selectedNode = node;
+    this._pendingSelectedKey = null;
     this._emit('selectionChanged', node, previousNode);
   }
 
@@ -185,6 +239,10 @@ export class Model {
     if (!key || !this.expandedNodes.has(key)) return;
 
     this.expandedNodes.delete(key);
+    // Explicit collapse — remove from pending too so it doesn't come back
+    if (this._pendingExpandedKeys) {
+      this._pendingExpandedKeys.delete(key);
+    }
     this._emit('expansionChanged', node, false);
   }
 
@@ -193,7 +251,21 @@ export class Model {
   }
 
   getExpandedNodeKeys() {
-    return Array.from(this.expandedNodes);
+    if (!this._pendingExpandedKeys) {
+      return Array.from(this.expandedNodes);
+    }
+    const keys = new Set(this.expandedNodes);
+    for (const key of this._pendingExpandedKeys) {
+      keys.add(key);
+    }
+    return Array.from(keys);
+  }
+
+  addPendingExpandedKey(key) {
+    if (!this._pendingExpandedKeys) {
+      this._pendingExpandedKeys = new Set();
+    }
+    this._pendingExpandedKeys.add(key);
   }
 
   expandNodesByKeys(keys) {
@@ -204,10 +276,7 @@ export class Model {
       if (node) {
         this.expandNode(node);
       } else {
-        if (!this._pendingExpandedKeys) {
-          this._pendingExpandedKeys = new Set();
-        }
-        this._pendingExpandedKeys.add(key);
+        this.addPendingExpandedKey(key);
       }
     }
   }
@@ -226,79 +295,121 @@ export class Model {
 
   // --- Client Event Handlers ---
 
-  _handleNodeInserted(node, parentType, parentId) {
+  _handleNodeInserted(mvmfModel, parentType, parentId) {
+    const childKey = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
+    if (mvmfModel.IsReady && !mvmfModel.IsReady()) {
+      console.log(`[Model] nodeInserted: ${childKey} not ready, skipping`);
+      return;
+    }
+
     const parentNode = (parentType && parentId !== undefined)
       ? this.getNode(parentType, parentId)
       : null;
 
-    if (parentNode) {
-      if (!parentNode.children) {
-        parentNode.children = [];
+    if (!parentNode) {
+      console.log(`[Model] nodeInserted: parent ${parentType}_${parentId} not found, skipping`);
+      return;
+    }
+
+    const existingIdx = parentNode.children.findIndex(
+      c => c.type === mvmfModel.sID && c.id === mvmfModel.twObjectIx
+    );
+    if (existingIdx !== -1) {
+      const node = parentNode.children[existingIdx];
+      node.updateModel(mvmfModel);
+      console.log(`[Model] nodeInserted: ${childKey} → ${parentType}_${parentId} (update-in-place)`);
+      this._emit('nodeUpdated', node);
+      this._scheduleDataChanged();
+      return;
+    }
+
+    const existingNode = this.nodes.get(childKey);
+    if (existingNode && existingNode._parent && existingNode._parent !== parentNode) {
+      const oldParent = existingNode._parent;
+      const oldIdx = oldParent.children.indexOf(existingNode);
+      if (oldIdx !== -1) {
+        oldParent.children.splice(oldIdx, 1);
       }
-      parentNode.children.push(node);
-      this._indexNode(node, parentNode);
+      existingNode.updateModel(mvmfModel);
+      parentNode.children.push(existingNode);
+      existingNode._parent = parentNode;
+      console.log(`[Model] nodeInserted: ${childKey} reparented from ${oldParent.type}_${oldParent.id} → ${parentType}_${parentId}`);
+      this._emit('nodeInserted', { node: existingNode, parentNode });
+      this._checkPendingExpansion(existingNode);
+      this._checkPendingSelection();
+      this._scheduleDataChanged();
+      return;
     }
 
-    this._emit('nodeInserted', { node, parentNode });
+    const adapter = new NodeAdapter(mvmfModel);
+    parentNode.children.push(adapter);
+    this._indexNode(adapter, parentNode);
+    console.log(`[Model] nodeInserted: ${childKey} new child of ${parentType}_${parentId}, parent now has ${parentNode.children.length} children`);
+
+    this._emit('nodeInserted', { node: adapter, parentNode });
+    this._checkPendingExpansion(adapter);
+    this._checkPendingSelection();
+    this._scheduleDataChanged();
   }
 
-  _handleNodeUpdated(updatedNode) {
-    const key = this.nodeKey(updatedNode);
-    const existing = this.nodes.get(key);
-    if (existing) {
-      const previousResourceUrl = existing.resourceUrl;
-      const { children, ...updates } = updatedNode;
-      Object.assign(existing, updates);
-      this._emit('nodeUpdated', existing, previousResourceUrl);
-    }
-  }
-
-  _handleNodeDeleted(id, type) {
+  _handleNodeUpdated(id, type, mvmfModel) {
     const key = `${type}_${id}`;
-    const node = this.nodes.get(key);
-    if (node) {
-      if (node._parent?.children) {
-        const idx = node._parent.children.indexOf(node);
-        if (idx !== -1) {
-          node._parent.children.splice(idx, 1);
-        }
+    const adapter = this.nodes.get(key);
+    if (adapter) {
+      if (mvmfModel) {
+        adapter.updateModel(mvmfModel);
+      } else {
+        adapter.markDirty();
       }
-      this._removeFromIndex(node);
+      this._emit('nodeUpdated', adapter);
+      this._scheduleDataChanged();
     }
-    this._emit('nodeDeleted', { id, type });
+  }
+
+  _handleNodeDeleted(id, type, sourceParentType, sourceParentId) {
+    const sourceParent = (sourceParentType && sourceParentId !== undefined)
+      ? this.getNode(sourceParentType, sourceParentId)
+      : null;
+
+    if (sourceParent?.children) {
+      const idx = sourceParent.children.findIndex(c => c.type === type && c.id === id);
+      if (idx !== -1) {
+        const removed = sourceParent.children.splice(idx, 1)[0];
+        this._removeFromIndex(removed);
+        if (!this.selectedNode && this._pendingSelectedKey) {
+          const savedKey = this._pendingSelectedKey;
+          this.selectNode(sourceParent);
+          this._pendingSelectedKey = savedKey;
+        }
+        this._emit('nodeDeleted', { node: removed, parentNode: sourceParent });
+        this._scheduleDataChanged();
+      }
+    }
   }
 
   // --- Node Loading ---
 
-  markNodeLoaded(node) {
-    if (node) {
-      node._loaded = true;
-    }
-  }
-
   async loadNodeChildren(node) {
     if (!node?.type || node.id === undefined) return;
 
-    if (node._loading) {
-      return node._loading;
-    }
+    if (node._loading) return node._loading;
 
     const key = this.nodeKey(node);
+    if (this.nodes.get(key) !== node) return;
 
     const loadPromise = (async () => {
       try {
-        const nodeData = await this.client.getNode(node.id, node.type);
-        if (nodeData) {
-          if (nodeData.transform) node.transform = nodeData.transform;
-          if (nodeData.bound) node.bound = nodeData.bound;
-          if (nodeData.children) {
-            this.setChildren(node, nodeData.children);
-          }
+        const mvmfModel = await this.client.refreshNode(node.id, node.type);
+        if (this.nodes.get(key) !== node) return;
+        if (mvmfModel) {
+          node.updateModel(mvmfModel);
+          const childModels = this.client.enumerateChildren(mvmfModel);
+          const childAdapters = childModels.map(c => new NodeAdapter(c));
+          this.setChildren(node, childAdapters);
         }
       } catch (err) {
         console.error(`Model: Failed to load children for ${key}:`, err);
       } finally {
-        this.markNodeLoaded(node);
         node._loading = null;
       }
     })();

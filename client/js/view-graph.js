@@ -71,12 +71,6 @@ export class ViewGraph {
       this.setData(tree);
     });
 
-    this.model.on('nodeChildrenChanged', (parentNode) => {
-      if (parentNode.children) {
-        this.addChildren(parentNode, parentNode.children);
-      }
-    });
-
     this.model.on('expansionChanged', (node, expanded) => {
       if (expanded) {
         if (node.children) {
@@ -87,11 +81,7 @@ export class ViewGraph {
       }
     });
 
-    this.model.on('nodeInserted', ({ node, parentNode }) => {
-      if (parentNode) {
-        this.addChildren(parentNode, [node]);
-      }
-    });
+    this.model.on('dataChanged', () => this.syncGraph());
   }
 
   _getTextureUrl(nodeData) {
@@ -364,24 +354,33 @@ export class ViewGraph {
     traverse(tree);
   }
 
+  _createNodeMesh(node, index) {
+    const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
+    const material = this._createNodeMaterial(node.data, color);
+    const mesh = new THREE.Mesh(this.nodeGeometry, material);
+    mesh.userData = { id: node.id, type: node.type, index, originalColor: color };
+    const label = this.createLabel(node.data);
+    mesh.add(label);
+    mesh.position.set(node.x, node.y, node.z);
+    this.scene.add(mesh);
+    this.nodeMeshes.set(this.model.nodeKey(node), mesh);
+    return mesh;
+  }
+
+  _updateNodeLabel(mesh, node) {
+    const newName = node.name || node.type || 'Unknown';
+    const currentLabel = mesh.children.find(c => c.userData?.text);
+    if (currentLabel && currentLabel.userData.text !== newName) {
+      mesh.remove(currentLabel);
+      if (currentLabel.material?.map) currentLabel.material.map.dispose();
+      if (currentLabel.material) currentLabel.material.dispose();
+      mesh.add(this.createLabel(node));
+    }
+  }
+
   createVisuals() {
     this.graphNodes.forEach((node, index) => {
-      const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
-      const material = this._createNodeMaterial(node.data, color);
-      const mesh = new THREE.Mesh(this.nodeGeometry, material);
-      
-      mesh.userData = { 
-        id: node.id,
-        type: node.type,
-        index: index,
-        originalColor: color 
-      };
-
-      const label = this.createLabel(node.data);
-      mesh.add(label);
-
-      this.scene.add(mesh);
-      this.nodeMeshes.set(this.model.nodeKey(node), mesh);
+      this._createNodeMesh(node, index);
     });
 
     // Links geometry (dynamic)
@@ -416,58 +415,23 @@ export class ViewGraph {
 
     children.forEach((child) => {
       const childKey = this.model.nodeKey(child);
-      // Update data reference if node already exists (model may have replaced the object)
       if (this.nodeMeshes.has(childKey)) {
         const existing = this.graphNodes.find(n => n.id === child.id && n.type === child.type);
-        if (existing) {
-          existing.data = child;
-        }
+        if (existing) existing.data = child;
         return;
       }
 
       const nodeIndex = this.graphNodes.length;
-
-      // Initialize with position relative to parent to avoid explosions
-      this.graphNodes.push({
-        id: child.id,
-        type: child.type,
-        nodeType: child.nodeType,
-        data: child,
+      const graphNode = {
+        id: child.id, type: child.type, nodeType: child.nodeType, data: child,
         x: parentGraphNode.x + (Math.random() - 0.5) * 10,
         y: parentGraphNode.y + (Math.random() - 0.5) * 10,
         z: parentGraphNode.z + (Math.random() - 0.5) * 10,
         vx: 0, vy: 0, vz: 0
-      });
-
-      this.graphLinks.push({
-        source: parentIndex,
-        target: nodeIndex
-      });
-
-      // Create mesh (use shared geometry)
-      const color = NODE_COLORS[child.nodeType] || NODE_COLORS[child.type] || 0x888888;
-      const material = this._createNodeMaterial(child, color);
-      const mesh = new THREE.Mesh(this.nodeGeometry, material);
-      
-      mesh.userData = { 
-        id: child.id,
-        type: child.type,
-        index: nodeIndex,
-        originalColor: color 
       };
-
-      const label = this.createLabel(child);
-      mesh.add(label);
-
-      // Set initial position
-      mesh.position.set(
-        this.graphNodes[nodeIndex].x,
-        this.graphNodes[nodeIndex].y,
-        this.graphNodes[nodeIndex].z
-      );
-
-      this.scene.add(mesh);
-      this.nodeMeshes.set(this.model.nodeKey(child), mesh);
+      this.graphNodes.push(graphNode);
+      this.graphLinks.push({ source: parentIndex, target: nodeIndex });
+      this._createNodeMesh(graphNode, nodeIndex);
     });
 
     this.updateLinkLinesGeometry();
@@ -545,6 +509,100 @@ export class ViewGraph {
     this.graphLinks = newLinks;
     
     this.updateLinkLinesGeometry();
+  }
+
+  syncGraph() {
+    if (!this.model.tree) return;
+
+    // Collect expected node keys by walking the model tree respecting expansion
+    const expectedKeys = new Set();
+    const walkTree = (node) => {
+      expectedKeys.add(this.model.nodeKey(node));
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          walkTree(child);
+        }
+      }
+    };
+    walkTree(this.model.tree);
+
+    // Remove graph nodes not in expected set
+    const keysToRemove = new Set();
+    for (let i = 0; i < this.graphNodes.length; i++) {
+      const key = this.model.nodeKey(this.graphNodes[i]);
+      if (!expectedKeys.has(key)) {
+        keysToRemove.add(key);
+        const mesh = this.nodeMeshes.get(key);
+        if (mesh) {
+          this.scene.remove(mesh);
+          mesh.material.dispose();
+          this.nodeMeshes.delete(key);
+        }
+      }
+    }
+
+    if (keysToRemove.size > 0) {
+      this.graphNodes = this.graphNodes.filter(n => !keysToRemove.has(this.model.nodeKey(n)));
+    }
+
+    // Build set of existing keys for quick lookup
+    const existingKeys = new Set(this.graphNodes.map(n => this.model.nodeKey(n)));
+
+    // Add new nodes and update existing ones
+    const reconcile = (node, parentGraphNode) => {
+      const key = this.model.nodeKey(node);
+      let graphNode;
+
+      if (!existingKeys.has(key)) {
+        const px = parentGraphNode ? parentGraphNode.x + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+        const py = parentGraphNode ? parentGraphNode.y + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+        const pz = parentGraphNode ? parentGraphNode.z + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
+
+        graphNode = {
+          id: node.id, type: node.type, nodeType: node.nodeType, data: node,
+          x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0
+        };
+        this.graphNodes.push(graphNode);
+        existingKeys.add(key);
+        this._createNodeMesh(graphNode, this.graphNodes.length - 1);
+      } else {
+        graphNode = this.graphNodes.find(n => this.model.nodeKey(n) === key);
+        graphNode.data = node;
+        const mesh = this.nodeMeshes.get(key);
+        if (mesh) this._updateNodeLabel(mesh, node);
+      }
+
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          reconcile(child, graphNode);
+        }
+      }
+    };
+    reconcile(this.model.tree, null);
+
+    // Rebuild links from parent-child relationships
+    const keyToIndex = new Map();
+    this.graphNodes.forEach((n, i) => keyToIndex.set(this.model.nodeKey(n), i));
+
+    this.graphLinks = [];
+    const buildLinks = (node) => {
+      const parentKey = this.model.nodeKey(node);
+      const parentIndex = keyToIndex.get(parentKey);
+      if (this.model.isNodeExpanded(node) && node.children) {
+        for (const child of node.children) {
+          const childKey = this.model.nodeKey(child);
+          const childIndex = keyToIndex.get(childKey);
+          if (parentIndex !== undefined && childIndex !== undefined) {
+            this.graphLinks.push({ source: parentIndex, target: childIndex });
+          }
+          buildLinks(child);
+        }
+      }
+    };
+    buildLinks(this.model.tree);
+
+    this.updateLinkLinesGeometry();
+    this.wakePhysics();
   }
 
   updateLinkLinesGeometry() {
@@ -827,6 +885,7 @@ export class ViewGraph {
     sprite.scale.set(labelWorldHeight * aspect, labelWorldHeight, 1);
     sprite.center.set(0.5, 0);
     sprite.position.y = DEFAULT_NODE_RADIUS + 0.5;
+    sprite.userData.text = text;
 
     return sprite;
   }

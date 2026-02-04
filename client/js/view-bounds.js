@@ -130,12 +130,6 @@ export class ViewBounds {
       this.setData(tree);
     });
 
-    this.model.on('nodeChildrenChanged', (parentNode) => {
-      if (parentNode.children) {
-        this.addChildren(parentNode, parentNode.children);
-      }
-    });
-
     this.model.on('expansionChanged', (node, expanded) => {
       if (expanded) {
         this.expandNode(node);
@@ -144,11 +138,7 @@ export class ViewBounds {
       }
     });
 
-    this.model.on('nodeInserted', ({ node, parentNode }) => {
-      if (parentNode) {
-        this.addChildren(parentNode, [node]);
-      }
-    });
+    this.model.on('dataChanged', () => this._scheduleRebuild());
   }
 
   init() {
@@ -1357,6 +1347,9 @@ export class ViewBounds {
     if (this._rebuildTimer) return;
     this._rebuildTimer = setTimeout(() => {
       this._rebuildTimer = null;
+      if (this.model.tree) {
+        this.buildNodeData(this.model.tree, null, null, null, this.model.inheritedPlanetContext);
+      }
       this.calculateDynamicScale();
       this.rebuildVisibleNodes();
     }, 250);

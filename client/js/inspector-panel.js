@@ -63,6 +63,11 @@ export class InspectorPanel {
       }
     });
 
+    this.model.on('dataChanged', () => {
+      const node = this.model.getSelectedNode();
+      if (node) this.showNode(node);
+    });
+
     this.model.on('treeChanged', () => {
       this.clear();
     });

@@ -80,19 +80,29 @@ class App {
       getMsfReference(node).then(url => this.layout.setFollowLink(url));
       this.updateRP1GoButton(node);
 
-      const path = this.model.getPathToNode(node);
-      this.stateManager.updateSection('navigation', {
-        selectedNodePath: path || []
-      });
+      if (this._zoomOnSelectionKey && this.model.nodeKey(node) === this._zoomOnSelectionKey) {
+        this._zoomOnSelectionKey = null;
+        this.viewBounds.zoomToNode(node);
+        setTimeout(() => this.viewGraph.zoomToNode(node), 100);
+      }
+
+      if (!this._restoringState) {
+        const path = this.model.getPathToNode(node);
+        this.stateManager.updateSection('navigation', {
+          selectedNodePath: path || []
+        });
+      }
     });
 
     this.model.on('expansionChanged', (node) => {
       this.viewGraph.zoomToNode(node);
       this.viewBounds.zoomToNode(node);
 
-      this.stateManager.updateSection('hierarchy', {
-        expandedNodeIds: this.model.getExpandedNodeKeys()
-      });
+      if (!this._restoringState) {
+        this.stateManager.updateSection('hierarchy', {
+          expandedNodeIds: this.model.getExpandedNodeKeys()
+        });
+      }
     });
   }
 
@@ -611,33 +621,6 @@ class App {
       this.layout.setStatus(msg, 'loading');
     });
 
-    this.model.on('nodeInserted', () => {
-      this._refreshResourceViewIfNeeded();
-    });
-
-    this.model.on('nodeUpdated', (existing, previousResourceUrl) => {
-      if (existing.resourceUrl && existing.resourceUrl !== previousResourceUrl) {
-        this._refreshResourceViewIfNeeded();
-      }
-    });
-
-    this.model.on('nodeDeleted', ({ id, type }) => {
-      // View cleanup will be added in later phases
-    });
-  }
-
-  _debouncedRefreshResourceView() {
-    clearTimeout(this._resourceRefreshTimer);
-    this._resourceRefreshTimer = setTimeout(() => {
-      this._refreshResourceViewIfNeeded();
-    }, 500);
-  }
-
-  _refreshResourceViewIfNeeded() {
-    const selectedNode = this.model.getSelectedNode();
-    if (selectedNode) {
-      this.viewResource.setNode(selectedNode);
-    }
   }
 
   async handleLoadMap(url, { skipStateRestore = false } = {}) {
@@ -664,28 +647,34 @@ class App {
       this.layout.setStatus('Map loaded', 'connected');
       this.stateManager.updateSection('navigation', { mapUrl: url });
 
-      if (tree) {
+      const root = this.model.tree;
+      if (root) {
         if (skipStateRestore) {
-          this.model.expandNode(tree);
+          this.model.expandNode(root);
         } else {
-          const hierarchyState = this.stateManager.getSection('hierarchy');
-          const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
+          this._restoringState = true;
+          try {
+            const hierarchyState = this.stateManager.getSection('hierarchy');
+            const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
-          if (!hasSavedExpanded) {
-            this.model.expandNode(tree);
-          } else {
-            this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
-          }
+            if (!hasSavedExpanded) {
+              this.model.expandNode(root);
+            } else {
+              this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
+            }
 
-          // Try to restore previously selected node via path
-          const navState = this.stateManager.getSection('navigation');
-          if (navState.selectedNodePath?.length > 0) {
-            await this.restoreNodePath(navState.selectedNodePath);
-          } else {
-            this.model.selectNode(tree);
-            setTimeout(() => {
-              this.viewGraph.zoomToNode(tree);
-            }, 100);
+            // Try to restore previously selected node via path
+            const navState = this.stateManager.getSection('navigation');
+            if (navState.selectedNodePath?.length > 0) {
+              this.restoreNodePath(navState.selectedNodePath);
+            } else {
+              this.model.selectNode(root);
+              setTimeout(() => {
+                this.viewGraph.zoomToNode(root);
+              }, 100);
+            }
+          } finally {
+            this._restoringState = false;
           }
         }
       }
@@ -694,68 +683,44 @@ class App {
     }
   }
 
-  async restoreNodePath(path) {
+  restoreNodePath(path) {
     if (!this.model.tree) return;
     if (!path || path.length === 0) {
       this.model.selectNode(this.model.tree);
       return;
     }
 
-    // Find where in the path the current tree root matches
-    // (handles old bookmarks that started from RMRoot when tree now starts elsewhere)
     let startIndex = path.findIndex(p => p.id === this.model.tree.id && p.type === this.model.tree.type);
     if (startIndex === -1) {
       this.model.selectNode(this.model.tree);
       return;
     }
 
-    let currentNode = this.model.tree;
-
-    for (let i = startIndex + 1; i < path.length; i++) {
-      const targetId = path[i].id;
-      const targetType = path[i].type;
-
-      this.model.expandNode(currentNode);
-
-      // Load children if not already loaded
-      if (!currentNode.children || currentNode.children.length === 0) {
-        try {
-          await this.model.loadNodeChildren(currentNode);
-          // Small delay to let UI update
-          await new Promise(r => setTimeout(r, 50));
-        } catch (err) {
-          console.error(`Failed to load children for node ${currentNode.id} during path restore:`, err);
-          break;
-        }
+    // Ensure all intermediate nodes in the path are expanded (or pending expansion)
+    // so the MVMF event cascade will load their children, eventually reaching the target
+    for (let i = startIndex; i < path.length - 1; i++) {
+      const key = `${path[i].type}_${path[i].id}`;
+      const node = this.model.getNode(path[i].type, path[i].id);
+      if (node) {
+        this.model.expandNode(node);
+      } else {
+        this.model.addPendingExpandedKey(key);
       }
-
-      // Find target child in the loaded children
-      let nextNode = currentNode.children?.find(c => c.id === targetId && c.type === targetType);
-
-      if (!nextNode) {
-        // Try by id only if type match failed
-        nextNode = currentNode.children?.find(c => c.id === targetId);
-      }
-
-      if (!nextNode) {
-        console.warn('Could not find node in path:', targetId, targetType);
-        break;
-      }
-
-      currentNode = nextNode;
     }
 
-    const canonicalNode = this.model.getNode(currentNode.type, currentNode.id) || currentNode;
+    // Select the target node now if it exists, otherwise set pending selection
+    const targetStep = path[path.length - 1];
+    const targetKey = `${targetStep.type}_${targetStep.id}`;
+    const targetNode = this.model.getNode(targetStep.type, targetStep.id);
 
-    // Expand tree to show the node, then select it
-    this.hierarchy.expandToNode(canonicalNode);
-    this.model.selectNode(canonicalNode);
-
-    this.viewBounds.zoomToNode(canonicalNode);
-
-    setTimeout(() => {
-      this.viewGraph.zoomToNode(canonicalNode);
-    }, 100);
+    if (targetNode) {
+      this.model.selectNode(targetNode);
+      this.viewBounds.zoomToNode(targetNode);
+      setTimeout(() => this.viewGraph.zoomToNode(targetNode), 100);
+    } else {
+      this.model._pendingSelectedKey = targetKey;
+      this._zoomOnSelectionKey = targetKey;
+    }
   }
 
 }

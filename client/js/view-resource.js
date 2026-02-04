@@ -89,11 +89,9 @@ export class ViewResource {
       this.setNode(node);
     });
 
-    this.model.on('nodeChildrenChanged', () => {
-      const selectedNode = this.model.getSelectedNode();
-      if (selectedNode) {
-        this.setNode(selectedNode);
-      }
+    this.model.on('dataChanged', () => {
+      this.currentResourceUrl = null;
+      this._refreshIfSelected();
     });
   }
 
@@ -509,6 +507,13 @@ export class ViewResource {
         const angle = speed * delta * (Math.PI / 180);  // Convert degrees/sec to radians
         target.rotateOnAxis(axis, angle);
       }
+    }
+  }
+
+  _refreshIfSelected() {
+    const selectedNode = this.model.getSelectedNode();
+    if (selectedNode) {
+      this.setNode(selectedNode);
     }
   }
 
