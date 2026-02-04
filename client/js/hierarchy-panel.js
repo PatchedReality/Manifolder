@@ -16,9 +16,7 @@ export class HierarchyPanel {
     this.searchInput = document.getElementById('hierarchy-search');
     this.selectedNode = null;
     this.nodeElements = new Map();
-    this._uidToNodeKey = new Map();
     this.zoomCallbacks = [];
-    this._nextId = 1;
 
     this._bindModelEvents();
     this.init();
@@ -58,8 +56,21 @@ export class HierarchyPanel {
       this.markNodeLoaded(parentNode);
     });
 
-    this.model.on('dataChanged', () => {
-      this._rebuildFromModel();
+    this.model.on('nodeDeleted', ({ node, parentNode }) => {
+      const nodeKey = this._nodeKey(node);
+      const element = this.nodeElements.get(nodeKey);
+      if (element) {
+        this._removeNodeAndDescendants(nodeKey);
+        element.remove();
+      }
+      if (parentNode) {
+        const parentKey = this._nodeKey(parentNode);
+        const parentElement = this.nodeElements.get(parentKey);
+        if (parentElement && parentNode.children?.length === 0) {
+          const toggle = parentElement.querySelector(':scope > .tree-node-content > .tree-toggle');
+          if (toggle) toggle.textContent = '';
+        }
+      }
     });
   }
 
@@ -73,21 +84,15 @@ export class HierarchyPanel {
     });
   }
 
-  // Generate globally unique key for each node
   _nodeKey(node) {
-    if (typeof node === 'object') {
-      // Assign a unique _uid if not already present
-      if (!node._uid) {
-        node._uid = this._nextId++;
-      }
-      return `node-${node._uid}`;
-    }
-    return node; // Already a key string
+    if (typeof node === 'string') return node;
+    return `${node.type}_${node.id}`;
   }
 
   _getNodeData(nodeKey) {
-    const modelKey = this._uidToNodeKey.get(nodeKey);
-    return modelKey ? this.model.nodes.get(modelKey) : null;
+    const parts = nodeKey.split('_');
+    if (parts.length < 2) return null;
+    return this.model.getNode(parts[0], Number(parts[1]));
   }
 
   init() {
@@ -102,8 +107,8 @@ export class HierarchyPanel {
 
   searchLocalNodes(searchTerm) {
     const matches = [];
-    this._uidToNodeKey.forEach((modelKey, nodeKey) => {
-      const data = this.model.nodes.get(modelKey);
+    this.nodeElements.forEach((el, nodeKey) => {
+      const data = this._getNodeData(nodeKey);
       if (data && data.name.toLowerCase().includes(searchTerm)) {
         matches.push({
           id: data.id,
@@ -132,7 +137,7 @@ export class HierarchyPanel {
 
     // Expand to each match so they're all visible
     for (const matchKey of matchKeys) {
-      this.expandToNode(matchKey);
+      this.expandToNode(matchKey, false);
     }
 
     // Scroll first match into view
@@ -156,7 +161,7 @@ export class HierarchyPanel {
 
     const parent = element.parentElement?.closest('.tree-node');
     if (parent) {
-      const parentKey = `node-${parent.dataset.uid}`;
+      const parentKey = `${parent.dataset.type}_${parent.dataset.id}`;
       set.add(parentKey);
       this.addParentsToSet(parentKey, set, depth + 1);
     }
@@ -173,6 +178,12 @@ export class HierarchyPanel {
     this.rootNode = tree;
     const rootElement = this.createNodeElement(tree);
     this.container.appendChild(rootElement);
+
+    // Always expand root to show first-level children
+    const children = rootElement.querySelector(':scope > .tree-children');
+    const toggle = rootElement.querySelector(':scope > .tree-node-content > .tree-toggle');
+    if (children) children.style.display = 'block';
+    if (toggle) toggle.textContent = '▼';
   }
 
   getRootNode() {
@@ -182,7 +193,6 @@ export class HierarchyPanel {
   clear() {
     this.container.innerHTML = '';
     this.nodeElements.clear();
-    this._uidToNodeKey.clear();
     this.selectedNode = null;
     this.rootNode = null;
   }
@@ -192,20 +202,14 @@ export class HierarchyPanel {
     if (el) {
       const childEls = el.querySelectorAll('.tree-node');
       for (const childEl of childEls) {
-        const childUid = childEl.dataset.uid;
-        if (childUid) {
-          const childKey = `node-${childUid}`;
-          this.nodeElements.delete(childKey);
-          this._uidToNodeKey.delete(childKey);
-        }
+        const childKey = `${childEl.dataset.type}_${childEl.dataset.id}`;
+        this.nodeElements.delete(childKey);
       }
     }
     this.nodeElements.delete(nodeKey);
-    this._uidToNodeKey.delete(nodeKey);
   }
 
   createNodeElement(nodeData) {
-    // Ensure _uid is assigned first
     const nodeKey = this._nodeKey(nodeData);
 
     const node = document.createElement('div');
@@ -215,19 +219,18 @@ export class HierarchyPanel {
     if (nodeData.nodeType) {
       node.dataset.nodetype = nodeData.nodeType;
     }
-    node.dataset.uid = nodeData._uid;
 
     const content = document.createElement('div');
     content.className = 'tree-node-content';
 
     const toggle = document.createElement('span');
     toggle.className = 'tree-toggle';
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleNode(nodeKey);
+    });
     if (nodeData.hasChildren || (nodeData.children && nodeData.children.length > 0)) {
       toggle.textContent = '▶';
-      toggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.toggleNode(nodeKey);
-      });
     }
 
     const icon = document.createElement('span');
@@ -296,7 +299,6 @@ export class HierarchyPanel {
     node.appendChild(children);
 
     this.nodeElements.set(nodeKey, node);
-    this._uidToNodeKey.set(nodeKey, `${nodeData.type}_${nodeData.id}`);
 
     if (nodeData.children && nodeData.children.length > 0) {
       this._sortChildren(nodeData.children).forEach(child => {
@@ -328,14 +330,23 @@ export class HierarchyPanel {
     const toggle = parentElement.querySelector(':scope > .tree-node-content > .tree-toggle');
     if (toggle && !toggle.textContent) {
       toggle.textContent = '▶';
-      toggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.toggleNode(parentKey);
-      });
     }
 
     const nodeElement = this.createNodeElement(nodeData);
-    childrenContainer.appendChild(nodeElement);
+    const nodeName = (nodeData.name || '').toLowerCase();
+    const existingChildren = childrenContainer.querySelectorAll(':scope > .tree-node');
+    let inserted = false;
+    for (const sibling of existingChildren) {
+      const siblingLabel = sibling.querySelector('.tree-label');
+      if (siblingLabel && nodeName.localeCompare(siblingLabel.textContent.toLowerCase()) < 0) {
+        childrenContainer.insertBefore(nodeElement, sibling);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      childrenContainer.appendChild(nodeElement);
+    }
   }
 
   setChildren(parentOrKey, children) {
@@ -350,31 +361,44 @@ export class HierarchyPanel {
       return;
     }
 
-    // Remove old children from Maps before clearing DOM
-    // Walk the DOM to find old children (parentNodeData.children may already point
-    // to new children if model replaced them before emitting nodeChildrenChanged)
+    // Remove old tree-node children from Maps before clearing DOM
     const oldChildElements = childrenContainer.querySelectorAll(':scope > .tree-node');
     for (const oldEl of oldChildElements) {
-      const oldUid = oldEl.dataset.uid;
-      if (oldUid) {
-        const oldKey = `node-${oldUid}`;
-        this._removeNodeAndDescendants(oldKey);
-      }
+      const oldKey = `${oldEl.dataset.type}_${oldEl.dataset.id}`;
+      this._removeNodeAndDescendants(oldKey);
+      oldEl.remove();
     }
 
-    childrenContainer.innerHTML = '';
-
-    const parentNodeData = this._getNodeData(parentKey);
-
-    // Hide toggle and collapse if no children
     const toggle = parentElement.querySelector(':scope > .tree-node-content > .tree-toggle');
     if (!children || children.length === 0) {
-      if (toggle) {
-        toggle.textContent = '';
+      const nodeData = this._getNodeData(parentKey);
+      if (nodeData && nodeData.hasChildren) {
+        if (toggle && !toggle.textContent) {
+          toggle.textContent = '▶';
+        }
+        // Keep or re-add loading indicator while children are still pending
+        if (!childrenContainer.querySelector('.tree-loading')) {
+          const loading = document.createElement('div');
+          loading.className = 'tree-loading';
+          loading.textContent = 'Loading...';
+          loading.style.color = 'var(--text-muted)';
+          loading.style.fontStyle = 'italic';
+          loading.style.padding = '2px 4px';
+          childrenContainer.appendChild(loading);
+        }
+      } else {
+        childrenContainer.innerHTML = '';
+        if (toggle) {
+          toggle.textContent = '';
+        }
+        childrenContainer.style.display = 'none';
       }
-      childrenContainer.style.display = 'none';
       return;
     }
+
+    // Has actual children to render — remove any loading indicator
+    const loading = childrenContainer.querySelector('.tree-loading');
+    if (loading) loading.remove();
 
     this._sortChildren(children).forEach(child => {
       const childElement = this.createNodeElement(child);
@@ -383,8 +407,6 @@ export class HierarchyPanel {
   }
 
   selectNode(nodeOrKey) {
-    const nodeKey = this._nodeKey(nodeOrKey);
-
     if (this.selectedNode) {
       const prevContent = this.selectedNode.querySelector(':scope > .tree-node-content');
       if (prevContent) {
@@ -392,20 +414,8 @@ export class HierarchyPanel {
       }
     }
 
-    let node = this.nodeElements.get(nodeKey);
-
-    // Fallback: if _uid-based lookup fails, find by type+id
-    if (!node && typeof nodeOrKey === 'object' && nodeOrKey.type && nodeOrKey.id !== undefined) {
-      const modelNode = this.model.getNode(nodeOrKey.type, nodeOrKey.id);
-      if (modelNode && modelNode._uid) {
-        const fallbackKey = `node-${modelNode._uid}`;
-        node = this.nodeElements.get(fallbackKey);
-        if (node) {
-          nodeOrKey._uid = modelNode._uid;
-        }
-      }
-    }
-
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const node = this.nodeElements.get(nodeKey);
     if (!node) {
       return;
     }
@@ -426,15 +436,12 @@ export class HierarchyPanel {
       return;
     }
 
-    const toggle = node.querySelector(':scope > .tree-node-content > .tree-toggle');
     const children = node.querySelector(':scope > .tree-children');
-
     if (!children) {
       return;
     }
 
     const isExpanded = children.style.display !== 'none';
-
     if (isExpanded) {
       this.collapseNode(nodeKey);
     } else {
@@ -459,11 +466,7 @@ export class HierarchyPanel {
     const nodeData = this._getNodeData(nodeKey);
     const isLoaded = nodeData?._loaded;
     const hasChildren = nodeData && (nodeData.hasChildren || (nodeData.children && nodeData.children.length > 0));
-    console.log(`[Hierarchy] expandNode: ${nodeKey}, nodeData=${!!nodeData}, _loaded=${isLoaded}, hasChildren=${hasChildren}, nChildren=${nodeData?._model?.nChildren}, children.length=${nodeData?.children?.length}`);
-
-    // Don't expand if already loaded with no children
     if (isLoaded && !hasChildren) {
-      console.log(`[Hierarchy] expandNode: early return — loaded with no children`);
       return;
     }
 
@@ -476,7 +479,12 @@ export class HierarchyPanel {
       this.model.expandNode(nodeData);
     }
 
-    if (!isLoaded && !children.querySelector('.tree-loading')) {
+    if (!isLoaded) {
+      const existingLoading = children.querySelector('.tree-loading');
+      if (existingLoading) {
+        existingLoading.remove();
+      }
+
       const loading = document.createElement('div');
       loading.className = 'tree-loading';
       loading.textContent = 'Loading...';
@@ -516,29 +524,23 @@ export class HierarchyPanel {
     }
   }
 
-  expandToNode(nodeOrKey) {
+  expandToNode(nodeOrKey, respectModel = true) {
     const nodeKey = this._nodeKey(nodeOrKey);
-    let node = this.nodeElements.get(nodeKey);
-
-    // Fallback: if _uid-based lookup fails, find by type+id
-    if (!node && typeof nodeOrKey === 'object' && nodeOrKey.type && nodeOrKey.id !== undefined) {
-      const modelNode = this.model.getNode(nodeOrKey.type, nodeOrKey.id);
-      if (modelNode && modelNode._uid) {
-        const fallbackKey = `node-${modelNode._uid}`;
-        node = this.nodeElements.get(fallbackKey);
-        if (node) {
-          nodeOrKey._uid = modelNode._uid;
-        }
-      }
-    }
-
+    const node = this.nodeElements.get(nodeKey);
     if (!node) {
       return;
     }
 
     let parent = node.parentElement?.closest('.tree-node');
     while (parent) {
-      // Unhide the parent node (in case it was hidden by filter)
+      if (respectModel) {
+        const parentKey = `${parent.dataset.type}_${parent.dataset.id}`;
+        const parentData = this._getNodeData(parentKey);
+        if (parentData && !this.model.isNodeExpanded(parentData)) {
+          break;
+        }
+      }
+
       parent.classList.remove('hidden');
 
       const children = parent.querySelector(':scope > .tree-children');
@@ -622,25 +624,40 @@ export class HierarchyPanel {
 
   markNodeLoaded(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
-
     const node = this.nodeElements.get(nodeKey);
-    if (node) {
-      const children = node.querySelector(':scope > .tree-children');
-      if (children) {
-        const loading = children.querySelector('.tree-loading');
-        if (loading) {
-          loading.remove();
-        }
+    if (!node) return;
 
-        // Hide toggle if no children were loaded
-        const hasChildren = children.querySelectorAll(':scope > .tree-node').length > 0;
-        if (!hasChildren) {
-          const toggle = node.querySelector(':scope > .tree-node-content > .tree-toggle');
-          if (toggle) {
-            toggle.textContent = '';
-          }
-        }
-      }
+    const children = node.querySelector(':scope > .tree-children');
+    if (!children) return;
+
+    const hasChildElements = children.querySelectorAll(':scope > .tree-node').length > 0;
+    const nodeData = this._getNodeData(nodeKey);
+    const modelHasChildren = nodeData && nodeData.hasChildren;
+
+    if (hasChildElements || !modelHasChildren) {
+      const loading = children.querySelector('.tree-loading');
+      if (loading) loading.remove();
+    }
+
+    if (!hasChildElements && !modelHasChildren) {
+      const toggle = node.querySelector(':scope > .tree-node-content > .tree-toggle');
+      if (toggle) toggle.textContent = '';
+    }
+  }
+
+  _expandViaModel(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const nodeData = this._getNodeData(nodeKey);
+    if (nodeData) {
+      this.model.expandNode(nodeData);
+    }
+  }
+
+  _collapseViaModel(nodeOrKey) {
+    const nodeKey = this._nodeKey(nodeOrKey);
+    const nodeData = this._getNodeData(nodeKey);
+    if (nodeData) {
+      this.model.collapseNode(nodeData);
     }
   }
 
@@ -651,7 +668,7 @@ export class HierarchyPanel {
       return;
     }
 
-    this.expandNode(nodeKey);
+    this._expandViaModel(nodeKey);
 
     const childrenContainer = node.querySelector(':scope > .tree-children');
     if (!childrenContainer) {
@@ -660,10 +677,8 @@ export class HierarchyPanel {
 
     const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
     childNodes.forEach(childNode => {
-      const childUid = childNode.dataset.uid;
-      if (childUid) {
-        this.expandNode(`node-${childUid}`);
-      }
+      const childKey = `${childNode.dataset.type}_${childNode.dataset.id}`;
+      this._expandViaModel(childKey);
     });
   }
 
@@ -674,7 +689,7 @@ export class HierarchyPanel {
       return;
     }
 
-    this.expandNode(nodeKey);
+    this._expandViaModel(nodeKey);
 
     const childrenContainer = node.querySelector(':scope > .tree-children');
     if (!childrenContainer) {
@@ -683,10 +698,8 @@ export class HierarchyPanel {
 
     const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
     childNodes.forEach(childNode => {
-      const childUid = childNode.dataset.uid;
-      if (childUid) {
-        this.expandAllDescendants(`node-${childUid}`);
-      }
+      const childKey = `${childNode.dataset.type}_${childNode.dataset.id}`;
+      this.expandAllDescendants(childKey);
     });
   }
 
@@ -701,14 +714,12 @@ export class HierarchyPanel {
     if (childrenContainer) {
       const childNodes = childrenContainer.querySelectorAll(':scope > .tree-node');
       childNodes.forEach(childNode => {
-        const childUid = childNode.dataset.uid;
-        if (childUid) {
-          this.collapseAllDescendants(`node-${childUid}`);
-        }
+        const childKey = `${childNode.dataset.type}_${childNode.dataset.id}`;
+        this.collapseAllDescendants(childKey);
       });
     }
 
-    this.collapseNode(nodeKey);
+    this._collapseViaModel(nodeKey);
   }
 
   showContextMenu(nodeKey, x, y) {
@@ -837,10 +848,10 @@ export class HierarchyPanel {
         const isLoaded = existingNode._loaded;
 
         if (!isLoaded && loadNodeCallback) {
-          this.expandNode(nodeKey);
+          this._expandViaModel(nodeKey);
           await loadNodeCallback(existingNode);
         } else {
-          this.expandNode(nodeKey);
+          this._expandViaModel(nodeKey);
         }
       }
     }
@@ -873,35 +884,6 @@ export class HierarchyPanel {
     const toggle = element.querySelector(':scope > .tree-node-content > .tree-toggle');
     if (toggle && !toggle.textContent && node.hasChildren) {
       toggle.textContent = '▶';
-      toggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.toggleNode(nodeKey);
-      });
-    }
-  }
-
-  _rebuildFromModel() {
-    const expandedKeys = this.model.getExpandedNodeKeys();
-    const selectedNode = this.model.getSelectedNode();
-
-    this.setData(this.model.tree);
-
-    for (const key of expandedKeys) {
-      const node = this.model.nodes.get(key);
-      if (node) {
-        const nodeKey = this._nodeKey(node);
-        const el = this.nodeElements.get(nodeKey);
-        if (el) {
-          const toggle = el.querySelector(':scope > .tree-node-content > .tree-toggle');
-          const children = el.querySelector(':scope > .tree-children');
-          if (toggle) toggle.textContent = '▼';
-          if (children) children.style.display = 'block';
-        }
-      }
-    }
-
-    if (selectedNode) {
-      this.selectNode(selectedNode);
     }
   }
 

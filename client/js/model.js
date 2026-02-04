@@ -52,6 +52,10 @@ export class Model {
       this._handleNodeDeleted(id, type, sourceParentType, sourceParentId);
     });
 
+    this.client.on('modelReady', ({ mvmfModel }) => {
+      this._upgradeStubModel(mvmfModel);
+    });
+
     this.client.on('disconnected', () => {
       this._emit('disconnected');
     });
@@ -163,10 +167,11 @@ export class Model {
       }
     }
 
-    // Restore selectedNode if the new adapter matches the pending key
+    this._emit('nodeChildrenChanged', parentNode);
+
+    // Check after emit so hierarchy DOM elements exist before selection fires
     this._checkPendingSelection();
 
-    this._emit('nodeChildrenChanged', parentNode);
     this._scheduleDataChanged();
 
     if (children && this._pendingExpandedKeys) {
@@ -382,6 +387,17 @@ export class Model {
     }
   }
 
+  _upgradeStubModel(mvmfModel) {
+    if (!mvmfModel) return;
+    const key = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
+    const adapter = this.nodes.get(key);
+    if (adapter) {
+      adapter.updateModel(mvmfModel);
+      this._emit('nodeUpdated', adapter);
+      this._scheduleDataChanged();
+    }
+  }
+
   // --- Node Loading ---
 
   async loadNodeChildren(node) {
@@ -394,16 +410,17 @@ export class Model {
 
     const loadPromise = (async () => {
       try {
-        const mvmfModel = await this.client.refreshNode(node.id, node.type);
+        const childModels = await this.client.fetchChildren(
+          { sID: node.type, twObjectIx: node.id }
+        );
         if (this.nodes.get(key) !== node) return;
-        if (mvmfModel) {
-          node.updateModel(mvmfModel);
-          const childModels = this.client.enumerateChildren(mvmfModel);
-          const childAdapters = childModels.map(c => new NodeAdapter(c));
-          this.setChildren(node, childAdapters);
-        }
+        const childAdapters = childModels.map(c => new NodeAdapter(c));
+        this.setChildren(node, childAdapters);
       } catch (err) {
         console.error(`Model: Failed to load children for ${key}:`, err);
+        if (this.nodes.get(key) === node) {
+          this.setChildren(node, []);
+        }
       } finally {
         node._loading = null;
       }

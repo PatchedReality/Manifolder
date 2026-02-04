@@ -33,13 +33,14 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
   #m_pFabric;
   #m_pLnG;
+  #pClient;
   #pRMXRoot;
   #sceneWClass;
   #sceneObjectIx;
 
   #pendingModelLoads = new Map();
   #pendingInserts = new Map();
-  #pendingEnumeratedChildren = new Map();
+  #pendingModelOpen = new Map();
   #searchableRMCObjectIndices = [];
   #searchableRMTObjectIndices = [];
   #attachedModels = new Set();
@@ -65,6 +66,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
     this.#m_pFabric = null;
     this.#m_pLnG = null;
+    this.#pClient = null;
     this.#pRMXRoot = null;
     this.#sceneWClass = null;
     this.#sceneObjectIx = null;
@@ -82,6 +84,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       nodeInserted: [],
       nodeUpdated: [],
       nodeDeleted: [],
+      modelReady: [],
       status: []
     };
   }
@@ -110,6 +113,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
       this._safeDetach(this.#m_pLnG);
       this.#m_pLnG = null;
+      this.#pClient = null;
     }
 
     if (this.#m_pFabric) {
@@ -122,7 +126,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     this.#searchableRMTObjectIndices = [];
     this.#pendingModelLoads.clear();
     this.#pendingInserts.clear();
-    this.#pendingEnumeratedChildren.clear();
+    this.#pendingModelOpen.clear();
     this.#attachedModels.clear();
 
     this.ReadyState(this.eSTATE.NOTREADY);
@@ -185,34 +189,99 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     return found;
   }
 
-  /**
-   * Enumerate immediate children of an MVMF model via Child_Enum.
-   * Returns an array of raw MVMF child objects.
-   */
-  enumerateChildren(model) {
-    const allChildren = [];
-    if (model.Child_Enum) {
-      const enumCallback = (child, arr) => arr.push(child);
-      model.Child_Enum('RMCObject', this, enumCallback, allChildren);
-      model.Child_Enum('RMTObject', this, enumCallback, allChildren);
-      model.Child_Enum('RMPObject', this, enumCallback, allChildren);
-    }
+  async fetchChildren(model) {
+    if (!this.#m_pLnG) return [];
 
-    const readyChildren = [];
-    for (const child of allChildren) {
-      this._safeAttach(child);
-      if (child.IsReady()) {
-        readyChildren.push(child);
-      } else {
-        const key = `${child.sID}_${child.twObjectIx}`;
-        this.#pendingEnumeratedChildren.set(key, {
-          child,
-          parentType: model.sID,
-          parentId: model.twObjectIx
-        });
+    const childEntries = await this._fetchChildrenViaAction(model);
+    if (!childEntries) return [];
+
+    const IX_TO_TYPE = {
+      twRMCObjectIx: 'RMCObject',
+      twRMTObjectIx: 'RMTObject',
+      twRMPObjectIx: 'RMPObject'
+    };
+
+    const children = [];
+    for (const childArray of childEntries) {
+      if (!Array.isArray(childArray)) continue;
+      for (const entry of childArray) {
+        for (const [field, typeName] of Object.entries(IX_TO_TYPE)) {
+          if (entry[field] !== undefined) {
+            entry.sID = typeName;
+            entry.twObjectIx = entry[field];
+            entry.IsReady = () => true;
+            this._normalizeStubEntry(entry);
+            children.push(entry);
+
+            // Attach to MVMF model for live update notifications
+            const mvmfModel = this.#m_pLnG.Model_Open(typeName, entry[field]);
+            this._safeAttach(mvmfModel);
+
+            if (!mvmfModel.IsReady()) {
+              this.#pendingModelOpen.set(`${typeName}_${entry[field]}`, {
+                child: mvmfModel,
+                parentType: model.sID,
+                parentId: model.twObjectIx
+              });
+            }
+
+            break;
+          }
+        }
       }
     }
-    return readyChildren;
+    return children;
+  }
+
+  _normalizeStubEntry(entry) {
+    const pt = entry.pTransform;
+    if (pt) {
+      if (pt.Position && !pt.vPosition) {
+        const p = pt.Position;
+        pt.vPosition = { dX: p[0] ?? 0, dY: p[1] ?? 0, dZ: p[2] ?? 0 };
+      }
+      if (pt.Rotation && !pt.qRotation) {
+        const r = pt.Rotation;
+        pt.qRotation = { dX: r[0] ?? 0, dY: r[1] ?? 0, dZ: r[2] ?? 0, dW: r[3] ?? 1 };
+      }
+      if (pt.Scale && !pt.vScale) {
+        const s = pt.Scale;
+        pt.vScale = { dX: s[0] ?? 1, dY: s[1] ?? 1, dZ: s[2] ?? 1 };
+      }
+    }
+    const pb = entry.pBound;
+    if (pb?.Max && pb.dX === undefined) {
+      const m = pb.Max;
+      pb.dX = m[0] ?? 0;
+      pb.dY = m[1] ?? 0;
+      pb.dZ = m[2] ?? 0;
+    }
+  }
+
+  async _fetchChildrenViaAction(model) {
+    if (!this.#pClient) return null;
+
+    const IO_MAP = {
+      RMCObject: { action: MV.MVRP.Map.IO_RMCOBJECT?.apAction?.UPDATE, indexField: 'twRMCObjectIx' },
+      RMTObject: { action: MV.MVRP.Map.IO_RMTOBJECT?.apAction?.UPDATE, indexField: 'twRMTObjectIx' },
+      RMPObject: { action: MV.MVRP.Map.IO_RMPOBJECT?.apAction?.UPDATE, indexField: 'twRMPObjectIx' },
+      RMRoot:    { action: MV.MVRP.Map.IO_RMROOT?.apAction?.UPDATE,    indexField: 'twRMRootIx' }
+    };
+
+    const config = IO_MAP[model.sID];
+    if (!config?.action) return null;
+
+    const pIAction = this.#pClient.Request(config.action);
+    pIAction.pRequest[config.indexField] = model.twObjectIx;
+
+    try {
+      const response = await this._sendAction(pIAction);
+      if (!response || response.nResult === -1) return null;
+      return response.aChild || [];
+    } catch (err) {
+      console.error(`_fetchChildrenViaAction failed for ${model.sID} ${model.twObjectIx}:`, err);
+      return null;
+    }
   }
 
   onReadyState(pNotice) {
@@ -260,6 +329,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
         return;
       }
 
+      this.#pClient = this.#m_pLnG.pClient;
       this._safeAttach(this.#m_pLnG);
     } else if (this.#m_pFabric.ReadyState() === MV.MVRP.MSF.eSTATE.FAILED) {
       clearTimeout(this._loadTimeout);
@@ -339,13 +409,30 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     }
   }
 
+  enumerateChildren(model) {
+    return this._enumerateReadyRootChildren(model);
+  }
+
+  _enumerateReadyRootChildren(model) {
+    const readyChildren = [];
+    if (model.Child_Enum) {
+      const enumCallback = (child, arr) => {
+        if (child.IsReady()) arr.push(child);
+      };
+      model.Child_Enum('RMCObject', this, enumCallback, readyChildren);
+      model.Child_Enum('RMTObject', this, enumCallback, readyChildren);
+      model.Child_Enum('RMPObject', this, enumCallback, readyChildren);
+    }
+    return readyChildren;
+  }
+
   _collectSearchableIndices(model) {
     if (model.sID === 'RMCObject') {
       this.#searchableRMCObjectIndices.push(model.twObjectIx);
     } else if (model.sID === 'RMTObject') {
       this.#searchableRMTObjectIndices.push(model.twObjectIx);
     } else {
-      const children = this.enumerateChildren(model);
+      const children = this._enumerateReadyRootChildren(model);
       for (const child of children) {
         if (child.sID === 'RMCObject') {
           this.#searchableRMCObjectIndices.push(child.twObjectIx);
@@ -373,13 +460,13 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       this._emit('nodeInserted', pendingInsert);
     }
 
-    const pendingEnum = this.#pendingEnumeratedChildren.get(key);
-    if (pendingEnum) {
-      this.#pendingEnumeratedChildren.delete(key);
-      this._emit('nodeInserted', {
-        mvmfModel: pendingEnum.child,
-        parentType: pendingEnum.parentType,
-        parentId: pendingEnum.parentId
+    const pendingOpen = this.#pendingModelOpen.get(key);
+    if (pendingOpen) {
+      this.#pendingModelOpen.delete(key);
+      this._emit('modelReady', {
+        mvmfModel: model,
+        parentType: pendingOpen.parentType,
+        parentId: pendingOpen.parentId
       });
     }
   }

@@ -30,13 +30,6 @@ export class NodeAdapter {
     this._orbitData = null;
     this._planetContext = null;
     this._uid = null;
-
-    // Loading state
-    this._loading = null;
-
-    // Resource data cache (used by NodeFactory.getResourceData)
-    this._resourceData = undefined;
-    this._resourceLoading = null;
   }
 
   get type() { return this._model.sID; }
@@ -77,11 +70,15 @@ export class NodeAdapter {
     return this._cachedBound;
   }
 
+  get isReady() {
+    return this._model?.IsReady?.() ?? false;
+  }
+
   get _loaded() {
-    if (!this._model?.IsReady?.()) return false;
+    if (!this.isReady) return false;
     const expected = this._model.nChildren ?? 0;
     if (this.children.length !== expected) return false;
-    return this.children.every(c => c._model?.IsReady?.());
+    return this.children.every(c => c.isReady);
   }
 
   get hasChildren() {

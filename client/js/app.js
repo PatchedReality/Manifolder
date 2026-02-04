@@ -95,10 +95,9 @@ class App {
     });
 
     this.model.on('expansionChanged', (node) => {
-      this.viewGraph.zoomToNode(node);
-      this.viewBounds.zoomToNode(node);
-
       if (!this._restoringState) {
+        this.viewGraph.zoomToNode(node);
+        this.viewBounds.zoomToNode(node);
         this.stateManager.updateSection('hierarchy', {
           expandedNodeIds: this.model.getExpandedNodeKeys()
         });
@@ -653,34 +652,74 @@ class App {
           this.model.expandNode(root);
         } else {
           this._restoringState = true;
-          try {
-            const hierarchyState = this.stateManager.getSection('hierarchy');
-            const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
+          this._clearRestoringStateWhenReady();
 
-            if (!hasSavedExpanded) {
-              this.model.expandNode(root);
-            } else {
-              this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
-            }
+          const hierarchyState = this.stateManager.getSection('hierarchy');
+          const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
-            // Try to restore previously selected node via path
-            const navState = this.stateManager.getSection('navigation');
-            if (navState.selectedNodePath?.length > 0) {
-              this.restoreNodePath(navState.selectedNodePath);
-            } else {
-              this.model.selectNode(root);
-              setTimeout(() => {
-                this.viewGraph.zoomToNode(root);
-              }, 100);
+          this.model.expandNode(root);
+          if (root.children) {
+            for (const child of root.children) {
+              this.model.expandNode(child);
             }
-          } finally {
-            this._restoringState = false;
+          }
+          if (hasSavedExpanded) {
+            this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
+          }
+
+          const navState = this.stateManager.getSection('navigation');
+          if (navState.selectedNodePath?.length > 0) {
+            this.restoreNodePath(navState.selectedNodePath);
+          } else {
+            this.model.selectNode(root);
+            setTimeout(() => {
+              this.viewGraph.zoomToNode(root);
+            }, 100);
           }
         }
       }
     } catch (error) {
       this.layout.setStatus('Load error: ' + error.message, 'disconnected');
     }
+  }
+
+  _clearRestoringStateWhenReady() {
+    if (this._restoringStateTimeout) {
+      clearTimeout(this._restoringStateTimeout);
+    }
+    if (this._restoringStateHandler) {
+      this.model.off('dataChanged', this._restoringStateHandler);
+    }
+
+    this._restoringStateHandler = () => {
+      if (!this._restoringState) return;
+      if (this.model._pendingExpandedKeys || this.model._pendingSelectedKey) return;
+
+      this._restoringState = false;
+      this.model.off('dataChanged', this._restoringStateHandler);
+      this._restoringStateHandler = null;
+      if (this._restoringStateTimeout) {
+        clearTimeout(this._restoringStateTimeout);
+        this._restoringStateTimeout = null;
+      }
+
+      this.stateManager.updateSection('hierarchy', {
+        expandedNodeIds: this.model.getExpandedNodeKeys()
+      });
+    };
+
+    this.model.on('dataChanged', this._restoringStateHandler);
+
+    this._restoringStateTimeout = setTimeout(() => {
+      this._restoringStateTimeout = null;
+      if (this._restoringState) {
+        this._restoringState = false;
+        if (this._restoringStateHandler) {
+          this.model.off('dataChanged', this._restoringStateHandler);
+          this._restoringStateHandler = null;
+        }
+      }
+    }, 10000);
   }
 
   restoreNodePath(path) {

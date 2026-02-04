@@ -81,6 +81,12 @@ export class ViewGraph {
       }
     });
 
+    this.model.on('nodeChildrenChanged', (parentNode) => {
+      if (this.model.isNodeExpanded(parentNode) && parentNode.children) {
+        this.addChildren(parentNode, parentNode.children);
+      }
+    });
+
     this.model.on('dataChanged', () => this.syncGraph());
   }
 
