@@ -296,7 +296,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
       return response.aChild || [];
     } catch (err) {
       console.error(`_fetchChildrenViaAction failed for ${model.sID} ${model.twObjectIx}:`, err);
-      return null;
+      throw err;
     }
   }
 

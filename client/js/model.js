@@ -30,6 +30,7 @@ export class Model {
       nodeUpdated: [],
       nodeInserted: [],
       nodeDeleted: [],
+      nodeLoadFailed: [],
       dataChanged: [],
       selectionChanged: [],
       expansionChanged: [],
@@ -187,6 +188,8 @@ export class Model {
         this._checkPendingExpansion(child);
       }
     }
+
+    this._checkExpandAllDescendants(parentNode, children);
   }
 
   // Moves expanded keys to _pendingExpandedKeys instead of discarding them,
@@ -303,6 +306,67 @@ export class Model {
       if (this._pendingExpandedKeys.size === 0) {
         this._pendingExpandedKeys = null;
       }
+    }
+  }
+
+  expandChildren(node) {
+    if (!node) return;
+    this.expandNode(node);
+    if (node.children) {
+      for (const child of node.children) {
+        this.expandNode(child);
+      }
+    }
+  }
+
+  expandAllDescendants(node) {
+    if (!node) return;
+    const hasChildren = node.children?.length > 0 || node.hasChildren;
+    if (!hasChildren) return;
+
+    const key = this.nodeKey(node);
+    if (!key) return;
+
+    if (!this._expandAllKeys) {
+      this._expandAllKeys = new Set();
+    }
+    this._expandAllKeys.add(key);
+
+    this.expandNode(node);
+
+    if (node._loadFailed) {
+      this.loadNodeChildren(node);
+    }
+
+    if (node.children) {
+      for (const child of node.children) {
+        setTimeout(() => this.expandAllDescendants(child), 0);
+      }
+    }
+  }
+
+  collapseAllDescendants(node) {
+    if (!node) return;
+    if (!node.children?.length) return;
+
+    const key = this.nodeKey(node);
+    if (key && this._expandAllKeys) {
+      this._expandAllKeys.delete(key);
+    }
+
+    this.collapseNode(node);
+    for (const child of node.children) {
+      setTimeout(() => this.collapseAllDescendants(child), 0);
+    }
+  }
+
+  _checkExpandAllDescendants(parentNode, children) {
+    if (!this._expandAllKeys || !children) return;
+    const parentKey = this.nodeKey(parentNode);
+    if (!parentKey || !this._expandAllKeys.has(parentKey)) return;
+
+    for (const child of children) {
+      this.expandAllDescendants(child);
     }
   }
 
@@ -477,6 +541,8 @@ export class Model {
   async loadNodeChildren(node) {
     if (!node?.type || node.id === undefined) return;
 
+    node._loadFailed = false;
+
     if (node._loading) return node._loading;
 
     const key = this.nodeKey(node);
@@ -493,7 +559,8 @@ export class Model {
       } catch (err) {
         console.error(`Model: Failed to load children for ${key}:`, err);
         if (this.nodes.get(key) === node) {
-          this.setChildren(node, []);
+          node._loadFailed = true;
+          this._emit('nodeLoadFailed', node);
         }
       } finally {
         node._loading = null;
