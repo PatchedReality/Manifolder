@@ -131,20 +131,15 @@ export class ViewResource {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.2;
 
-    // Late afternoon sunlight
+    // Late afternoon sunlight (shadow camera frustum set dynamically in _fitShadowCamera)
     this.keyLight = new THREE.DirectionalLight(0xffebd6, 2.1);
     this.keyLight.position.set(85, 52, 50);
     this.keyLight.castShadow = true;
-    this.keyLight.shadow.mapSize.width = 2048;
-    this.keyLight.shadow.mapSize.height = 2048;
-    this.keyLight.shadow.camera.near = 1;
-    this.keyLight.shadow.camera.far = 1000;
-    this.keyLight.shadow.camera.left = -500;
-    this.keyLight.shadow.camera.right = 500;
-    this.keyLight.shadow.camera.top = 500;
-    this.keyLight.shadow.camera.bottom = -500;
-    this.keyLight.shadow.bias = -0.0001;
+    this.keyLight.shadow.mapSize.width = 4096;
+    this.keyLight.shadow.mapSize.height = 4096;
+    this.keyLight.shadow.bias = -0.0005;
     this.scene.add(this.keyLight);
+    this.scene.add(this.keyLight.target);
 
     this.scene.add(this.camera);
 
@@ -235,6 +230,7 @@ export class ViewResource {
       this.timeHourInput.addEventListener('change', this.boundTimeInputHandler);
       this.timeMinuteInput.addEventListener('change', this.boundTimeInputHandler);
     }
+
   }
 
   updateSunLighting() {
@@ -254,15 +250,17 @@ export class ViewResource {
     );
 
     // Position directional light based on sun azimuth/elevation
-    const distance = 100;
     const elevRad = elevation * Math.PI / 180;
     const azimRad = azimuth * Math.PI / 180;
 
-    this.keyLight.position.set(
-      distance * Math.cos(elevRad) * Math.sin(azimRad),
-      distance * Math.sin(elevRad),
-      distance * Math.cos(elevRad) * Math.cos(azimRad)
+    const lightDir = new THREE.Vector3(
+      Math.cos(elevRad) * Math.sin(azimRad),
+      Math.sin(elevRad),
+      Math.cos(elevRad) * Math.cos(azimRad)
     );
+    const target = this.keyLight.target.position;
+    const distance = this.keyLight.position.distanceTo(target) || 100;
+    this.keyLight.position.copy(target).add(lightDir.multiplyScalar(distance));
 
     // Get lighting params based on sun elevation
     const params = getSunLightingParams(elevation);
@@ -1577,6 +1575,33 @@ export class ViewResource {
     this.controls.update();
 
     this._positionGroundPlane(boundingBox.min.y);
+    this._fitShadowCamera(size, center);
+  }
+
+  _fitShadowCamera(size, center) {
+    if (!this.keyLight) return;
+
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const halfExtent = maxDim * 0.75;
+    const shadow = this.keyLight.shadow;
+
+    shadow.camera.left = -halfExtent;
+    shadow.camera.right = halfExtent;
+    shadow.camera.top = halfExtent;
+    shadow.camera.bottom = -halfExtent;
+
+    const lightDistance = halfExtent * 2;
+    shadow.camera.near = lightDistance - halfExtent;
+    shadow.camera.far = lightDistance + halfExtent;
+    shadow.camera.updateProjectionMatrix();
+
+    const lightDir = this.keyLight.position.clone().sub(center).normalize();
+    if (lightDir.length() < 0.01) lightDir.set(1, 1, 1).normalize();
+    this.keyLight.position.copy(center).add(lightDir.multiplyScalar(lightDistance));
+    this.keyLight.target.position.copy(center);
+    this.keyLight.target.updateMatrixWorld();
+
+    shadow.needsUpdate = true;
   }
 
   _cameraDistanceForSize(size) {
@@ -1589,7 +1614,7 @@ export class ViewResource {
   _positionGroundPlane(minY) {
     if (!isFinite(minY)) return;
     if (this.gridHelper) this.gridHelper.position.y = minY;
-    if (this.shadowPlane) this.shadowPlane.position.y = minY;
+    if (this.shadowPlane) this.shadowPlane.position.y = minY - 0.01;
   }
 
   resetCamera() {
