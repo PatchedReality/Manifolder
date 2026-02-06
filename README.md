@@ -34,6 +34,10 @@ The toolbar provides:
 - **URL History**: Dropdown of recently loaded URLs
 - **Load Button**: Fetch and parse the specified MSF file
 - **Follow Link**: Navigate to linked MSF files from a selected node when one exists
+- **Add Bookmark** (★): Save the current view state (map URL, selected node, expanded nodes)
+- **Bookmarks** (▼): Access saved bookmarks, rename, or delete them
+- **Share** (↗): Copy a shareable URL to clipboard that encodes the current state
+- **Go To→** (RP1): Navigate to the selected location in the RP1 metaverse client (Earth maps only)
 
 ### Hierarchy Panel (Left)
 
@@ -41,10 +45,11 @@ A tree view displaying the node hierarchy:
 - **Search**: Filter nodes by name
 - **Expand/Collapse**: Click toggle arrows or double-click nodes
 - **Selection**: Click to select and inspect a node
-- **Context Menu**: Right-click (or long-press on mobile) for bulk expand/collapse options:
+- **Context Menu**: Right-click (or long-press on mobile) for options:
   - **Expand Children**: Expands only the immediate children of the selected node
   - **Expand All**: Recursively expands the selected node and all currently loaded descendants (use multiple times to truly fully expand)
   - **Collapse All**: Recursively collapses the selected node and all descendants
+  - **Enable/Disable Live Updates**: Toggle real-time updates from the server for this node (disabled by default for performance)
 
 > **Caution**: Using "Expand All" on nodes with extremely deep hierarchies (e.g., a Galaxy or Continent with hundreds of descendants) can cause the tool to freeze or become unresponsive. Use "Expand Children" to incrementally explore large hierarchies.
 
@@ -97,9 +102,12 @@ A 3D model viewer for GLB (GLTF Binary) assets associated with nodes:
 - Supports blueprint hierarchies with nested physical objects
 - Automatic LOD (Level of Detail) selection
 - Models are centered and scaled to fit the viewport
+- Supports video textures via HLS streaming
+- Physics-enabled rotators and animations
 
 **Resource-specific Controls:**
 - **Grid**: Adaptive grid that scales based on content size
+- **Time of Day**: Slider to adjust sun position for realistic lighting preview
 
 ### Inspector Panel (Right)
 
@@ -198,3 +206,4 @@ Orbital positions are animated based on simulation time:
 
 Manifolder is designed to work on mobile devices (for the most part):
 - **Touch Gestures**: Pinch to zoom, drag to orbit, tap to select, long press for context menus
+- **Responsive Layout**: Panels resize for narrower screens with horizontal scrolling
