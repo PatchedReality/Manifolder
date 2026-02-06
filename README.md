@@ -1,440 +1,200 @@
-# RP1 Metaverse Protocol Reverse Engineering Toolkit
-
-A comprehensive toolkit for analyzing and understanding the RP1 metaverse protocol. This project includes protocol documentation, analysis tools, and a reference client implementation based on reverse engineering of the official JavaScript client.
+# Manifolder (Open Metaverse Map Explorer)
 
 ## Overview
+Manifolder is a web-based tool for exploring and visualizing hierarchical spatial data structures used in the Open Metaverse. It provides interactive 2D and 3D views of map data, allowing developers and content creators to inspect node hierarchies, spatial bounds, and properties.
 
-The RP1 protocol is a multi-layered real-time communication system for 3D metaverse applications, featuring:
+## Accessing Manifolder
+The first version of Manifolder was developed by [Patched Reality, Inc](https://patchedreality.com). You can access it at [patchedreality.com/manifolder](https://patchedreality.com/manifolder).
 
-- **MVIO**: Socket.IO v4 transport layer
-- **MVSB**: Binary message serialization (custom 16-byte header format)
-- **MVRP**: Avatar state synchronization and world management
-- **MVRP_Map**: Hierarchical 3D scene structure
+Details and timing for open sourcing of Manifolder are being worked on, and will be available soon.
 
-## Project Structure
+## User Interface
+
+### Layout Overview
+
+Manifolder uses a three-panel layout:
 
 ```
-.
-├── client/
-│   └── simple-client.js          # Reference client implementation
-├── tools/
-│   ├── packet-logger.js          # Multi-format packet logging
-│   ├── ws-analyzer.js            # WebSocket protocol analyzer
-│   └── api-explorer.js           # HTTP API endpoint discovery
-├── viewer/
-│   ├── earth-viewer.html         # 3D Earth map viewer (standalone)
-│   └── README.md                 # Viewer documentation
-├── docs/
-│   ├── protocol-spec.md          # Complete protocol specification
-│   ├── api-reference.md          # API reference documentation
-│   └── findings.md               # Detailed analysis and findings
-└── logs/                         # Generated log files (created on run)
+┌─────────────────────────────────────────────────────────────────┐
+│                           Toolbar                               │
+├───────────┬─────────────────────────────────┬───────────────────┤
+│           │                                 │                   │
+│ Hierarchy │           Viewport              │     Inspector     │
+│   Panel   │    (Graph / Bounds / Resource)  │       Panel       │
+│           │                                 │                   │
+├───────────┴─────────────────────────────────┴───────────────────┤
+│                          Status Bar                             │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Documentation
+### Toolbar
 
-### Protocol Documentation
+The toolbar provides:
+- **URL Input**: Enter an MSF (Metaverse Spatial Fabric) file URL to load
+- **URL History**: Dropdown of recently loaded URLs
+- **Load Button**: Fetch and parse the specified MSF file
+- **Follow Link**: Navigate to linked MSF files from a selected node when one exists
 
-- **[Protocol Specification](docs/protocol-spec.md)** - Complete protocol layer documentation
-  - MVIO (Socket.IO transport)
-  - MVSB (Binary serialization)
-  - MVRP (Avatar and world protocol)
-  - MVRP_Map (Scene hierarchy)
+### Hierarchy Panel (Left)
 
-- **[API Reference](docs/api-reference.md)** - API endpoint reference
-  - Configuration endpoints
-  - WebSocket events
-  - Authentication flow
-  - Model operations (RUser, RPersona, RZone, etc.)
+A tree view displaying the node hierarchy:
+- **Search**: Filter nodes by name
+- **Expand/Collapse**: Click toggle arrows or double-click nodes
+- **Selection**: Click to select and inspect a node
+- **Context Menu**: Right-click (or long-press on mobile) for bulk expand/collapse options:
+  - **Expand Children**: Expands only the immediate children of the selected node
+  - **Expand All**: Recursively expands the selected node and all currently loaded descendants (use multiple times to truly fully expand)
+  - **Collapse All**: Recursively collapses the selected node and all descendants
 
-- **[Findings](docs/findings.md)** - Detailed reverse engineering findings
-  - Discovery log
-  - Protocol analysis
-  - Security considerations
-  - Open questions
+> **Caution**: Using "Expand All" on nodes with extremely deep hierarchies (e.g., a Galaxy or Continent with hundreds of descendants) can cause the tool to freeze or become unresponsive. Use "Expand Children" to incrementally explore large hierarchies.
 
-## Installation
+Node icons are color-coded by type (celestial bodies, terrestrial regions, etc.).
 
-```bash
-npm install
-```
+### Viewport Panel (Center)
 
-## Usage
+The viewport supports multiple visualization modes, toggled via buttons. Multiple views can be enabled simultaneously to show side-by-side.
 
-### WebSocket Traffic Analyzer
+#### How Selection and Expansion Affect Views
 
-Capture and analyze WebSocket traffic between client and server:
+Selection and hierarchy expansion control what's displayed in each view:
 
-```bash
-# Observe for 30 seconds (default)
-npm run ws-analyzer
+- **Selection is synchronized**: Selecting a node in any panel (Hierarchy, Graph, or Bounds) updates the selection in all other panels and shows details in the Inspector.
 
-# Observe for 60 seconds
-node tools/ws-analyzer.js 60000
+- **Graph View**: Displays the entire loaded tree structure. Expanding/collapsing nodes in the hierarchy will update the graph to show more or fewer nodes.
 
-# Connect to custom endpoint
-node tools/ws-analyzer.js 30000 wss://custom-endpoint.example.com
-```
+- **Bounds View**: Displays 3D spatial bounds for nodes that are expanded in the hierarchy and not filtered out by the Type Filter. Expanding a node in the hierarchy adds its children to the 3D scene.
 
-**Output:**
-- Console: Colored real-time packet display
-- `logs/{session-id}.jsonl` - JSON Lines format for programmatic analysis
-- `logs/{session-id}.log` - Human-readable log file
-- `logs/{session-id}.har` - HAR format (if enabled)
+- **Resource View**: Displays 3D models for the **selected node and all its expanded descendants**. This means expanding more children in the hierarchy will load and display more 3D models in the Resource view.
 
-**Features:**
-- Automatic Engine.IO packet type detection
-- MVSB binary header parsing
-- Event counting and statistics
-- Color-coded console output
+#### Common Controls (All Views)
 
-### API Endpoint Explorer
+- **Orbit**: Click and drag to rotate the camera
+- **Zoom**: Scroll wheel or pinch gesture
+- **Pan**: Right-click drag or two-finger drag
+- **Select**: Click on a node/object to select it
+- **Focus**: Double-click to zoom to a node
 
-Discover and analyze HTTP API endpoints:
+#### Graph View
 
-```bash
-# Explore default endpoint (hello.rp1.com)
-npm run api-explorer
+A 3D force-directed graph showing node relationships and hierarchy structure.
 
-# Explore custom base URL
-node tools/api-explorer.js https://custom.example.com
-```
+#### Bounds View
 
-**Output:**
-- Console: Discovery progress and results
-- `docs/api-discovery/api-discovery.json` - Complete discovery report
+A 3D visualization using Three.js showing:
+- Spatial bounding volumes (cuboids for terrestrial, spheroids for celestial)
+- Orbital paths for celestial bodies
+- Surface textures when available
+- Labels for node identification
 
-**Discovery patterns:**
-- Configuration endpoints (`/hello.msf`, `/config/site.msf`)
-- Map API endpoints (`/rmroot/update`, `/rmcobject/search`, etc.)
-- Authentication endpoints
-- Common API patterns (`/api/*`, `/v1/*`)
+**Bounds-specific Controls:**
+- **Time Scale**: Slider to control orbital animation speed (Paused → 1 year/sec)
+- **Type Filter**: Show/hide specific node types
 
-### Simple Client
+#### Resource View
 
-Reference client demonstrating protocol usage:
+A 3D model viewer for GLB (GLTF Binary) assets associated with nodes:
+- Loads and displays 3D models from node resource references
+- Supports blueprint hierarchies with nested physical objects
+- Automatic LOD (Level of Detail) selection
+- Models are centered and scaled to fit the viewport
 
-```bash
-# Connect and observe
-npm run simple-client
-```
+**Resource-specific Controls:**
+- **Grid**: Adaptive grid that scales based on content size
 
-**Features:**
-- Configuration loading from hello.msf
-- WebSocket connection establishment
-- Authentication flow (requires valid credentials)
-- Event observation and logging
-- Graceful shutdown (Ctrl+C)
+### Inspector Panel (Right)
 
-**Usage in code:**
+Shows detailed information about the selected node:
+- **Basic Info**: Name, type, class, ID
+- **Transform**: Position, rotation, scale
+- **Bounds**: Spatial dimensions
+- **Raw JSON**: Expandable view of the complete node data
+- **Resource**: Expandable view of linked resource data (if available)
 
-```javascript
-import RP1Client from './client/simple-client.js';
+### Panel Management
 
-const client = new RP1Client();
-
-await client.connect();
+- **Resize**: Drag the borders between panels to adjust widths
+- **Minimize**: Click the `−` button in panel headers to collapse
+- **Restore**: Click the restore button that appears when minimized
+- **Mobile**: Horizontal scrolling enabled on narrow screens
 
-// Authenticate (requires valid credentials)
-await client.authenticate({
-  companyId: 'your-company-id',
-  serviceId: 'your-service-id'
-});
+### Keyboard Shortcuts
 
-// Open persona
-await client.openPersona(userIx, personaIx);
+- `Ctrl/Cmd + 1`: Toggle Graph view
+- `Ctrl/Cmd + 2`: Toggle Bounds view
+- `Ctrl/Cmd + 3`: Toggle Resource view
 
-// Join zone
-await client.joinZone('zone-id');
+---
 
-// Update avatar state
-client.updateAvatarState({
-  control: 0,
-  volume: 128,
-  rotation: { dX: 0, dY: 0, dZ: 0, dW: 1 },
-  leftHand: { dX: -0.5, dY: 1.0, dZ: 0.3 },
-  rightHand: { dX: 0.5, dY: 1.0, dZ: 0.3 }
-});
+## Data Model
 
-// Observe events
-await client.observe(30000); // 30 seconds
+Manifolder visualizes data from the Metaverse Spatial Fabric (MSF), a hierarchical spatial data structure organized into three tiers: Celestial, Terrestrial, and Physical objects.
 
-client.close();
-```
+For more complete documentation on the MSF architecture, see the [Spatial Fabric Architecture](https://wiki.rp1.com/en/home/spatial-fabric/architecture) wiki page.
 
-### Earth Map Viewer
+### How Manifolder Displays MSF Data
 
-Interactive 3D visualization of the RP1 Earth map hierarchy:
+- **Celestial objects**: Rendered as spheres with orbital paths in the Bounds view
+- **Terrestrial objects**: Rendered as bounding boxes representing surface regions
+- **Physical objects**: Loaded as 3D GLB models in the Resource view
+- **Attachment points**: Show the "Follow Link" button (see above)
 
-```bash
-# Open in browser (may require HTTP server due to CORS)
-open viewer/earth-viewer.html
+Node icons in the Hierarchy panel are color-coded by type to help identify the object class at a glance. (although the number of object types means some types do overlap in the color space)
 
-# Or serve via HTTP
-cd viewer
-python3 -m http.server 8000
-# Then open: http://localhost:8000/earth-viewer.html
-```
+---
 
-**Features:**
-- **Hierarchy View**: Force-directed graph or spatial layout showing map structure
-  - Click nodes to select and view details
-  - Load children on-demand
-  - Toggle between force and spatial layouts
-- **Explorer View**: First-person WASD navigation through 3D space
-  - Move: W/A/S/D keys
-  - Look: Mouse (click to lock pointer)
-  - Up/Down: Space/Shift
-- **Progressive Loading**: Automatically loads Earth config → RMROOT → RMCOBJECT containers
-- **Color-coded nodes**: White (root), Green (containers), Blue (terrain), Yellow (placeables)
+## 3D Rendering Details
 
-**Controls:**
-- Click "Hierarchy" or "Explorer" to switch views
-- Click "Force" or "Spatial" to change layout mode
-- Click nodes to select them
-- Click "Load Children" to expand selected node
+### Coordinate System
 
-See [viewer/README.md](viewer/README.md) for complete documentation.
+- Right-handed coordinate system
+- Y-axis up
+- Units in meters (for celestial) or implementation-specific (for terrestrial)
 
-## Tools API
+### Visual Scaling
 
-### PacketLogger
+For Celestial objects, the Bounds view uses several techniques to make astronomical distances and size differences viewable in a single scene.
 
-```javascript
-import PacketLogger from './tools/packet-logger.js';
+This may not be the optimal way to display this information, but it was considered a good First Stab™.
 
-const logger = new PacketLogger({
-  sessionId: 'my-session',
-  logDir: 'logs',
-  enableConsole: true,
-  enableFile: true,
-  enableHAR: true
-});
+#### Position Scaling (Logarithmic Compression)
 
-// Log connection events
-logger.logConnection('connected', { socketId: '...' });
+Distances are compressed using a logarithmic scale relative to the focused node's size:
+- 1× focus node distance → ~30 scene units away
+- 10× focus node distance → ~50 scene units away
+- 1000× focus node distance → ~150 scene units away
 
-// Log sent messages
-logger.logSend('subscribe', { objectId: '123' });
+This keeps nearby objects well-separated while preventing distant objects from being infinitely far away.
 
-// Log received messages
-logger.logReceive('refresh', { updateType: 'UPDATE', data: {...} });
+#### Size Scaling (Cube Root Compression)
 
-// Log binary messages
-logger.logSend('RPersona:update', null, binaryBuffer);
+Object sizes use cube root compression to keep extreme size differences manageable:
+- The focused node always renders at a fixed visual size
+- An object 8× larger renders at 2× visual size
+- An object 1000× larger renders at 10× visual size
+- An object 1/8th the size renders at 0.5× visual size
 
-// Log errors
-logger.logError('connection-failed', error);
+#### Culling
 
-// Get statistics
-logger.printStatistics();
+Nodes whose bounds exceed 10× the focus node's bounds are hidden entirely—they're considered too large to visualize meaningfully when focused on something much smaller inside them.
 
-// Close and save
-logger.close();
-```
+### Visual Elements
 
-### WebSocketAnalyzer
+- **Bounding Volumes**: Wireframe boxes (terrestrial) or spheres (celestial)
+- **Orbit Paths**: Elliptical lines showing orbital trajectories
+- **Labels**: Sprite-based text labels that scale with distance
+- **Grid**: Infinite grid plane for spatial reference
+- **Starfield**: Background particle system for context
 
-```javascript
-import WebSocketAnalyzer from './tools/ws-analyzer.js';
+### Animation
 
-const analyzer = new WebSocketAnalyzer({
-  configUrl: 'https://hello.rp1.com/hello.msf',
-  enableHAR: true
-});
+Orbital positions are animated based on simulation time:
+- Timescale controllable from paused to 1 year per second
+- Positions calculated using Keplerian orbital mechanics
+- Spin rotation for bodies with axial rotation data
 
-// Fetch configuration
-await analyzer.fetchConfig();
+---
 
-// Connect
-analyzer.connect();
+## Mobile Support
 
-// Register event handlers
-analyzer.on('refresh', (data) => {
-  console.log('Refresh event:', data);
-});
-
-// Send events
-analyzer.emit('subscribe', { objectId: '123' }, (response) => {
-  console.log('Response:', response);
-});
-
-// Send binary data
-analyzer.emitBinary('RPersona:update', buffer);
-
-// Helper methods
-analyzer.subscribe('object-id', 'RPersona');
-analyzer.unsubscribe('object-id');
-analyzer.sendAction('TOKEN', { sRDCompanyId: '...' });
-
-// Statistics
-analyzer.printEventStatistics();
-
-// Cleanup
-analyzer.close();
-```
-
-### APIExplorer
-
-```javascript
-import APIExplorer from './tools/api-explorer.js';
-
-const explorer = new APIExplorer({
-  baseUrl: 'https://hello.rp1.com',
-  outputDir: 'docs/api-discovery'
-});
-
-// Probe single endpoint
-const result = await explorer.probe('/hello.msf', 'GET');
-
-// Test all HTTP methods
-const results = await explorer.probeEndpoint('/hello.msf');
-
-// Discover common endpoints
-await explorer.discoverCommonEndpoints();
-
-// Analyze endpoint in detail
-await explorer.analyzeEndpoint('/hello.msf');
-
-// Full discovery run
-await explorer.run();
-
-// Generate and save report
-explorer.printSummary();
-explorer.saveReport('my-discovery.json');
-```
-
-## Protocol Overview
-
-### Connection Flow
-
-1. **Fetch configuration** from `https://hello.rp1.com/hello.msf`
-2. **Connect WebSocket** to endpoint from config (e.g., `wss://prod-friends.rp1.com`)
-3. **Socket.IO handshake** (Engine.IO v4 protocol)
-4. **Authenticate** via TOKEN action
-5. **Open models** (RUser, RPersona)
-6. **Join zone** for spatial updates
-7. **Real-time communication** (avatar updates, audio, proximity events)
-
-### Binary Message Format (MVSB)
-
-All binary messages use a 16-byte header:
-
-```
-Offset | Size | Field          | Description
--------|------|----------------|----------------------------------
-0x00   | 6    | twPacketIx     | Packet identifier
-0x06   | 2    | wControl       | Control flags (0x0000/0x0001/0x0002)
-0x08   | 4    | dwAction       | Action code
-0x0C   | 2    | wSend          | Payload size in bytes
-0x0E   | 2    | Reserved       | Reserved (0x0000)
-0x10   | N    | Payload        | Binary payload
-```
-
-### Avatar State (96 bytes)
-
-```
-Offset | Size | Field              | Type
--------|------|--------------------|----------
-0x00   | 1    | bControl           | BYTE
-0x01   | 1    | bVolume            | BYTE
-0x02   | 32   | qRotation          | QUATERNION (4x DOUBLE)
-0x22   | 24   | vLeftHand          | VECTOR3 (3x DOUBLE)
-0x3A   | 24   | vRightHand         | VECTOR3 (3x DOUBLE)
-0x52   | 14   | (additional data)  | Various
-```
-
-## Key Findings
-
-### Architecture Strengths
-
-- **Efficient binary protocol** - 96-byte avatar state vs. verbose JSON
-- **Proximity-based streaming** - Bandwidth scales with nearby avatars, not total population
-- **Hierarchical scenes** - Progressive loading (universe → galaxy → planet → parcel)
-- **Multi-coordinate systems** - Cartesian, cylindrical, and geographic coordinates
-
-### Areas Requiring Live Testing
-
-- Action code mappings (dwAction values)
-- Error code semantics (nResult codes)
-- Rate limiting thresholds
-- Token lifecycle and refresh
-- Audio codec identification
-
-### Security Notes
-
-- ✓ TLS required (wss://)
-- ✓ Token-based authentication
-- ⚠ Reconnection disabled (client must handle)
-- ⚠ WebSocket-only (no polling fallback)
-- ? Message signing/integrity verification
-- ? Rate limiting implementation
-
-## Bandwidth Estimates
-
-**Per client in populated area (50 nearby avatars):**
-
-- Avatar updates (10Hz): 48 KB/sec outbound
-- Audio streaming: ~1-2 Mbps inbound (with proximity attenuation)
-- Total: ~2-3 Mbps sustained
-
-## Development
-
-### Running Tests
-
-```bash
-npm test
-```
-
-### Code Formatting
-
-```bash
-npx prettier --write .
-```
-
-### Development Mode (Auto-reload)
-
-```bash
-npx nodemon tools/ws-analyzer.js
-```
-
-## Limitations
-
-1. **Authentication** - Requires valid credentials from RP1 service
-2. **Closed Source** - Server implementation not available for analysis
-3. **Active Development** - Protocol may change (current version: v0.23.21)
-4. **Limited Testing** - Many protocol features unverified without live access
-
-## Contributing
-
-This is a research/educational project for understanding metaverse protocols.
-
-When adding findings:
-1. Update `docs/findings.md` with discoveries
-2. Update `docs/protocol-spec.md` if protocol details change
-3. Add test cases to verify assumptions
-
-## Future Work
-
-- [ ] Map all action codes (dwAction values)
-- [ ] Document all error codes (nResult values)
-- [ ] Identify audio codec (likely Opus)
-- [ ] Analyze physics synchronization
-- [ ] Test video support (UPDATE_VISIO)
-- [ ] Build protocol validator/fuzzer
-- [ ] Create interactive protocol visualization
-
-## License
-
-Research and educational purposes only. Respect the terms of service of any systems you analyze.
-
-## Acknowledgments
-
-Analysis based on publicly accessible JavaScript client code from:
-- `https://cdn2.rp1.com/v0.0.137/js/mv/`
-
-Built with:
-- socket.io-client v4.7.x
-- winston (logging)
-- chalk (console colors)
-- axios (HTTP requests)
+Manifolder is designed to work on mobile devices (for the most part):
+- **Touch Gestures**: Pinch to zoom, drag to orbit, tap to select, long press for context menus
