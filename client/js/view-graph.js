@@ -64,6 +64,7 @@ export class ViewGraph {
     this.model.on('selectionChanged', (node) => {
       if (node) {
         this.selectNode(node);
+        this.zoomToNode(node);
       }
     });
 

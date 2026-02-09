@@ -472,6 +472,11 @@ export class HierarchyPanel {
     } else {
       this.expandNode(nodeKey);
     }
+
+    const nodeData = this._getNodeData(nodeKey);
+    if (nodeData) {
+      this.model.selectNode(nodeData);
+    }
   }
 
   expandNode(nodeOrKey) {
@@ -662,6 +667,7 @@ export class HierarchyPanel {
     const nodeData = this._getNodeData(nodeKey);
     if (nodeData) {
       this.model.expandChildren(nodeData);
+      this.model.selectNode(nodeData);
     }
   }
 
@@ -670,6 +676,7 @@ export class HierarchyPanel {
     const nodeData = this._getNodeData(nodeKey);
     if (nodeData) {
       this.model.expandAllDescendants(nodeData);
+      this.model.selectNode(nodeData);
     }
   }
 
@@ -678,6 +685,7 @@ export class HierarchyPanel {
     const nodeData = this._getNodeData(nodeKey);
     if (nodeData) {
       this.model.collapseAllDescendants(nodeData);
+      this.model.selectNode(nodeData);
     }
   }
 

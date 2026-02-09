@@ -123,6 +123,7 @@ export class ViewBounds {
     this.model.on('selectionChanged', (node) => {
       if (node) {
         this.selectNode(node.id, node.type);
+        this.zoomToNode(node);
       }
     });
 

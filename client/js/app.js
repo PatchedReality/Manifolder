@@ -80,12 +80,6 @@ class App {
       getMsfReference(node).then(url => this.layout.setFollowLink(url));
       this.updateRP1GoButton(node);
 
-      if (this._zoomOnSelectionKey && this.model.nodeKey(node) === this._zoomOnSelectionKey) {
-        this._zoomOnSelectionKey = null;
-        this.viewBounds.zoomToNode(node);
-        setTimeout(() => this.viewGraph.zoomToNode(node), 100);
-      }
-
       if (!this._restoringState) {
         const path = this.model.getPathToNode(node);
         this.stateManager.updateSection('navigation', {
@@ -682,9 +676,6 @@ class App {
             this.restoreNodePath(navState.selectedNodePath);
           } else {
             this.model.selectNode(root);
-            setTimeout(() => {
-              this.viewGraph.zoomToNode(root);
-            }, 100);
           }
         }
       }
@@ -765,11 +756,8 @@ class App {
 
     if (targetNode) {
       this.model.selectNode(targetNode);
-      this.viewBounds.zoomToNode(targetNode);
-      setTimeout(() => this.viewGraph.zoomToNode(targetNode), 100);
     } else {
       this.model._pendingSelectedKey = targetKey;
-      this._zoomOnSelectionKey = targetKey;
     }
   }
 
