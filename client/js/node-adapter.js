@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Patched Reality, Inc.
  */
 
-import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PLACEMENT_TYPE } from '../shared/node-types.js';
+import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PHYSICAL_TYPE } from '../shared/node-types.js';
 import { resolveResourceUrl } from './node-helpers.js';
 
 const NAME_FIELDS = {
@@ -37,6 +37,8 @@ export class NodeAdapter {
 
   get id() { return this._model.twObjectIx; }
 
+  get key() { return `${this.type}_${this.id}`; }
+
   get name() {
     const nameField = NAME_FIELDS[this.type];
     return this._model.pName?.[nameField] || this._model.sName || `${this.type} ${this.id}`;
@@ -44,7 +46,7 @@ export class NodeAdapter {
 
   get nodeType() {
     if (this.type === 'RMRoot') return 'Root';
-    if (this.type === 'RMPObject') return PLACEMENT_TYPE;
+    if (this.type === 'RMPObject') return PHYSICAL_TYPE;
 
     const bType = this._model.pType?.bType ?? this._model.bType;
     if (bType !== undefined) {

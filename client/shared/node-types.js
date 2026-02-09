@@ -44,8 +44,8 @@ export const TERRESTRIAL_TYPE_MAP = {
   10: 'Parcel'
 };
 
-// Placement type (used by RMPObject - placeables)
-export const PLACEMENT_TYPE = 'Placement';
+// Physical type (used by RMPObject - physical objects)
+export const PHYSICAL_TYPE = 'Physical';
 
 // All celestial type names (for categorization)
 export const CELESTIAL_NAMES = new Set(Object.values(CELESTIAL_TYPE_MAP));
@@ -53,11 +53,11 @@ export const CELESTIAL_NAMES = new Set(Object.values(CELESTIAL_TYPE_MAP));
 // All terrestrial type names (for categorization)
 export const TERRESTRIAL_NAMES = new Set(Object.values(TERRESTRIAL_TYPE_MAP));
 
-// All placement type names (for categorization)
-export const PLACEMENT_NAMES = new Set([PLACEMENT_TYPE]);
+// All physical type names (for categorization)
+export const PHYSICAL_NAMES = new Set([PHYSICAL_TYPE]);
 
 // Display configuration for each type
-// Order: Celestial, Terrestrial, Placement (for filter UI)
+// Order: Celestial, Terrestrial, Physical (for filter UI)
 export const NODE_TYPES = [
   // Celestial types
   { name: 'Universe', color: 0xe0e0ff, cssVar: '--node-universe', category: 'celestial' },
@@ -88,8 +88,8 @@ export const NODE_TYPES = [
   { name: 'City', color: 0xf08080, cssVar: '--node-city', category: 'terrestrial' },
   { name: 'Community', color: 0xdda0dd, cssVar: '--node-community', category: 'terrestrial' },
   { name: 'Parcel', color: 0xffaa44, cssVar: '--node-parcel', category: 'terrestrial' },
-  // Placement type
-  { name: 'Placement', color: 0xff8c42, cssVar: '--node-placement', category: 'placement' }
+  // Physical type
+  { name: 'Physical', color: 0xff8c42, cssVar: '--node-physical', category: 'physical' }
 ];
 
 // Color lookup by type name, including RM-type entries

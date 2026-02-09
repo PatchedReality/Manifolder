@@ -9,7 +9,7 @@ import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { MVClient } from './mv-client.js';
-import { CELESTIAL_NAMES, PLACEMENT_NAMES } from '../shared/node-types.js';
+import { CELESTIAL_NAMES, PHYSICAL_NAMES } from '../shared/node-types.js';
 import { getMsfReference } from './node-helpers.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
@@ -94,10 +94,9 @@ class App {
       }
     });
 
-    this.model.on('expansionChanged', (node) => {
-      if (!this._restoringState) {
-        this.viewGraph.zoomToNode(node);
-        this.viewBounds.zoomToNode(node);
+    this.model.on('expansionChanged', (node, expanded) => {
+      // Always save state on collapse (user action), skip only during expansion restoration
+      if (!this._restoringState || !expanded) {
         this.stateManager.updateSection('hierarchy', {
           expandedNodeIds: this.model.getExpandedNodeKeys()
         });
@@ -431,8 +430,8 @@ class App {
     // Root is standalone at top, not in any category
     const rootType = NODE_TYPES.find(t => t.name === 'Root');
     const celestialTypesList = NODE_TYPES.filter(t => CELESTIAL_NAMES.has(t.name));
-    const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PLACEMENT_NAMES.has(t.name) && t.name !== 'Root');
-    const placementTypesList = NODE_TYPES.filter(t => PLACEMENT_NAMES.has(t.name));
+    const terrestrialTypes = NODE_TYPES.filter(t => !CELESTIAL_NAMES.has(t.name) && !PHYSICAL_NAMES.has(t.name) && t.name !== 'Root');
+    const physicalTypesList = NODE_TYPES.filter(t => PHYSICAL_NAMES.has(t.name));
 
     const createCategory = (name, types) => {
       const category = document.createElement('div');
@@ -449,13 +448,13 @@ class App {
       for (const type of types) {
         const label = document.createElement('label');
         const isCelestial = CELESTIAL_NAMES.has(type.name);
-        const isPlacement = PLACEMENT_NAMES.has(type.name);
+        const isPhysical = PHYSICAL_NAMES.has(type.name);
 
         let shapeClass, colorStyle;
         if (isCelestial) {
           shapeClass = 'type-triangle';
           colorStyle = 'border-bottom-color';
-        } else if (isPlacement) {
+        } else if (isPhysical) {
           shapeClass = 'type-square';
           colorStyle = 'background';
         } else {
@@ -490,7 +489,7 @@ class App {
 
     dropdown.appendChild(celestialCategory);
     dropdown.appendChild(createCategory('Terrestrial', terrestrialTypes));
-    dropdown.appendChild(createCategory('Placement', placementTypesList));
+    dropdown.appendChild(createCategory('Physical', physicalTypesList));
 
     // Add reset button
     const resetBtn = document.createElement('button');

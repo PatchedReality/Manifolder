@@ -11,7 +11,7 @@ import {
   NODE_COLORS,
   CELESTIAL_NAMES,
   TERRESTRIAL_NAMES,
-  PLACEMENT_NAMES
+  PHYSICAL_NAMES
 } from '../shared/node-types.js';
 
 // Re-export NODE_TYPES for consumers
@@ -1584,7 +1584,7 @@ export class ViewBounds {
     if (nodeType === 'RMRoot') return 'Root';
     if (nodeType === 'RMTObject') return 'Territory';
     if (nodeType === 'RMCObject') return 'Land';
-    if (nodeType === 'RMPObject') return 'Placement';
+    if (nodeType === 'RMPObject') return 'Physical';
 
     return nodeType;
   }

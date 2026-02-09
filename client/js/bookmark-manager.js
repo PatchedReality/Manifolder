@@ -95,7 +95,7 @@ export class BookmarkManager {
     'StarCluster', 'BlackHole', 'StarSystem', 'Star', 'PlanetSystem', 'Planet',
     'Moon', 'Debris', 'Satellite', 'Transport', 'Surface', 'Root', 'Water',
     'Land', 'Country', 'Territory', 'State', 'County', 'City', 'Community',
-    'Parcel', 'Placement'
+    'Parcel', 'Physical'
   ];
 
   encodeStateToUrl() {

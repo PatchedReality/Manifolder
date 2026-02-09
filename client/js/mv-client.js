@@ -246,6 +246,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     if (this.#m_pLnG) {
       const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
       this._safeDetach(mvmfModel);
+      this.#m_pLnG.Model_Close(mvmfModel);
     }
   }
 

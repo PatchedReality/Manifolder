@@ -1,2 +1,3 @@
 ## Architecture
 - Follow MVC principles: Model is the single source of truth. Views reflect Model state. Do not spread state information across layers or maintain parallel state.
+- Keep state at the lowest level: State belongs ON the objects themselves (e.g., `node.attached = true`), not in separate tracking collections (e.g., `_attachedNodes = new Set()`). Do not create parallel data structures to track object state.

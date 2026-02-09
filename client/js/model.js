@@ -16,8 +16,7 @@ export class Model {
     this.tree = null;
     this.nodes = new Map();
     this.selectedNode = null;
-    this.expandedNodes = new Set();
-    this._pendingExpandedKeys = null;
+    this._pendingExpandedKeys = null;  // Map<key, parentKey> for storage restore
     this._pendingSelectedKey = null;
     this._liveUpdateKeys = new Set();
     this.inheritedPlanetContext = null;
@@ -107,7 +106,6 @@ export class Model {
   setTree(rootModel, inheritedPlanetContext = null) {
     this.nodes.clear();
     this.selectedNode = null;
-    this.expandedNodes.clear();
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
     this._liveUpdateKeys = new Set();
@@ -131,10 +129,9 @@ export class Model {
   }
 
   _indexNode(node, parent) {
-    const key = this.nodeKey(node);
-    if (key) {
-      this.nodes.set(key, node);
-    }
+    if (!node) return;
+    const key = node.key;
+    this.nodes.set(key, node);
     node._parent = parent;
 
     if (parent?.liveUpdatesEnabled || this._liveUpdateKeys.has(key)) {
@@ -192,22 +189,19 @@ export class Model {
     this._checkExpandAllDescendants(parentNode, children);
   }
 
-  // Moves expanded keys to _pendingExpandedKeys instead of discarding them,
-  // so they restore automatically when replacement nodes appear
   _removeFromIndex(node) {
-    const key = this.nodeKey(node);
-    if (key) {
-      this.nodes.delete(key);
-      if (this.expandedNodes.delete(key)) {
-        if (!this._pendingExpandedKeys) {
-          this._pendingExpandedKeys = new Set();
-        }
-        this._pendingExpandedKeys.add(key);
+    if (!node) return;
+    const key = node.key;
+    this.nodes.delete(key);
+    if (node.isExpanded) {
+      if (!this._pendingExpandedKeys) {
+        this._pendingExpandedKeys = new Map();
       }
-      if (this.selectedNode && this.nodeKey(this.selectedNode) === key) {
-        this._pendingSelectedKey = key;
-        this.selectedNode = null;
-      }
+      this._pendingExpandedKeys.set(key, node._parent?.key || null);
+    }
+    if (this.selectedNode?.key === key) {
+      this._pendingSelectedKey = key;
+      this.selectedNode = null;
     }
     if (node.children) {
       for (const child of node.children) {
@@ -243,63 +237,69 @@ export class Model {
   // --- Expansion ---
 
   expandNode(node) {
-    const key = this.nodeKey(node);
-    if (!key || this.expandedNodes.has(key)) return;
-
-    this.expandedNodes.add(key);
+    if (!node || node.isExpanded) return;
+    node.isExpanded = true;
     this._emit('expansionChanged', node, true);
   }
 
   collapseNode(node) {
-    const key = this.nodeKey(node);
-    if (!key || !this.expandedNodes.has(key)) return;
-
-    this.expandedNodes.delete(key);
-    // Explicit collapse — remove from pending too so it doesn't come back
-    if (this._pendingExpandedKeys) {
-      this._pendingExpandedKeys.delete(key);
-    }
+    if (!node || !node.isExpanded) return;
+    node.isExpanded = false;
+    node.expandAllActive = false;
+    this._clearDescendantPendingKeys(node);
     this._emit('expansionChanged', node, false);
   }
 
   isNodeExpanded(node) {
-    return this.expandedNodes.has(this.nodeKey(node));
+    return node?.isExpanded === true;
   }
 
   getExpandedNodeKeys() {
-    if (!this._pendingExpandedKeys) {
-      return Array.from(this.expandedNodes);
+    const keys = [];
+    for (const [key, node] of this.nodes) {
+      if (node.isExpanded) {
+        keys.push({ key, parent: node._parent?.key || null });
+      }
     }
-    const keys = new Set(this.expandedNodes);
-    for (const key of this._pendingExpandedKeys) {
-      keys.add(key);
+    if (this._pendingExpandedKeys) {
+      for (const [key, parentKey] of this._pendingExpandedKeys) {
+        keys.push({ key, parent: parentKey });
+      }
     }
-    return Array.from(keys);
+    return keys;
   }
 
-  addPendingExpandedKey(key) {
+  addPendingExpandedKey(key, parentKey = null) {
     if (!this._pendingExpandedKeys) {
-      this._pendingExpandedKeys = new Set();
+      this._pendingExpandedKeys = new Map();
     }
-    this._pendingExpandedKeys.add(key);
+    this._pendingExpandedKeys.set(key, parentKey);
   }
 
   expandNodesByKeys(keys) {
-    if (!keys || keys.length === 0) return;
-    this._pendingExpandedKeys = null;
-    for (const key of keys) {
+    if (!keys?.length) return;
+    this._pendingExpandedKeys = new Map();
+
+    for (const item of keys) {
+      const key = typeof item === 'string' ? item : item.key;
+      const parentKey = typeof item === 'string' ? null : item.parent;
+
       const node = this.nodes.get(key);
       if (node) {
         this.expandNode(node);
       } else {
-        this.addPendingExpandedKey(key);
+        this._pendingExpandedKeys.set(key, parentKey);
       }
+    }
+
+    if (this._pendingExpandedKeys.size === 0) {
+      this._pendingExpandedKeys = null;
     }
   }
 
   _checkPendingExpansion(node) {
-    if (!this._pendingExpandedKeys) return;
-    const key = this.nodeKey(node);
+    if (!node || !this._pendingExpandedKeys) return;
+    const key = node.key;
     if (this._pendingExpandedKeys.has(key)) {
       this._pendingExpandedKeys.delete(key);
       this.expandNode(node);
@@ -307,6 +307,45 @@ export class Model {
         this._pendingExpandedKeys = null;
       }
     }
+  }
+
+  _clearDescendantPendingKeys(node) {
+    if (!node || !this._pendingExpandedKeys?.size) return;
+
+    const nodeKey = node.key;
+
+    const keysToDelete = [];
+    for (const [key, parentKey] of this._pendingExpandedKeys) {
+      if (this._isDescendantOfKey(key, parentKey, nodeKey)) {
+        keysToDelete.push(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      this._pendingExpandedKeys.delete(key);
+    }
+
+    if (this._pendingExpandedKeys.size === 0) {
+      this._pendingExpandedKeys = null;
+    }
+  }
+
+  _isDescendantOfKey(key, parentKey, ancestorKey) {
+    if (parentKey === ancestorKey) return true;
+    if (!parentKey) return false;
+
+    const grandparentKey = this._pendingExpandedKeys.get(parentKey);
+    if (grandparentKey !== undefined) {
+      return this._isDescendantOfKey(parentKey, grandparentKey, ancestorKey);
+    }
+
+    const parentNode = this.nodes.get(parentKey);
+    if (parentNode?._parent) {
+      const gpKey = parentNode._parent.key;
+      return gpKey === ancestorKey || this._isDescendantOfKey(parentKey, gpKey, ancestorKey);
+    }
+
+    return false;
   }
 
   expandChildren(node) {
@@ -324,15 +363,15 @@ export class Model {
     const hasChildren = node.children?.length > 0 || node.hasChildren;
     if (!hasChildren) return;
 
-    const key = this.nodeKey(node);
-    if (!key) return;
-
-    if (!this._expandAllKeys) {
-      this._expandAllKeys = new Set();
+    let ancestor = node._parent;
+    while (ancestor) {
+      if (!ancestor.isExpanded) return;
+      ancestor = ancestor._parent;
     }
-    this._expandAllKeys.add(key);
 
-    this.expandNode(node);
+    node.expandAllActive = true;
+    node.isExpanded = true;
+    this._emit('expansionChanged', node, true);
 
     if (node._loadFailed) {
       this.loadNodeChildren(node);
@@ -347,23 +386,48 @@ export class Model {
 
   collapseAllDescendants(node) {
     if (!node) return;
-    if (!node.children?.length) return;
 
-    const key = this.nodeKey(node);
-    if (key && this._expandAllKeys) {
-      this._expandAllKeys.delete(key);
+    const hasChildren = node.children?.length > 0 || node.hasChildren;
+    if (!hasChildren) return;
+
+    // Collect all nodes to collapse first (iterative to avoid stack overflow)
+    const toCollapse = [];
+    const queue = [node];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const currentHasChildren = current.children?.length > 0 || current.hasChildren;
+      if (!currentHasChildren) continue;
+
+      if (current.isExpanded || current.expandAllActive) {
+        toCollapse.push(current);
+      }
+      if (current.children) {
+        queue.push(...current.children);
+      }
     }
 
-    this.collapseNode(node);
-    for (const child of node.children) {
-      setTimeout(() => this.collapseAllDescendants(child), 0);
+    // Clear all pending expanded keys that are descendants
+    this._clearDescendantPendingKeys(node);
+
+    // Collapse all collected nodes synchronously
+    for (const n of toCollapse) {
+      n.isExpanded = false;
+      n.expandAllActive = false;
     }
+
+    // Emit events after all state changes are complete
+    for (const n of toCollapse) {
+      this._emit('expansionChanged', n, false);
+    }
+
+    // Trigger dataChanged so _restoringStateHandler can finalize state
+    this._scheduleDataChanged();
   }
 
   _checkExpandAllDescendants(parentNode, children) {
-    if (!this._expandAllKeys || !children) return;
-    const parentKey = this.nodeKey(parentNode);
-    if (!parentKey || !this._expandAllKeys.has(parentKey)) return;
+    if (!parentNode.expandAllActive || !children) return;
+
+    parentNode.expandAllActive = false;
 
     for (const child of children) {
       this.expandAllDescendants(child);
@@ -373,9 +437,9 @@ export class Model {
   // --- Live Updates ---
 
   enableLiveUpdates(node) {
-    const key = this.nodeKey(node);
+    if (!node) return;
     node.liveUpdatesEnabled = true;
-    this._liveUpdateKeys.add(key);
+    this._liveUpdateKeys.add(node.key);
     this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
     if (node.children) {
@@ -387,9 +451,9 @@ export class Model {
   }
 
   disableLiveUpdates(node) {
-    const key = this.nodeKey(node);
+    if (!node) return;
     node.liveUpdatesEnabled = false;
-    this._liveUpdateKeys.delete(key);
+    this._liveUpdateKeys.delete(node.key);
     this.client.disableLiveUpdates({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
     if (node.children) {
@@ -545,7 +609,7 @@ export class Model {
 
     if (node._loading) return node._loading;
 
-    const key = this.nodeKey(node);
+    const key = node.key;
     if (this.nodes.get(key) !== node) return;
 
     const loadPromise = (async () => {
