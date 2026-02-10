@@ -90,8 +90,21 @@ export class ViewResource {
     });
 
     this.model.on('dataChanged', () => {
-      this.currentResourceUrl = null;
       this._refreshIfSelected();
+    });
+
+    this.model.on('nodeUpdated', (node) => {
+      const selected = this.model.getSelectedNode();
+      if (selected && node === selected && node._worldPos) {
+        const planetContext = this.model.getPlanetContext(node);
+        if (planetContext?.radius) {
+          const coords = calculateLatLong(node._worldPos, planetContext.radius);
+          if (coords) {
+            this.setLocation(coords.latitude, coords.longitude);
+          }
+        }
+        this.setNode(node);
+      }
     });
   }
 
@@ -573,7 +586,6 @@ export class ViewResource {
       await this._loadNodeRecursive(rootNode, this.contentGroup, requestId, true);
 
       if (isCancelled()) {
-        this.cleanupCancelledLoad();
         return;
       }
 

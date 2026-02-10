@@ -140,6 +140,14 @@ export class ViewBounds {
     });
 
     this.model.on('dataChanged', () => this._scheduleRebuild());
+
+    this.model.on('nodeUpdated', (node) => {
+      const selected = this.model.getSelectedNode();
+      if (selected && node === selected && node._worldPos) {
+        this.selectNode(node.id, node.type);
+        this.zoomToNode(node);
+      }
+    });
   }
 
   init() {
@@ -907,7 +915,8 @@ export class ViewBounds {
     this.addVisibleNode(this.model.tree);
 
     const addExpandedChildren = (node) => {
-      if (this.model.isNodeExpanded(node) && node.children) {
+      const shouldTraverse = this.model.isNodeExpanded(node) || node.isSearchAncestor;
+      if (shouldTraverse && node.children) {
         node.children.forEach(child => {
           this.addVisibleNode(child);
           addExpandedChildren(child);

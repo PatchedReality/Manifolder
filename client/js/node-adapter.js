@@ -15,11 +15,31 @@ const NAME_FIELDS = {
 const TIME_UNIT_TO_SECONDS = 1 / 64;
 
 export class NodeAdapter {
+  static fromSearchResult({ id, name, type, nodeType }) {
+    const nameField = NAME_FIELDS[type];
+    const stub = {
+      sID: type,
+      twObjectIx: id,
+      sName: name,
+      IsReady: () => false
+    };
+    if (nameField) {
+      stub.pName = { [nameField]: name };
+    }
+    if (nodeType !== undefined) {
+      stub.pType = { bType: nodeType };
+    }
+    const adapter = new NodeAdapter(stub);
+    adapter._isSearchStub = true;
+    return adapter;
+  }
+
   constructor(model) {
     this._model = model;
     this.children = [];
     this._parent = null;
     this.liveUpdatesEnabled = false;
+    this._isLoading = false;
 
     // Cached normalized properties (invalidated by markDirty)
     this._cachedTransform = undefined;
@@ -75,6 +95,17 @@ export class NodeAdapter {
 
   get isReady() {
     return this._model?.IsReady?.() ?? false;
+  }
+
+  get isLoading() {
+    if (this._isLoading && this.isReady) {
+      this._isLoading = false;
+    }
+    return this._isLoading;
+  }
+
+  set isLoading(value) {
+    this._isLoading = value;
   }
 
   get _loaded() {
@@ -136,6 +167,7 @@ export class NodeAdapter {
 
   updateModel(newModel) {
     this._model = newModel;
+    this._isSearchStub = false;
     this.markDirty();
   }
 

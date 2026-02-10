@@ -89,6 +89,14 @@ export class ViewGraph {
     });
 
     this.model.on('dataChanged', () => this.syncGraph());
+
+    this.model.on('nodeUpdated', (node) => {
+      const selected = this.model.getSelectedNode();
+      if (selected && node === selected) {
+        this.selectNode(node);
+        this.zoomToNode(node);
+      }
+    });
   }
 
   _getTextureUrl(nodeData) {
@@ -414,7 +422,7 @@ export class ViewGraph {
     const parentIndex = this.graphNodes.findIndex(n => this.model.nodeKey(n) === parentKey);
 
     if (parentIndex === -1) {
-      console.warn(`View3D: Parent node ${parentNode.name} not found in graph`);
+      // Parent not in graph - this is normal for search results or unexpanded paths
       return;
     }
 
@@ -522,10 +530,12 @@ export class ViewGraph {
     if (!this.model.tree) return;
 
     // Collect expected node keys by walking the model tree respecting expansion
+    // In search mode, also traverse search ancestors to reach search matches
     const expectedKeys = new Set();
     const walkTree = (node) => {
       expectedKeys.add(this.model.nodeKey(node));
-      if (this.model.isNodeExpanded(node) && node.children) {
+      const shouldTraverse = this.model.isNodeExpanded(node) || node.isSearchAncestor;
+      if (shouldTraverse && node.children) {
         for (const child of node.children) {
           walkTree(child);
         }
@@ -579,7 +589,8 @@ export class ViewGraph {
         if (mesh) this._updateNodeLabel(mesh, node);
       }
 
-      if (this.model.isNodeExpanded(node) && node.children) {
+      const shouldTraverse = this.model.isNodeExpanded(node) || node.isSearchAncestor;
+      if (shouldTraverse && node.children) {
         for (const child of node.children) {
           reconcile(child, graphNode);
         }
@@ -595,7 +606,8 @@ export class ViewGraph {
     const buildLinks = (node) => {
       const parentKey = this.model.nodeKey(node);
       const parentIndex = keyToIndex.get(parentKey);
-      if (this.model.isNodeExpanded(node) && node.children) {
+      const shouldTraverse = this.model.isNodeExpanded(node) || node.isSearchAncestor;
+      if (shouldTraverse && node.children) {
         for (const child of node.children) {
           const childKey = this.model.nodeKey(child);
           const childIndex = keyToIndex.get(childKey);

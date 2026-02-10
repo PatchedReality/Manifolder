@@ -18,10 +18,14 @@ export class Model {
     this.selectedNode = null;
     this._pendingExpandedKeys = null;  // Map<key, parentKey> for storage restore
     this._pendingSelectedKey = null;
-    this._liveUpdateKeys = new Set();
     this.inheritedPlanetContext = null;
 
     this._dataChangedTimer = null;
+    this._loadTimeouts = new Map();
+
+    // Search state
+    this.searchActive = false;
+    this.searchTerm = '';
 
     this.callbacks = {
       treeChanged: [],
@@ -33,7 +37,9 @@ export class Model {
       dataChanged: [],
       selectionChanged: [],
       expansionChanged: [],
-      disconnected: []
+      disconnected: [],
+      searchStateChanged: [],
+      searchResultsUpdated: []
     };
 
     this._bindClientEvents();
@@ -53,8 +59,8 @@ export class Model {
       this._handleNodeDeleted(id, type, sourceParentType, sourceParentId);
     });
 
-    this.client.on('modelReady', ({ mvmfModel }) => {
-      this._upgradeStubModel(mvmfModel);
+    this.client.on('modelReady', (data) => {
+      this._onModelReady(data);
     });
 
     this.client.on('disconnected', () => {
@@ -108,11 +114,15 @@ export class Model {
     this.selectedNode = null;
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
-    this._liveUpdateKeys = new Set();
+    this._pendingLiveUpdateKeys = null;
     this.inheritedPlanetContext = inheritedPlanetContext;
 
     if (rootModel) {
-      this.tree = this._createAdapterTree(rootModel);
+      this.tree = new NodeAdapter(rootModel);
+      const childModels = this.client.enumerateChildren(rootModel);
+      if (childModels.length > 0) {
+        this.tree.children = childModels.map(c => new NodeAdapter(c));
+      }
       this._indexNode(this.tree, null);
     } else {
       this.tree = null;
@@ -121,24 +131,11 @@ export class Model {
     this._emit('treeChanged', this.tree);
   }
 
-  _createAdapterTree(mvmfModel) {
-    const adapter = new NodeAdapter(mvmfModel);
-    const childModels = this.client.enumerateChildren(mvmfModel);
-    adapter.children = childModels.map(c => new NodeAdapter(c));
-    return adapter;
-  }
-
   _indexNode(node, parent) {
     if (!node) return;
     const key = node.key;
     this.nodes.set(key, node);
     node._parent = parent;
-
-    if (parent?.liveUpdatesEnabled || this._liveUpdateKeys.has(key)) {
-      node.liveUpdatesEnabled = true;
-      this._liveUpdateKeys.add(key);
-      this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
-    }
 
     if (node.children && node.children.length > 0) {
       for (const child of node.children) {
@@ -180,13 +177,24 @@ export class Model {
 
     this._scheduleDataChanged();
 
-    if (children && this._pendingExpandedKeys) {
+    if (children) {
       for (const child of children) {
-        this._checkPendingExpansion(child);
+        if (this._pendingExpandedKeys) {
+          this._checkPendingExpansion(child);
+        }
+        this._checkPendingLiveUpdate(child);
       }
     }
 
     this._checkExpandAllDescendants(parentNode, children);
+  }
+
+  _detachChildren(node) {
+    if (!node?.children) return;
+    for (const child of node.children) {
+      this._detachChildren(child);
+      this.client.closeModel({ sID: child.type, twObjectIx: child.id });
+    }
   }
 
   _removeFromIndex(node) {
@@ -198,6 +206,12 @@ export class Model {
         this._pendingExpandedKeys = new Map();
       }
       this._pendingExpandedKeys.set(key, node._parent?.key || null);
+    }
+    if (node.liveUpdatesEnabled) {
+      if (!this._pendingLiveUpdateKeys) {
+        this._pendingLiveUpdateKeys = new Set();
+      }
+      this._pendingLiveUpdateKeys.add(key);
     }
     if (this.selectedNode?.key === key) {
       this._pendingSelectedKey = key;
@@ -219,6 +233,20 @@ export class Model {
     }
   }
 
+  // --- Node Loading ---
+
+  _openNode(node) {
+    if (!node) return;
+    // Don't pass stub models - let openModel fetch the real model from server
+    const mvmfModel = node._isSearchStub ? null : node._model;
+    this.client.openModel({ sID: node.type, twObjectIx: node.id, mvmfModel });
+    node.isLoading = true;
+    this._emit('nodeUpdated', node);
+    // TODO: Add timeout-based failure detection. If modelReady/nodeChildrenChanged
+    // doesn't fire within N seconds, emit nodeLoadFailed and clear isLoading.
+    // Old implementation used request/response with 30s timeout via _sendAction.
+  }
+
   // --- Selection ---
 
   selectNode(node) {
@@ -227,6 +255,9 @@ export class Model {
 
     this.selectedNode = node;
     this._pendingSelectedKey = null;
+    if (node) {
+      this._openNode(node);
+    }
     this._emit('selectionChanged', node, previousNode);
   }
 
@@ -239,14 +270,20 @@ export class Model {
   expandNode(node) {
     if (!node || node.isExpanded) return;
     node.isExpanded = true;
+    this._openNode(node);
     this._emit('expansionChanged', node, true);
   }
 
+
   collapseNode(node) {
     if (!node || !node.isExpanded) return;
+
     node.isExpanded = false;
     node.expandAllActive = false;
+    node.isSearchAncestor = false;
+    this._detachChildren(node);
     this._clearDescendantPendingKeys(node);
+
     this._emit('expansionChanged', node, false);
   }
 
@@ -280,15 +317,27 @@ export class Model {
     if (!keys?.length) return;
     this._pendingExpandedKeys = new Map();
 
+    // Two-pass approach: first register all pending keys, then expand found nodes.
+    // This prevents race conditions where synchronous modelReady events
+    // check for pending keys before they've been registered.
+    // Store keys (not node refs) because nodes may be replaced during expansion.
+    const keysToExpand = [];
+
     for (const item of keys) {
       const key = typeof item === 'string' ? item : item.key;
       const parentKey = typeof item === 'string' ? null : item.parent;
 
+      if (this.nodes.has(key)) {
+        keysToExpand.push(key);
+      } else {
+        this._pendingExpandedKeys.set(key, parentKey);
+      }
+    }
+
+    for (const key of keysToExpand) {
       const node = this.nodes.get(key);
       if (node) {
         this.expandNode(node);
-      } else {
-        this._pendingExpandedKeys.set(key, parentKey);
       }
     }
 
@@ -301,10 +350,39 @@ export class Model {
     if (!node || !this._pendingExpandedKeys) return;
     const key = node.key;
     if (this._pendingExpandedKeys.has(key)) {
+      const parentKey = this._pendingExpandedKeys.get(key);
       this._pendingExpandedKeys.delete(key);
-      this.expandNode(node);
+
+      // Ensure parent is attached so this node is visible
+      if (parentKey) {
+        const parentNode = this.nodes.get(parentKey);
+        if (parentNode) {
+          this._openNode(parentNode);
+        }
+      }
+
+      // Defer expansion - look up current node by key to avoid stale references
+      setTimeout(() => {
+        const currentNode = this.nodes.get(key);
+        if (currentNode) {
+          this.expandNode(currentNode);
+        }
+      }, 0);
+
       if (this._pendingExpandedKeys.size === 0) {
         this._pendingExpandedKeys = null;
+      }
+    }
+  }
+
+  _checkPendingLiveUpdate(node) {
+    if (!node || !this._pendingLiveUpdateKeys) return;
+    const key = node.key;
+    if (this._pendingLiveUpdateKeys.has(key)) {
+      this._pendingLiveUpdateKeys.delete(key);
+      this.enableLiveUpdates(node);
+      if (this._pendingLiveUpdateKeys.size === 0) {
+        this._pendingLiveUpdateKeys = null;
       }
     }
   }
@@ -371,11 +449,8 @@ export class Model {
 
     node.expandAllActive = true;
     node.isExpanded = true;
+    this._openNode(node);
     this._emit('expansionChanged', node, true);
-
-    if (node._loadFailed) {
-      this.loadNodeChildren(node);
-    }
 
     if (node.children) {
       for (const child of node.children) {
@@ -409,10 +484,16 @@ export class Model {
     // Clear all pending expanded keys that are descendants
     this._clearDescendantPendingKeys(node);
 
+    // Detach + close children of collapsed nodes
+    for (const n of toCollapse) {
+      this._detachChildren(n);
+    }
+
     // Collapse all collected nodes synchronously
     for (const n of toCollapse) {
       n.isExpanded = false;
       n.expandAllActive = false;
+      n.isSearchAncestor = false;
     }
 
     // Emit events after all state changes are complete
@@ -439,26 +520,25 @@ export class Model {
   enableLiveUpdates(node) {
     if (!node) return;
     node.liveUpdatesEnabled = true;
-    this._liveUpdateKeys.add(node.key);
-    this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+    this.client.subscribe({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
-    if (node.children) {
+    if (node.isExpanded && node.children) {
       for (const child of node.children) {
         this.enableLiveUpdates(child);
       }
     }
-    this._refreshSubtree(node);
   }
 
   disableLiveUpdates(node) {
     if (!node) return;
     node.liveUpdatesEnabled = false;
-    this._liveUpdateKeys.delete(node.key);
-    this.client.disableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+    this.client.closeModel({ sID: node.type, twObjectIx: node.id });
     this._emit('nodeUpdated', node);
     if (node.children) {
       for (const child of node.children) {
-        this.disableLiveUpdates(child);
+        if (child.liveUpdatesEnabled) {
+          this.disableLiveUpdates(child);
+        }
       }
     }
   }
@@ -467,31 +547,33 @@ export class Model {
     return node.liveUpdatesEnabled;
   }
 
-  _refreshSubtree(node) {
-    if (node._loaded) {
-      this.loadNodeChildren(node);
-    }
-    if (node.children) {
-      for (const child of node.children) {
-        this._refreshSubtree(child);
+  getLiveUpdateNodeKeys() {
+    const keys = [];
+    for (const [key, node] of this.nodes) {
+      if (node.liveUpdatesEnabled) {
+        keys.push(key);
       }
     }
-  }
-
-  getLiveUpdateNodeKeys() {
-    return Array.from(this._liveUpdateKeys);
+    return keys;
   }
 
   enableLiveUpdatesByKeys(keys) {
     if (!keys || keys.length === 0) return;
+    if (!this._pendingLiveUpdateKeys) {
+      this._pendingLiveUpdateKeys = new Set();
+    }
     for (const key of keys) {
-      this._liveUpdateKeys.add(key);
       const node = this.nodes.get(key);
       if (node) {
         node.liveUpdatesEnabled = true;
-        this.client.enableLiveUpdates({ sID: node.type, twObjectIx: node.id });
+        this.client.subscribe({ sID: node.type, twObjectIx: node.id });
         this._emit('nodeUpdated', node);
+      } else {
+        this._pendingLiveUpdateKeys.add(key);
       }
+    }
+    if (this._pendingLiveUpdateKeys.size === 0) {
+      this._pendingLiveUpdateKeys = null;
     }
   }
 
@@ -499,9 +581,6 @@ export class Model {
 
   _handleNodeInserted(mvmfModel, parentType, parentId) {
     const childKey = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
-    if (mvmfModel.IsReady && !mvmfModel.IsReady()) {
-      return;
-    }
 
     const parentNode = (parentType && parentId !== undefined)
       ? this.getNode(parentType, parentId)
@@ -534,8 +613,7 @@ export class Model {
       existingNode._parent = parentNode;
       if (parentNode.liveUpdatesEnabled && !existingNode.liveUpdatesEnabled) {
         existingNode.liveUpdatesEnabled = true;
-        this._liveUpdateKeys.add(childKey);
-        this.client.enableLiveUpdates({ sID: existingNode.type, twObjectIx: existingNode.id });
+        this.client.subscribe({ sID: existingNode.type, twObjectIx: existingNode.id });
       }
       this._emit('nodeInserted', { node: existingNode, parentNode });
       this._checkPendingExpansion(existingNode);
@@ -589,50 +667,203 @@ export class Model {
     }
   }
 
-  _upgradeStubModel(mvmfModel) {
+  _onModelReady({ mvmfModel }) {
     if (!mvmfModel) return;
     const key = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
     const adapter = this.nodes.get(key);
-    if (adapter) {
-      adapter.updateModel(mvmfModel);
-      this._emit('nodeUpdated', adapter);
-      this._scheduleDataChanged();
+    if (!adapter) return;
+
+    adapter.updateModel(mvmfModel);
+    const children = this.client.enumerateChildren(mvmfModel);
+    this.setChildren(adapter, children.map(c => new NodeAdapter(c)));
+    this._emit('nodeUpdated', adapter);
+    this._scheduleDataChanged();
+  }
+
+  // --- Search ---
+
+  setSearchActive(active, term = '') {
+    const wasActive = this.searchActive;
+    this.searchActive = active;
+    this.searchTerm = term;
+
+    if (wasActive !== active) {
+      this._emit('searchStateChanged', active, term);
     }
   }
 
-  // --- Node Loading ---
+  async search(searchText) {
+    if (!searchText || searchText.length < 2) {
+      this.clearSearch();
+      return;
+    }
 
-  async loadNodeChildren(node) {
-    if (!node?.type || node.id === undefined) return;
+    // Clear previous search flags before starting new search
+    this._clearSearchFlags();
+    this.setSearchActive(true, searchText);
 
-    node._loadFailed = false;
+    // Search local nodes in model
+    const localMatches = this._searchLocalNodes(searchText.toLowerCase());
 
-    if (node._loading) return node._loading;
+    // Search server if connected
+    let serverResults = { matches: [], paths: [] };
+    if (this.client.connected) {
+      serverResults = await this.client.searchNodes(searchText);
+    }
 
-    const key = node.key;
-    if (this.nodes.get(key) !== node) return;
+    // Check if search is still current (user may have typed more)
+    if (this.searchTerm !== searchText) return;
 
-    const loadPromise = (async () => {
-      try {
-        const childModels = await this.client.fetchChildren(
-          { sID: node.type, twObjectIx: node.id }
-        );
-        if (this.nodes.get(key) !== node) return;
-        const childAdapters = childModels.map(c => new NodeAdapter(c));
-        this.setChildren(node, childAdapters);
-      } catch (err) {
-        console.error(`Model: Failed to load children for ${key}:`, err);
-        if (this.nodes.get(key) === node) {
-          node._loadFailed = true;
-          this._emit('nodeLoadFailed', node);
-        }
-      } finally {
-        node._loading = null;
+    // Merge and dedupe results
+    const seenKeys = new Set();
+    const allMatches = [];
+
+    for (const match of serverResults.matches) {
+      const key = `${match.type}_${match.id}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        allMatches.push(match);
       }
-    })();
+    }
 
-    node._loading = loadPromise;
-    return loadPromise;
+    for (const match of localMatches) {
+      const key = `${match.type}_${match.id}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        allMatches.push(match);
+      }
+    }
+
+    const mergedResults = {
+      matches: allMatches,
+      paths: serverResults.paths || []
+    };
+
+    // Process results asynchronously
+    this._processSearchResults(mergedResults);
+  }
+
+  _searchLocalNodes(searchTerm) {
+    const matches = [];
+    for (const [key, node] of this.nodes) {
+      if (node.name && node.name.toLowerCase().includes(searchTerm)) {
+        matches.push({
+          id: node.id,
+          name: node.name,
+          type: node.type,
+          nodeType: node.nodeType
+        });
+      }
+    }
+    return matches;
+  }
+
+  _processSearchResults(results) {
+    // Sort paths by ancestorDepth descending so parents are processed before children
+    const sortedPaths = [...(results.paths || [])].sort((a, b) =>
+      (b.ancestorDepth || 0) - (a.ancestorDepth || 0)
+    );
+    const items = [
+      ...sortedPaths,
+      ...(results.matches || [])
+    ];
+
+    // Process in batches to avoid blocking UI
+    const BATCH_SIZE = 50;
+    let index = 0;
+
+    const processBatch = () => {
+      // Abort if search was cleared
+      if (!this.searchActive) return;
+
+      const batchEnd = Math.min(index + BATCH_SIZE, items.length);
+
+      for (; index < batchEnd; index++) {
+        const item = items[index];
+        const key = `${item.type}_${item.id}`;
+
+        let node = this.nodes.get(key);
+        if (!node) {
+          // Create new node
+          node = NodeAdapter.fromSearchResult(item);
+          this.nodes.set(key, node);
+
+          // Wire parent link - only if actual parent exists, don't fall back to root
+          let parentNode = null;
+          if (item.parentType && item.parentId !== undefined && item.parentId !== null) {
+            parentNode = this.getNode(item.parentType, item.parentId);
+          }
+          if (parentNode) {
+            node._parent = parentNode;
+            // Only add to children if not already there
+            if (!parentNode.children.includes(node)) {
+              parentNode.children.push(node);
+            }
+            this._emit('nodeInserted', { node, parentNode });
+          }
+        } else if (!node._parent) {
+          // Node exists but wasn't wired to parent yet - try again
+          let parentNode = null;
+          if (item.parentType && item.parentId !== undefined && item.parentId !== null) {
+            parentNode = this.getNode(item.parentType, item.parentId);
+          }
+          if (parentNode) {
+            node._parent = parentNode;
+            if (!parentNode.children.includes(node)) {
+              parentNode.children.push(node);
+            }
+            this._emit('nodeInserted', { node, parentNode });
+          }
+        }
+
+        // State on the node itself
+        const isMatch = results.matches?.some(m => m.type === item.type && m.id === item.id);
+        if (isMatch) {
+          node.isSearchMatch = true;
+          this._emit('nodeUpdated', node);
+        }
+
+        // Mark ancestors (with cycle detection)
+        const visited = new Set();
+        let parent = node._parent;
+        while (parent && !visited.has(parent.key)) {
+          visited.add(parent.key);
+          if (!parent.isSearchAncestor) {
+            parent.isSearchAncestor = true;
+            this._emit('nodeUpdated', parent);
+          }
+          parent = parent._parent;
+        }
+      }
+
+      if (index < items.length) {
+        setTimeout(processBatch, 0);
+      } else {
+        // Mark root as ancestor
+        if (this.tree && !this.tree.isSearchAncestor) {
+          this.tree.isSearchAncestor = true;
+          this._emit('nodeUpdated', this.tree);
+        }
+      }
+    };
+
+    processBatch();
+  }
+
+  _clearSearchFlags() {
+    for (const [key, node] of this.nodes) {
+      if (node.isSearchMatch || node.isSearchAncestor) {
+        node.isSearchMatch = false;
+        node.isSearchAncestor = false;
+        this._emit('nodeUpdated', node);
+      }
+    }
+  }
+
+  clearSearch() {
+    if (!this.searchActive) return;
+    this._clearSearchFlags();
+    this.setSearchActive(false);
   }
 
   // --- Context & Path Utilities ---
@@ -643,8 +874,10 @@ export class Model {
 
   getPathToNode(node) {
     const path = [];
+    const visited = new Set();
     let current = node;
-    while (current) {
+    while (current && !visited.has(current.key)) {
+      visited.add(current.key);
       path.unshift({ id: current.id, type: current.type });
       current = current._parent;
     }

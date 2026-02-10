@@ -593,7 +593,7 @@ body {
   padding: 8px;
   z-index: 1000;
   min-width: 140px;
-  max-height: 60vh;
+  max-height: 85vh;
   overflow-y: auto;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
@@ -916,6 +916,20 @@ body {
 
 .tree-node.hidden {
   display: none;
+}
+
+/* Search active mode - CSS-based visibility for performance */
+#hierarchy-tree.search-active .tree-node {
+  display: none;
+}
+
+#hierarchy-tree.search-active .tree-node.search-match,
+#hierarchy-tree.search-active .tree-node.search-ancestor {
+  display: block;
+}
+
+#hierarchy-tree.search-active .tree-node.search-ancestor > .tree-children {
+  display: block !important;
 }
 
 .tree-node.search-match > .tree-node-content {

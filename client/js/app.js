@@ -312,104 +312,43 @@ class App {
   setupAsyncSearch() {
     const searchInput = document.getElementById('hierarchy-search');
     const clearBtn = document.getElementById('hierarchy-search-clear');
-    const searchStatus = document.getElementById('search-status');
     if (!searchInput) return;
 
-    let asyncDebounceTimer;
-    let currentSearchId = 0;
-
-    const clearSearch = () => {
-      searchInput.value = '';
-      clearBtn?.classList.remove('visible');
-      if (searchStatus) searchStatus.textContent = '';
-      currentSearchId++;
-      this.hierarchy.clearSearchFilter();
-    };
+    let debounceTimer;
 
     const updateClearButton = () => {
       clearBtn?.classList.toggle('visible', !!searchInput.value);
     };
 
-    const updateSearchStatus = (unavailable) => {
-      if (!searchStatus) return;
-      searchStatus.textContent = unavailable?.length > 0 ? 'Server search unavailable' : '';
-    };
-
     searchInput.addEventListener('input', (e) => {
-      clearTimeout(asyncDebounceTimer);
+      clearTimeout(debounceTimer);
       updateClearButton();
 
       const searchText = e.target.value.trim();
 
-      if (!searchText || searchText.length < 2) {
-        if (!searchText) {
-          currentSearchId++;
-          this.hierarchy.clearSearchFilter();
-          updateSearchStatus([]);
-        }
+      if (!searchText) {
+        this.model.clearSearch();
         return;
       }
 
-      asyncDebounceTimer = setTimeout(async () => {
-        const searchId = ++currentSearchId;
-
-        // Do local search on already-loaded nodes
-        const localMatches = this.hierarchy.searchLocalNodes(searchText.toLowerCase());
-
-        // Do server search if connected
-        let serverResults = { matches: [], paths: [], unavailable: [] };
-        if (this.client.connected) {
-          serverResults = await this.client.searchNodes(searchText);
-        }
-
-        // Check if this search is still current (newer search may have started)
-        if (searchId !== currentSearchId) return;
-
-        updateSearchStatus(serverResults.unavailable);
-
-        // Merge and dedupe results
-        const seenKeys = new Set();
-        const mergedMatches = [];
-
-        // Add server matches first
-        for (const match of serverResults.matches) {
-          const key = `${match.type}_${match.id}`;
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            mergedMatches.push(match);
-          }
-        }
-
-        // Add local matches
-        for (const match of localMatches) {
-          const key = `${match.type}_${match.id}`;
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            mergedMatches.push(match);
-          }
-        }
-
-        const mergedResults = {
-          matches: mergedMatches,
-          paths: serverResults.paths
-        };
-
-        // Final check before applying results
-        if (searchId !== currentSearchId) return;
-
-        // Always apply filter - with no results, this hides everything
-        await this.hierarchy.revealSearchResults(mergedResults, (node) => this.model.loadNodeChildren(node));
+      // Debounce search
+      debounceTimer = setTimeout(() => {
+        this.model.search(searchText);
       }, 300);
     });
 
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        clearSearch();
+        searchInput.value = '';
+        updateClearButton();
+        this.model.clearSearch();
       }
     });
 
     clearBtn?.addEventListener('click', () => {
-      clearSearch();
+      searchInput.value = '';
+      updateClearButton();
+      this.model.clearSearch();
       searchInput.focus();
     });
   }
@@ -659,11 +598,6 @@ class App {
           const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
 
           this.model.expandNode(root);
-          if (root.children) {
-            for (const child of root.children) {
-              this.model.expandNode(child);
-            }
-          }
           if (hasSavedExpanded) {
             this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
           }
@@ -694,7 +628,7 @@ class App {
 
     this._restoringStateHandler = () => {
       if (!this._restoringState) return;
-      if (this.model._pendingExpandedKeys || this.model._pendingSelectedKey) return;
+      if (this.model._pendingSelectedKey) return;
 
       this._restoringState = false;
       this.model.off('dataChanged', this._restoringStateHandler);
