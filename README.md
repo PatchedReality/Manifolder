@@ -47,11 +47,10 @@ A tree view displaying the node hierarchy:
 - **Selection**: Click to select and inspect a node
 - **Context Menu**: Right-click (or long-press on mobile) for options:
   - **Expand Children**: Expands only the immediate children of the selected node
-  - **Expand All**: Recursively expands the selected node and all currently loaded descendants (use multiple times to truly fully expand)
   - **Collapse All**: Recursively collapses the selected node and all descendants
-  - **Enable/Disable Live Updates**: Toggle real-time updates from the server for this node (disabled by default for performance)
+  - **Enable/Disable Live Updates**: Toggle real-time updates from the server for this node and expanded children (disabled by default)
 
-> **Caution**: Using "Expand All" on nodes with extremely deep hierarchies (e.g., a Galaxy or Continent with hundreds of descendants) can cause the tool to freeze or become unresponsive. Use "Expand Children" to incrementally explore large hierarchies.
+> **Caution**: Live updates are disabled by default to reduce load on the server - ONLY USE for your own fabrics you are actively editing.
 
 Node icons are color-coded by type (celestial bodies, terrestrial regions, etc.).
 
