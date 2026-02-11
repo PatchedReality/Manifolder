@@ -150,7 +150,14 @@ class App {
     if (!shareBtn) return;
 
     shareBtn.addEventListener('click', async () => {
-      const url = this.bookmarkManager.encodeStateToUrl();
+      let url;
+      try {
+        url = this.bookmarkManager.encodeStateToUrl();
+      } catch (e) {
+        console.error('Failed to encode state for sharing:', e);
+        this.layout.setStatus('Failed to create share link', 'disconnected');
+        return;
+      }
 
       try {
         await navigator.clipboard.writeText(url);

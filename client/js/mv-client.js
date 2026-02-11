@@ -208,7 +208,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   subscribe({ sID, twObjectIx }) {
     if (!this.#m_pLnG) return;
     const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
-    this._safeAttach(mvmfModel, true);
+    this._safeAttach(mvmfModel);
   }
 
   closeModel({ sID, twObjectIx }) {
@@ -400,18 +400,10 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     return classIds[wClass];
   }
 
-  _safeAttach(obj, bSubscribe = false) {
-    if (!obj) return false;
-    if (this.#attachedModels.has(obj)) {
-      if (bSubscribe) {
-        obj.Detach(this);
-        obj.Attach(this, true);
-      }
-      return false;
-    }
+  _safeAttach(obj) {
+    if (!obj || this.#attachedModels.has(obj)) return;
     this.#attachedModels.add(obj);
-    obj.Attach(this, bSubscribe);
-    return true;
+    obj.Attach(this);
   }
 
   _safeDetach(obj) {

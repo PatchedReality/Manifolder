@@ -107,12 +107,19 @@ export class BookmarkManager {
       ? path.map(n => `${BookmarkManager.TYPE_CODES[n.type] || 'X'}${n.id}`).join(',')
       : null;
 
-    // Compact expanded: ["RMCObject_1",...] -> "C1,T2"
+    // Compact expanded: [{key:"RMCObject_1",parent:"RMCObject_0"},...] -> "C1:R0,T2:C1"
     const expanded = full.hierarchy?.expandedNodeIds;
     const compactExpanded = expanded?.length > 0
       ? expanded.map(s => {
-          const [type, id] = s.split('_');
-          return `${BookmarkManager.TYPE_CODES[type] || 'X'}${id}`;
+          const keyStr = typeof s === 'string' ? s : s.key;
+          const parentStr = typeof s === 'string' ? null : s.parent;
+          const [type, id] = keyStr.split('_');
+          const nodeCode = `${BookmarkManager.TYPE_CODES[type] || 'X'}${id}`;
+          if (parentStr) {
+            const [pType, pId] = parentStr.split('_');
+            return `${nodeCode}:${BookmarkManager.TYPE_CODES[pType] || 'X'}${pId}`;
+          }
+          return nodeCode;
         }).join(',')
       : null;
 
@@ -175,13 +182,22 @@ export class BookmarkManager {
         });
       }
 
-      // Decode expanded: "C1,T2" -> ["RMCObject_1","RMTObject_2"]
+      // Decode expanded: "C1,T2" or "C1:R0,T2:C1" -> [{key,parent},...]
       let expandedNodeIds = [];
       if (minimal.e) {
         expandedNodeIds = minimal.e.split(',').map(s => {
-          const code = s[0];
-          const id = s.slice(1);
-          return `${BookmarkManager.CODE_TYPES[code] || 'RMCObject'}_${id}`;
+          const parts = s.split(':');
+          const nodeCode = parts[0][0];
+          const nodeId = parts[0].slice(1);
+          const key = `${BookmarkManager.CODE_TYPES[nodeCode] || 'RMCObject'}_${nodeId}`;
+
+          let parent = null;
+          if (parts[1]) {
+            const parentCode = parts[1][0];
+            const parentId = parts[1].slice(1);
+            parent = `${BookmarkManager.CODE_TYPES[parentCode] || 'RMCObject'}_${parentId}`;
+          }
+          return { key, parent };
         });
       }
 

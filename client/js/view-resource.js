@@ -167,6 +167,9 @@ export class ViewResource {
     // Three.js Sky for daytime atmospheric scattering
     this.sky = new Sky();
     this.sky.scale.setScalar(450000);
+    this.sky.material.depthWrite = false;
+    this.sky.material.depthTest = false;
+    this.sky.renderOrder = -1000;
     this.scene.add(this.sky);
 
     // Sky parameters - adjusted dynamically in updateSunLighting based on elevation
@@ -504,10 +507,12 @@ export class ViewResource {
     this.updateRotators(delta);
 
     this.controls.update();
+    this.sky.position.copy(this.camera.position);
     this.skyDome.position.copy(this.camera.position);
     if (this.starfield) {
       this.starfield.position.copy(this.camera.position);
     }
+
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -589,7 +594,6 @@ export class ViewResource {
         return;
       }
 
-      this._precomputedScale = false;
       this.centerContentAtOrigin();
       this.fitCameraToContent();
       this.applyWorldOrientation();
