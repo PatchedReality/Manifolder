@@ -21,7 +21,6 @@ export class Model {
     this.inheritedPlanetContext = null;
 
     this._dataChangedTimer = null;
-    this._loadTimeouts = new Map();
 
     // Search state
     this.searchActive = false;
@@ -242,9 +241,6 @@ export class Model {
     this.client.openModel({ sID: node.type, twObjectIx: node.id, mvmfModel });
     node.isLoading = true;
     this._emit('nodeUpdated', node);
-    // TODO: Add timeout-based failure detection. If modelReady/nodeChildrenChanged
-    // doesn't fire within N seconds, emit nodeLoadFailed and clear isLoading.
-    // Old implementation used request/response with 30s timeout via _sendAction.
   }
 
   // --- Selection ---

@@ -37,8 +37,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   #sceneWClass;
   #sceneObjectIx;
 
-  #pendingInserts = new Map();
-  #pendingModelOpen = new Map();
   #searchableRMCObjectIndices = [];
   #searchableRMTObjectIndices = [];
   #attachedModels = new Set();
@@ -112,8 +110,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
     this.#searchableRMCObjectIndices = [];
     this.#searchableRMTObjectIndices = [];
-    this.#pendingInserts.clear();
-    this.#pendingModelOpen.clear();
     this.#attachedModels.clear();
 
     this.ReadyState(this.eSTATE.NOTREADY);
@@ -177,30 +173,15 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   openModel({ sID, twObjectIx, mvmfModel: providedModel }) {
-    if (!this.#m_pLnG) {
-      this.#pendingModelOpen.set(`${sID}_${twObjectIx}`, {
-        child: null,
-        parentType: sID,
-        parentId: twObjectIx
-      });
-      return;
-    }
-    const key = `${sID}_${twObjectIx}`;
-    // Use provided model if available, otherwise look up via Model_Open
+    if (!this.#m_pLnG) return;
+
     const mvmfModel = providedModel || this.#m_pLnG.Model_Open(sID, twObjectIx);
 
     if (this.#attachedModels.has(mvmfModel)) {
-      // Already attached - emit modelReady immediately if ready
       if (mvmfModel.IsReady()) {
         this._emit('modelReady', { mvmfModel });
       }
     } else {
-      // New attachment - add to pending BEFORE attaching (onReadyState may fire sync)
-      this.#pendingModelOpen.set(key, {
-        child: mvmfModel,
-        parentType: sID,
-        parentId: twObjectIx
-      });
       this._safeAttach(mvmfModel);
     }
   }
@@ -212,8 +193,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   }
 
   closeModel({ sID, twObjectIx }) {
-    const key = `${sID}_${twObjectIx}`;
-    this.#pendingModelOpen.delete(key);
     if (this.#m_pLnG) {
       const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
       this._safeDetach(mvmfModel);
@@ -375,17 +354,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
   _handleModelReadyState(model) {
     if (!model.IsReady()) return;
 
-    const key = `${model.sID}_${model.twObjectIx}`;
-
-    const pendingInsert = this.#pendingInserts.get(key);
-    if (pendingInsert) {
-      this.#pendingInserts.delete(key);
-      this._emit('nodeInserted', pendingInsert);
-    }
-
-    const pendingOpen = this.#pendingModelOpen.get(key);
-    if (pendingOpen) {
-      this.#pendingModelOpen.delete(key);
+    if (this.#attachedModels.has(model)) {
       this._emit('modelReady', { mvmfModel: model });
     }
   }

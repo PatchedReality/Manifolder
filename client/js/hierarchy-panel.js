@@ -581,7 +581,7 @@ export class HierarchyPanel {
       if (data) {
         if (this.model.isLiveUpdateEnabled(data)) {
           this.model.disableLiveUpdates(data);
-        } else {
+        } else if (confirm('Are you sure? This should only be performed on fabrics you own.')) {
           this.model.enableLiveUpdates(data);
         }
       }
