@@ -91,11 +91,11 @@ export class BookmarkManager {
 
   // All filter types in order (index = compact code)
   static FILTER_TYPES = [
-    'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'Sector', 'Nebula',
-    'StarCluster', 'BlackHole', 'StarSystem', 'Star', 'PlanetSystem', 'Planet',
+    'Universe', 'Supercluster', 'GalaxyCluster', 'Galaxy', 'BlackHole', 'Nebula',
+    'StarCluster', 'Constellation', 'StarSystem', 'Star', 'PlanetSystem', 'Planet',
     'Moon', 'Debris', 'Satellite', 'Transport', 'Surface', 'Root', 'Water',
     'Land', 'Country', 'Territory', 'State', 'County', 'City', 'Community',
-    'Parcel', 'Physical'
+    'Sector', 'Parcel', 'Physical'
   ];
 
   encodeStateToUrl() {

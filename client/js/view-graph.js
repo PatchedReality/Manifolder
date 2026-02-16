@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { NODE_COLORS } from '../shared/node-types.js';
+import { resolveResourceUrl } from './node-helpers.js';
 
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
@@ -107,7 +108,7 @@ export class ViewGraph {
       if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
           lower.endsWith('.png') || lower.endsWith('.gif') ||
           lower.endsWith('.webp') || lower.endsWith('.bmp')) {
-        return ref;
+        return resolveResourceUrl(ref) || ref;
       }
     }
     return null;
@@ -522,8 +523,9 @@ export class ViewGraph {
     });
     
     this.graphLinks = newLinks;
-    
+
     this.updateLinkLinesGeometry();
+    this.wakePhysics();
   }
 
   syncGraph() {
@@ -635,14 +637,24 @@ export class ViewGraph {
     if (this.graphLinks.length > 0) {
       const lineGeometry = new THREE.BufferGeometry();
       const positions = new Float32Array(this.graphLinks.length * 2 * 3);
+
+      // Populate with current positions so lines are visible even if physics is settled
+      let ptr = 0;
+      for (const link of this.graphLinks) {
+        const n1 = this.graphNodes[link.source];
+        const n2 = this.graphNodes[link.target];
+        positions[ptr++] = n1.x; positions[ptr++] = n1.y; positions[ptr++] = n1.z;
+        positions[ptr++] = n2.x; positions[ptr++] = n2.y; positions[ptr++] = n2.z;
+      }
+
       lineGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      
-      const lineMaterial = new THREE.LineBasicMaterial({ 
-        color: 0x888888, 
-        transparent: true, 
-        opacity: 0.8 
+
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color: 0x888888,
+        transparent: true,
+        opacity: 0.8
       });
-      
+
       this.linkLines = new THREE.LineSegments(lineGeometry, lineMaterial);
       this.linkLines.frustumCulled = false;
       this.scene.add(this.linkLines);

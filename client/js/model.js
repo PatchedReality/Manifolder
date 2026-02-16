@@ -352,7 +352,7 @@ export class Model {
       // Ensure parent is attached so this node is visible
       if (parentKey) {
         const parentNode = this.nodes.get(parentKey);
-        if (parentNode) {
+        if (parentNode && !parentNode.isReady) {
           this._openNode(parentNode);
         }
       }

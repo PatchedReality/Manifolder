@@ -13,6 +13,7 @@ import {
   TERRESTRIAL_NAMES,
   PHYSICAL_NAMES
 } from '../shared/node-types.js';
+import { resolveResourceUrl } from './node-helpers.js';
 
 // Re-export NODE_TYPES for consumers
 export { NODE_TYPES };
@@ -51,7 +52,7 @@ function getSurfaceTexture(node) {
   const nodeRef = node.properties?.pResource?.sReference;
   if (isImageUrl(nodeRef)) {
     return {
-      url: nodeRef,
+      url: resolveResourceUrl(nodeRef) || nodeRef,
       rotation: { x: 0, y: 0, z: 0, w: 1 },
       spinData: getSpinData(node)
     };
@@ -64,7 +65,7 @@ function getSurfaceTexture(node) {
         const ref = child.properties?.pResource?.sReference;
         if (isImageUrl(ref)) {
           return {
-            url: ref,
+            url: resolveResourceUrl(ref) || ref,
             rotation: child.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 },
             spinData: getSpinData(child)
           };
@@ -123,6 +124,7 @@ export class ViewBounds {
     this.model.on('selectionChanged', (node) => {
       if (node) {
         this.selectNode(node.id, node.type);
+        this._pendingZoomNode = node;
         this.zoomToNode(node);
       }
     });
@@ -145,7 +147,6 @@ export class ViewBounds {
       const selected = this.model.getSelectedNode();
       if (selected && node === selected && node._worldPos) {
         this.selectNode(node.id, node.type);
-        this.zoomToNode(node);
       }
     });
   }
@@ -527,10 +528,9 @@ export class ViewBounds {
 
         nodeCount++;
 
-        // Check position + half bounds for max extent
-        const extentX = Math.abs(pos.x) + (bound.x || 0) / 2;
-        const extentY = Math.abs(pos.y) + (bound.y || 0) / 2;
-        const extentZ = Math.abs(pos.z) + (bound.z || 0) / 2;
+        const extentX = Math.abs(pos.x) + (bound.x || 0);
+        const extentY = Math.abs(pos.y) + (bound.y || 0);
+        const extentZ = Math.abs(pos.z) + (bound.z || 0);
 
         maxExtent = Math.max(maxExtent, extentX, extentY, extentZ);
       }
@@ -944,8 +944,9 @@ export class ViewBounds {
       if (node && node._worldPos) {
         const bound = this.getEffectiveBound(node);
         const posY = node._worldPos.y * SCALE;
-        const halfY = ((bound.y || bound.x || 1) / 2) * SCALE;
-        const bottomY = posY - halfY;
+        const isCelestial = this.isCelestialNode(node);
+        const he = this.computeHalfExtents(node, bound, SCALE);
+        const bottomY = isCelestial ? posY - he.y : posY;
         if (bottomY < minY) minY = bottomY;
       }
     });
@@ -1023,13 +1024,14 @@ export class ViewBounds {
         const originalSize = this.getNodeBoundSize(node);
         const sizeRatio = originalSize > 0.001 ? scaledSize / originalSize : 1;
 
+        const he = this.computeHalfExtents(node, bound, sizeRatio);
         scaledData = {
           x: scaledPos.x,
           y: scaledPos.y,
           z: scaledPos.z,
-          halfX: (bound.x || 1) / 2 * sizeRatio,
-          halfY: (bound.y || bound.x || 1) / 2 * sizeRatio,
-          halfZ: (bound.z || bound.x || 1) / 2 * sizeRatio
+          halfX: he.x,
+          halfY: he.y,
+          halfZ: he.z
         };
       }
     } else if (!isCelestial) {
@@ -1048,13 +1050,14 @@ export class ViewBounds {
         const relY = worldPos.y - celestialParent._worldPos.y;
         const relZ = worldPos.z - celestialParent._worldPos.z;
 
+        const he = this.computeHalfExtents(node, bound, parentScale);
         scaledData = {
           x: parentScaledPos.x + relX * parentScale,
           y: parentScaledPos.y + relY * parentScale,
           z: parentScaledPos.z + relZ * parentScale,
-          halfX: (bound.x || 1) / 2 * parentScale,
-          halfY: (bound.y || bound.x || 1) / 2 * parentScale,
-          halfZ: (bound.z || bound.x || 1) / 2 * parentScale
+          halfX: he.x,
+          halfY: he.y,
+          halfZ: he.z
         };
       }
       // else: fall through to linear scaling (no celestial context)
@@ -1100,15 +1103,15 @@ export class ViewBounds {
         worldPos.y * SCALE,
         worldPos.z * SCALE
       );
-      halfX = (bound.x || 100000) / 2 * SCALE;
-      halfY = (bound.y || bound.x || 100000) / 2 * SCALE;
-      halfZ = (bound.z || bound.x || 100000) / 2 * SCALE;
+      const he = this.computeHalfExtents(node, bound, SCALE, 100000);
+      halfX = he.x;
+      halfY = he.y;
+      halfZ = he.z;
     }
 
     // Get color based on nodeType (set by server from bType), fallback to type
     const typeName = this.getDisplayType(node);
     const color = NODE_COLORS[typeName] || DEFAULT_COLOR;
-
     const isCelestial = this.isCelestialNode(node);
     let geometry, mesh, outline;
 
@@ -1204,7 +1207,7 @@ export class ViewBounds {
       this.scene.add(outline);
     } else {
       // Create a 3D box for non-celestial nodes
-      // For terrestrial objects, Y represents the bottom of the bounding box, so offset up by halfY
+      // Y offset positions box bottom at world position
       center.y += halfY;
       geometry = new THREE.BoxGeometry(halfX * 2, halfY * 2, halfZ * 2);
       const material = new THREE.MeshBasicMaterial({
@@ -1362,6 +1365,10 @@ export class ViewBounds {
       }
       this.calculateDynamicScale();
       this.rebuildVisibleNodes();
+      if (this._pendingZoomNode) {
+        this.zoomToNode(this._pendingZoomNode);
+        this._pendingZoomNode = null;
+      }
     }, 250);
   }
 
@@ -1422,9 +1429,10 @@ export class ViewBounds {
         worldPos.y * SCALE,
         worldPos.z * SCALE
       );
-      boxWidth = (bound.x || 1) * SCALE;
-      boxHeight = (bound.y || bound.x || 1) * SCALE;
-      boxDepth = (bound.z || bound.x || 1) * SCALE;
+      const he = this.computeHalfExtents(targetNode, bound, SCALE);
+      boxWidth = he.x * 2;
+      boxHeight = he.y * 2;
+      boxDepth = he.z * 2;
     }
 
     // Calculate distance to fit box in view at 80% fill
@@ -1487,16 +1495,14 @@ export class ViewBounds {
           const py = node._worldPos.y * SCALE;
           const pz = node._worldPos.z * SCALE;
           const bound = this.getEffectiveBound(node);
-          const hx = (bound.x || 1) / 2 * SCALE;
-          const hy = (bound.y || bound.x || 1) / 2 * SCALE;
-          const hz = (bound.z || bound.x || 1) / 2 * SCALE;
+          const he = this.computeHalfExtents(node, bound, SCALE);
 
-          minX = Math.min(minX, px - hx);
-          minY = Math.min(minY, py - hy);
-          minZ = Math.min(minZ, pz - hz);
-          maxX = Math.max(maxX, px + hx);
-          maxY = Math.max(maxY, py + hy);
-          maxZ = Math.max(maxZ, pz + hz);
+          minX = Math.min(minX, px - he.x);
+          minY = Math.min(minY, py - he.y);
+          minZ = Math.min(minZ, pz - he.z);
+          maxX = Math.max(maxX, px + he.x);
+          maxY = Math.max(maxY, py + he.y);
+          maxZ = Math.max(maxZ, pz + he.z);
           count++;
         }
       }
@@ -1645,6 +1651,18 @@ export class ViewBounds {
     return Math.max(bound.x || 1, bound.y || 1, bound.z || 1);
   }
 
+  // X/Z bounds are half-extents (radius). Y is full height for terrestrial, half-extent for celestial.
+  computeHalfExtents(node, bound, scaleFactor, fallback = 1) {
+    const isCelestial = this.isCelestialNode(node);
+    return {
+      x: (bound.x || fallback) * scaleFactor,
+      y: isCelestial
+        ? (bound.y || bound.x || fallback) * scaleFactor
+        : (bound.y || bound.x || fallback) / 2 * scaleFactor,
+      z: (bound.z || bound.x || fallback) * scaleFactor
+    };
+  }
+
   getEffectiveBound(node) {
     const bound = node._bound;
 
@@ -1660,9 +1678,9 @@ export class ViewBounds {
     }
 
     return {
-      x: result.halfX * 2,
-      y: result.halfY * 2,
-      z: result.halfZ * 2
+      x: result.halfX,
+      y: result.halfY,
+      z: result.halfZ
     };
   }
 
@@ -1708,14 +1726,14 @@ export class ViewBounds {
         relY = pos.y - parentPos.y;
         relZ = pos.z - parentPos.z;
         const maxDim = Math.max(childBound.x || 0, childBound.y || 0, childBound.z || 0);
-        childRadius = (maxDim || 1) / 2 * scale;
+        childRadius = (maxDim || 1) * scale;
       } else {
         // World space - use positions directly
         relX = child._worldPos.x - parentPos.x;
         relY = child._worldPos.y - parentPos.y;
         relZ = child._worldPos.z - parentPos.z;
         const maxDim = Math.max(childBound.x || 0, childBound.y || 0, childBound.z || 0);
-        childRadius = maxDim / 2;
+        childRadius = maxDim;
       }
 
       maxExtentX = Math.max(maxExtentX, Math.abs(relX) + childRadius);
@@ -1733,6 +1751,7 @@ export class ViewBounds {
   calculateLogarithmicPosition(node, focusNode) {
     const focusPos = focusNode._worldPos;
     const nodePos = node._worldPos;
+    if (!focusPos || !nodePos) return { x: 0, y: 0, z: 0 };
 
     // Distance vector from focus to node
     const dx = nodePos.x - focusPos.x;
@@ -1787,6 +1806,7 @@ export class ViewBounds {
     // Don't cull nodes at the same position (likely parent/child containers)
     const focusPos = focusNode._worldPos;
     const nodePos = node._worldPos;
+    if (!focusPos || !nodePos) return false;
     const dx = nodePos.x - focusPos.x;
     const dy = nodePos.y - focusPos.y;
     const dz = nodePos.z - focusPos.z;

@@ -1406,11 +1406,9 @@ export class ViewResource {
     const bounds = new THREE.Box3();
 
     if (node.bound && node.bound.x != null && node.bound.y != null && node.bound.z != null) {
-      const halfX = node.bound.x / 2;
-      const halfZ = node.bound.z / 2;
       const localBox = new THREE.Box3(
-        new THREE.Vector3(-halfX, 0, -halfZ),
-        new THREE.Vector3(halfX, node.bound.y, halfZ)
+        new THREE.Vector3(-node.bound.x, 0, -node.bound.z),
+        new THREE.Vector3(node.bound.x, node.bound.y, node.bound.z)
       );
       const corners = [
         new THREE.Vector3(localBox.min.x, localBox.min.y, localBox.min.z),
@@ -1935,7 +1933,7 @@ export class ViewResource {
     const group = new THREE.Group();
     group.name = `bounds-${node.name || 'node'}`;
 
-    const geometry = new THREE.BoxGeometry(bound.x, bound.y, bound.z);
+    const geometry = new THREE.BoxGeometry(bound.x * 2, bound.y, bound.z * 2);
     const edges = new THREE.EdgesGeometry(geometry);
     const material = new THREE.LineBasicMaterial({ color: color });
     const wireframe = new THREE.LineSegments(edges, material);

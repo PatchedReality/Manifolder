@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
-    "watch": "node scripts/build.js --watch",
-    "inspect": "node scripts/inspect-msf.js"
+    "watch": "node scripts/build.js --watch"
   },
   "dependencies": {
     "socket.io-client": "^4.8.3",

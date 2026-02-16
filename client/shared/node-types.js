@@ -14,10 +14,10 @@ export const CELESTIAL_TYPE_MAP = {
   2: 'Supercluster',
   3: 'GalaxyCluster',
   4: 'Galaxy',
-  5: 'Sector',
+  5: 'BlackHole',
   6: 'Nebula',
   7: 'StarCluster',
-  8: 'BlackHole',
+  8: 'Constellation',
   9: 'StarSystem',
   10: 'Star',
   11: 'PlanetSystem',
@@ -30,7 +30,7 @@ export const CELESTIAL_TYPE_MAP = {
 };
 
 // Terrestrial types (used by RMTObject - terrains)
-// Order: bType 1-10
+// Order: bType 1-11
 export const TERRESTRIAL_TYPE_MAP = {
   1: 'Root',
   2: 'Water',
@@ -41,7 +41,8 @@ export const TERRESTRIAL_TYPE_MAP = {
   7: 'County',
   8: 'City',
   9: 'Community',
-  10: 'Parcel'
+  10: 'Sector',
+  11: 'Parcel'
 };
 
 // Physical type (used by RMPObject - physical objects)
@@ -64,10 +65,10 @@ export const NODE_TYPES = [
   { name: 'Supercluster', color: 0xc0c0ff, cssVar: '--node-supercluster', category: 'celestial' },
   { name: 'GalaxyCluster', color: 0xa0a0ff, cssVar: '--node-galaxycluster', category: 'celestial' },
   { name: 'Galaxy', color: 0x8080ff, cssVar: '--node-galaxy', category: 'celestial' },
-  { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector', category: 'celestial' },
+  { name: 'BlackHole', color: 0x4a0080, cssVar: '--node-blackhole', category: 'celestial' },
   { name: 'Nebula', color: 0xff80ff, cssVar: '--node-nebula', category: 'celestial' },
   { name: 'StarCluster', color: 0xffff80, cssVar: '--node-starcluster', category: 'celestial' },
-  { name: 'BlackHole', color: 0x4a0080, cssVar: '--node-blackhole', category: 'celestial' },
+  { name: 'Constellation', color: 0x98fb98, cssVar: '--node-constellation', category: 'celestial' },
   { name: 'StarSystem', color: 0xffcc00, cssVar: '--node-starsystem', category: 'celestial' },
   { name: 'Star', color: 0xffff00, cssVar: '--node-star', category: 'celestial' },
   { name: 'PlanetSystem', color: 0x88ff88, cssVar: '--node-planetsystem', category: 'celestial' },
@@ -87,6 +88,7 @@ export const NODE_TYPES = [
   { name: 'County', color: 0x87ceeb, cssVar: '--node-county', category: 'terrestrial' },
   { name: 'City', color: 0xf08080, cssVar: '--node-city', category: 'terrestrial' },
   { name: 'Community', color: 0xdda0dd, cssVar: '--node-community', category: 'terrestrial' },
+  { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector', category: 'terrestrial' },
   { name: 'Parcel', color: 0xffaa44, cssVar: '--node-parcel', category: 'terrestrial' },
   // Physical type
   { name: 'Physical', color: 0xff8c42, cssVar: '--node-physical', category: 'physical' }
