@@ -14,7 +14,7 @@ require ('@metaversalcorp/mvrest');
 require ('@metaversalcorp/mvio');
 */
 
-MV.MVRP.Map = MV.Library ('MVRP_Map', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Map', '0.23.11');
+MV.MVRP.Map = MV.Library ('MVRP_Map', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal RP1 Map', '0.23.13');
 
 MV.MVRP.Map.Class.RMCOMMON_TYPE = class extends MV.MVMF.Class.BASE
 {
@@ -785,7 +785,8 @@ MV.MVRP.Map.SB_RMCOBJECT.apAction =
                            ({
                               twRMCObjectIx        : MV.MVSB.MAP.FIELD.TWORD8,
                               abReserved_A         : MV.MVSB.MAP.FIELD.PAD (8),
-                              pTransform           : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_SB.MAP
+                              pTransform           : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_SB.MAP,
+                              pCoord               : MV.MVRP.Class.DCOORD.MAP
                            })
                         ),
 
@@ -921,7 +922,7 @@ MV.MVRP.Map.SB_RMTOBJECT.apAction =
                               twRMTObjectIx                    : MV.MVSB.MAP.FIELD.TWORD8,
                               abReserved_A                     : MV.MVSB.MAP.FIELD.PAD (8),
                               pTransform                       : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_SB.MAP,
-                              pCoord                           : MV.MVRP.Class.DCOORD.MAP,
+                              pCoord                           : MV.MVRP.Class.DCOORD.MAP
                            })
                         ),
 
@@ -1661,7 +1662,7 @@ MV.MVRP.Map.Class.DCOORD_IO = class extends MV.MVRP.Class.DCOORD
       pRequest_Out.bCoord   = pRequest_In.pCoord.bCoord;
       pRequest_Out.dA       = pRequest_In.pCoord.dA;
       pRequest_Out.dB       = pRequest_In.pCoord.dB;
-      pRequest_Out.dC       = pRequest_In.pCoord.dB;
+      pRequest_Out.dC       = pRequest_In.pCoord.dC;
    };
 }
 
@@ -1724,11 +1725,10 @@ MV.MVRP.Map.Class.RMTOBJECT_PROPERTIES_IO = class extends MV.MVRP.Map.Class.RMTO
 
    static Convert (pRequest_Out, pRequest_In)
    {
-      pRequest_Out.Properties_fMass         = pRequest_In.pProperties.fMass;
-      pRequest_Out.Properties_fGravity      = pRequest_In.pProperties.fGravity;
-      pRequest_Out.Properties_fColor        = pRequest_In.pProperties.fColor;
-      pRequest_Out.Properties_fBrightness   = pRequest_In.pProperties.fBrightness;
-      pRequest_Out.Properties_fReflectivity = pRequest_In.pProperties.fReflectivity;
+      pRequest_Out.Properties_bLockToGround = pRequest_In.pProperties.bLockToGround;
+      pRequest_Out.Properties_bYouth        = pRequest_In.pProperties.bYouth;
+      pRequest_Out.Properties_bAdult        = pRequest_In.pProperties.bAdult;
+      pRequest_Out.Properties_bAvatar       = pRequest_In.pProperties.bAvatar;
    }
 }
 
@@ -1906,7 +1906,8 @@ MV.MVRP.Map.IO_RMROOT.apAction =
                                        pResource               : MV.MVRP.Map.Class.RMCOMMON_RESOURCE_IO.MAP,
                                        pTransform              : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_IO.MAP,
                                        pBound                  : MV.MVRP.Map.Class.RMCOMMON_BOUND_IO.MAP,
-                                       pProperties             : MV.MVRP.Map.Class.RMTOBJECT_PROPERTIES_IO.MAP
+                                       pProperties             : MV.MVRP.Map.Class.RMTOBJECT_PROPERTIES_IO.MAP,
+                                       pCoord                  : MV.MVRP.Map.Class.DCOORD_IO.MAP
                                     },
                                     function (pRequest_Out, pRequest_In)
                                     {
@@ -1919,6 +1920,7 @@ MV.MVRP.Map.IO_RMROOT.apAction =
                                        MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_IO.Convert   (pRequest_Out, pRequest_In);
                                        MV.MVRP.Map.Class.RMCOMMON_BOUND_IO.Convert       (pRequest_Out, pRequest_In);
                                        MV.MVRP.Map.Class.RMTOBJECT_PROPERTIES_IO.Convert (pRequest_Out, pRequest_In);
+                                       MV.MVRP.Map.Class.DCOORD_IO.Convert               (pRequest_Out, pRequest_In);
                                     }
                                  ),
 
@@ -2257,13 +2259,15 @@ MV.MVRP.Map.IO_RMCOBJECT.apAction =
                                     "RMCObject:transform",
                                     {
                                        twRMCObjectIx           : 0,
-                                       pTransform              : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_IO.MAP
+                                       pTransform              : MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_IO.MAP,
+                                       pCoord                  : MV.MVRP.Map.Class.DCOORD_IO.MAP
                                     },
                                     function (pRequest_Out, pRequest_In)
                                     {
                                        pRequest_Out.twRMCObjectIx = pRequest_In.twRMCObjectIx;
 
                                        MV.MVRP.Map.Class.RMCOMMON_TRANSFORM_IO.Convert   (pRequest_Out, pRequest_In);
+                                       MV.MVRP.Map.Class.DCOORD_IO.Convert               (pRequest_Out, pRequest_In);
                                     }
                                  ),
 

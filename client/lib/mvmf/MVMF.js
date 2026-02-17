@@ -36,7 +36,7 @@ const MV = new class
 }
 ();
 
-MV.MVMF = MV.Library ('MVMF', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal Model Foundation', '0.23.30');
+MV.MVMF = MV.Library ('MVMF', 'Copyright 2014-2024 Metaversal Corporation. All rights reserved.', 'Metaversal Model Foundation', '0.23.31');
 
 MV.MVMF.Const.BANK_NULL        = 0;
 MV.MVMF.Const.OBJECTIX_NULL    = 0;
@@ -2576,6 +2576,9 @@ MV.MVMF.NOTIFICATION = class
       {
          while ((pListener = this.#cpListener.Enum_Next (pEnum)) != null)
          {
+            if (pListener.bInit == false  &&  pNotice.sNotification == 'onReadyState')
+               pListener.bInit = true;
+
             this.#Send (pListener, pNotice);
 
             this.#cpListener.Release ();
@@ -2593,11 +2596,16 @@ MV.MVMF.NOTIFICATION = class
       {
          if ((pListener = this.#cpListener.Get (pThis)) != null)
          {
-            let pNotice = new MV.MVMF.NOTIFICATION.NOTICE (this, 'onReadyState', this.#nReadyState);
+            if (pListener.bInit == false)
+            {
+               let pNotice = new MV.MVMF.NOTIFICATION.NOTICE (this, 'onReadyState', this.#nReadyState);
 
-            this.#Send (pListener, pNotice);
+               this.#Send (pListener, pNotice);
 
-            pNotice.destructor ();
+               pNotice.destructor ();
+
+               pListener.bInit = true;
+            }
 
             this.#cpListener.Release ();
          }
@@ -2709,6 +2717,8 @@ MV.MVMF.NOTIFICATION.LISTENER = class
    {
       this.pThis      = pThis;
       this.bPropagate = bPropagate ? true : false;
+
+      this.bInit      = false;
    }
 
    destructor ()

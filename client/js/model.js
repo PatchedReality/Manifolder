@@ -236,9 +236,7 @@ export class Model {
 
   _openNode(node) {
     if (!node) return;
-    // Don't pass stub models - let openModel fetch the real model from server
-    const mvmfModel = node._isSearchStub ? null : node._model;
-    this.client.openModel({ sID: node.type, twObjectIx: node.id, mvmfModel });
+    this.client.openModel({ sID: node.type, twObjectIx: node.id });
     node.isLoading = true;
     this._emit('nodeUpdated', node);
   }

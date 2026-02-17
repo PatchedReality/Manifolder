@@ -44,6 +44,8 @@ export class ViewResource {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
 
+    this.nodeGroups = new Map();
+
     this.currentResourceUrl = null;
     this.currentNode = null;
     this.isLoading = false;
@@ -75,8 +77,8 @@ export class ViewResource {
       if (!node) return;
 
       const planetContext = this.model.getPlanetContext(node);
-      if (node._worldPos && planetContext?.radius) {
-        const coords = calculateLatLong(node._worldPos, planetContext.radius);
+      if (node.worldPos && planetContext?.radius) {
+        const coords = calculateLatLong(node.worldPos, planetContext.radius);
         if (coords) {
           this.setLocation(coords.latitude, coords.longitude);
         } else {
@@ -95,10 +97,10 @@ export class ViewResource {
 
     this.model.on('nodeUpdated', (node) => {
       const selected = this.model.getSelectedNode();
-      if (selected && node === selected && node._worldPos) {
+      if (selected && node === selected && node.worldPos) {
         const planetContext = this.model.getPlanetContext(node);
         if (planetContext?.radius) {
-          const coords = calculateLatLong(node._worldPos, planetContext.radius);
+          const coords = calculateLatLong(node.worldPos, planetContext.radius);
           if (coords) {
             this.setLocation(coords.latitude, coords.longitude);
           }
@@ -542,7 +544,7 @@ export class ViewResource {
     this._setNodeDebounce = setTimeout(() => this._applySetNode(node), 150);
   }
 
-  _applySetNode(node) {
+  async _applySetNode(node) {
     if (node !== this.currentNode) return;
 
     const resourceUrls = this._collectResourceUrls(node);
@@ -556,7 +558,11 @@ export class ViewResource {
 
     const nodeKey = `${node.type}_${node.id}`;
     const cacheKey = `${nodeKey}:${resourceUrls.sort().join('|')}`;
-    if (cacheKey === this.currentResourceUrl) {
+
+    if (cacheKey === this.currentResourceUrl && !this.isLoading) {
+      await this._drawNode(node, this.contentGroup, null, true);
+      this.applyWorldOrientation();
+      this.updateBoundsDisplay();
       return;
     }
 
@@ -588,7 +594,7 @@ export class ViewResource {
     const isCancelled = () => requestId !== this.loadRequestId;
 
     try {
-      await this._loadNodeRecursive(rootNode, this.contentGroup, requestId, true);
+      await this._drawNode(rootNode, this.contentGroup, requestId, true);
 
       if (isCancelled()) {
         return;
@@ -623,24 +629,37 @@ export class ViewResource {
     group.scale.set(scl.x, scl.y, scl.z);
   }
 
-  async _loadNodeRecursive(node, parentGroup, requestId, isRoot = false) {
-    if (requestId !== this.loadRequestId) return;
+  async _drawNode(node, parentGroup, requestId, isRoot = false) {
+    if (requestId !== null && requestId !== this.loadRequestId) return;
+
+    const nodeKey = `${node.type}_${node.id}`;
+    const isNew = !this.nodeGroups.has(nodeKey);
 
     const hasResource = !!node.resourceUrl;
     const expandedChildren = this.model.isNodeExpanded(node) && node.children;
     const hasTransform = !isRoot && node.transform;
-
     const needsGroup = hasTransform && (hasResource || expandedChildren);
+
     let target = parentGroup;
 
     if (needsGroup) {
-      target = new THREE.Group();
-      target.name = node.name || 'node';
-      this._applyNodeTransformToGroup(target, node.transform);
-      parentGroup.add(target);
+      let group = this.nodeGroups.get(nodeKey);
+      if (!group) {
+        group = new THREE.Group();
+        group.name = node.name || 'node';
+        parentGroup.add(group);
+        this.nodeGroups.set(nodeKey, group);
+      } else if (group.parent !== parentGroup) {
+        group.parent.remove(group);
+        parentGroup.add(group);
+      }
+      this._applyNodeTransformToGroup(group, node.transform);
+      target = group;
+    } else if (isNew) {
+      this.nodeGroups.set(nodeKey, null);
     }
 
-    if (hasResource) {
+    if (isNew && hasResource) {
       const resourceRef = node.resourceRef;
       const actionType = resourceRef?.startsWith('action://')
         ? resourceRef.slice('action://'.length).split(/[:/]/)[0]
@@ -660,7 +679,7 @@ export class ViewResource {
 
     if (expandedChildren) {
       await Promise.all(node.children.map(child =>
-        this._loadNodeRecursive(child, target, requestId)
+        this._drawNode(child, target, requestId)
       ));
     }
   }
@@ -671,6 +690,7 @@ export class ViewResource {
       this.contentGroup = null;
     }
     this.loadedModels = [];
+    this.nodeGroups.clear();
     this.rotators = [];
 
     // Clean up video elements from cancelled load
@@ -1530,9 +1550,9 @@ export class ViewResource {
   }
 
   applyWorldOrientation() {
-    if (!this.contentGroup || !this.currentNode?._worldRot) return;
+    if (!this.contentGroup || !this.currentNode?.worldRot) return;
 
-    const worldRot = this.currentNode._worldRot;
+    const worldRot = this.currentNode.worldRot;
     const quaternion = new THREE.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
 
     // Extract just the yaw (rotation around Y) - ignore tilt from Earth's curvature
@@ -1662,6 +1682,7 @@ export class ViewResource {
     });
     this.loadedModels = [];
     this.contentGroup = null;
+    this.nodeGroups.clear();
     this.rotators = [];
 
     // Clean up video elements and HLS instances

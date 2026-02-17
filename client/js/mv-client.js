@@ -172,10 +172,10 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     return found;
   }
 
-  openModel({ sID, twObjectIx, mvmfModel: providedModel }) {
+  openModel({ sID, twObjectIx }) {
     if (!this.#m_pLnG) return;
 
-    const mvmfModel = providedModel || this.#m_pLnG.Model_Open(sID, twObjectIx);
+    const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
 
     if (this.#attachedModels.has(mvmfModel)) {
       if (mvmfModel.IsReady()) {
@@ -188,8 +188,7 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
 
   subscribe({ sID, twObjectIx }) {
     if (!this.#m_pLnG) return;
-    const mvmfModel = this.#m_pLnG.Model_Open(sID, twObjectIx);
-    this._safeAttach(mvmfModel);
+    this.openModel({ sID, twObjectIx });
   }
 
   closeModel({ sID, twObjectIx }) {
@@ -404,7 +403,6 @@ export class MVClient extends MV.MVMF.NOTIFICATION {
     const creator = pNotice.pCreator;
     const child = pNotice.pData?.pChild || creator;
     if (child?.sID && child.twObjectIx !== undefined) {
-      if (!child.IsReady?.()) return;
       this._emit('nodeUpdated', {
         id: child.twObjectIx,
         type: child.sID,

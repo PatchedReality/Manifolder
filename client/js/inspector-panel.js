@@ -138,9 +138,9 @@ export class InspectorPanel {
 
   _renderLocation(node) {
     const planetContext = this.model.getPlanetContext(node);
-    if (!node._worldPos || !planetContext) return;
+    if (!node.worldPos || !planetContext) return;
 
-    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    const coords = calculateLatLong(node.worldPos, planetContext.radius);
     if (!coords) return;
 
     const section = this._createSection('Location');

@@ -3,7 +3,8 @@
  */
 
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PHYSICAL_TYPE } from '../shared/node-types.js';
-import { resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl, rotateByQuaternion, multiplyQuaternions } from './node-helpers.js';
+import { getOrbitData, calculateOrbitalPosition } from './orbital-helpers.js';
 
 const NAME_FIELDS = {
   RMRoot: 'wsRMRootId',
@@ -45,9 +46,7 @@ export class NodeAdapter {
     this._cachedTransform = undefined;
     this._cachedBound = undefined;
 
-    // View-owned computed properties
-    this._worldPos = null;
-    this._worldRot = null;
+    // View-owned properties
     this._orbitData = null;
     this._planetContext = null;
     this._uid = null;
@@ -91,6 +90,70 @@ export class NodeAdapter {
     if (this._cachedBound !== undefined) return this._cachedBound;
     this._cachedBound = this._normalizeBound();
     return this._cachedBound;
+  }
+
+  get worldPos() {
+    const t = this.transform;
+    if (!t) return null;
+    const localPos = t.position;
+    const localRot = t.rotation;
+    const parent = this._parent;
+
+    if (!parent) {
+      return { x: localPos.x, y: localPos.y, z: localPos.z };
+    }
+
+    const parentWorldPos = parent.worldPos;
+    const parentWorldRot = parent.worldRot;
+    if (!parentWorldPos || !parentWorldRot) {
+      return { x: localPos.x, y: localPos.y, z: localPos.z };
+    }
+
+    const orbit = getOrbitData(this);
+    if (orbit) {
+      const orbitalOffset = calculateOrbitalPosition(orbit, 0);
+      const rotatedOrbital = rotateByQuaternion(
+        orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
+        localRot.x, localRot.y, localRot.z, localRot.w
+      );
+      const worldOrbital = rotateByQuaternion(
+        rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
+        parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
+      );
+      return {
+        x: parentWorldPos.x + worldOrbital.x,
+        y: parentWorldPos.y + worldOrbital.y,
+        z: parentWorldPos.z + worldOrbital.z
+      };
+    }
+
+    const rotatedPos = rotateByQuaternion(
+      localPos.x, localPos.y, localPos.z,
+      parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
+    );
+    return {
+      x: parentWorldPos.x + rotatedPos.x,
+      y: parentWorldPos.y + rotatedPos.y,
+      z: parentWorldPos.z + rotatedPos.z
+    };
+  }
+
+  get worldRot() {
+    const t = this.transform;
+    if (!t) return null;
+    const localRot = t.rotation;
+    const parent = this._parent;
+
+    if (!parent) {
+      return { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
+    }
+
+    const parentWorldRot = parent.worldRot;
+    if (!parentWorldRot) {
+      return { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
+    }
+
+    return multiplyQuaternions(parentWorldRot, localRot);
   }
 
   get isReady() {

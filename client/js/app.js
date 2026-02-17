@@ -37,12 +37,12 @@ class App {
     if (!this.rp1GoBtn) return;
 
     const planetContext = this.model.getPlanetContext(node);
-    if (!node?._worldPos || !planetContext?.celestialId) {
+    if (!node?.worldPos || !planetContext?.celestialId) {
       this.rp1GoBtn.classList.add('hidden');
       return;
     }
 
-    const coords = calculateLatLong(node._worldPos, planetContext.radius);
+    const coords = calculateLatLong(node.worldPos, planetContext.radius);
     if (!coords) {
       this.rp1GoBtn.classList.add('hidden');
       return;

@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry, getSpinData, calculateSpinAngle } from './orbital-helpers.js';
+import { rotateByQuaternion } from './node-helpers.js';
 import {
   NODE_TYPES,
   NODE_COLORS,
@@ -145,7 +146,7 @@ export class ViewBounds {
 
     this.model.on('nodeUpdated', (node) => {
       const selected = this.model.getSelectedNode();
-      if (selected && node === selected && node._worldPos) {
+      if (selected && node === selected && node.worldPos) {
         this.selectNode(node.id, node.type);
       }
     });
@@ -499,7 +500,7 @@ export class ViewBounds {
     this.focusNode = null;
 
     if (tree) {
-      this.buildNodeData(tree, null, null, null, this.model.inheritedPlanetContext);
+      this.buildNodeData(tree, null, this.model.inheritedPlanetContext);
       this.calculateDynamicScale();
 
       const selectedNode = this.model.getSelectedNode();
@@ -518,8 +519,8 @@ export class ViewBounds {
     let nodeCount = 0;
 
     this.model.nodes.forEach(node => {
-      if (node._worldPos) {
-        const pos = node._worldPos;
+      if (node.worldPos) {
+        const pos = node.worldPos;
         const bound = node._bound || { x: 0, y: 0, z: 0 };
 
         // Skip nodes at exact origin
@@ -606,12 +607,12 @@ export class ViewBounds {
     nodeQuat.normalize();
 
     // If parent has rotation, compose it with node rotation
-    if (parentNode._worldRot) {
+    if (parentNode.worldRot) {
       const parentQuat = new THREE.Quaternion(
-        parentNode._worldRot.x,
-        parentNode._worldRot.y,
-        parentNode._worldRot.z,
-        parentNode._worldRot.w
+        parentNode.worldRot.x,
+        parentNode.worldRot.y,
+        parentNode.worldRot.z,
+        parentNode.worldRot.w
       );
       parentQuat.normalize();
       orbitLine.quaternion.copy(parentQuat.multiply(nodeQuat));
@@ -643,16 +644,16 @@ export class ViewBounds {
     const orbitalOffset = calculateOrbitalPosition(node._orbitData, this.simulationTime);
 
     const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
-    let rotated = this.rotateByQuaternion(
+    let rotated = rotateByQuaternion(
       orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
       localRot.x, localRot.y, localRot.z, localRot.w
     );
 
     const parentNode = this._findOrbitalParent(node);
-    if (parentNode?._worldRot) {
-      rotated = this.rotateByQuaternion(
+    if (parentNode?.worldRot) {
+      rotated = rotateByQuaternion(
         rotated.x, rotated.y, rotated.z,
-        parentNode._worldRot.x, parentNode._worldRot.y, parentNode._worldRot.z, parentNode._worldRot.w
+        parentNode.worldRot.x, parentNode.worldRot.y, parentNode.worldRot.z, parentNode.worldRot.w
       );
     }
 
@@ -800,39 +801,14 @@ export class ViewBounds {
       return this.calculateLogarithmicPosition(node, this.focusNode);
     } else {
       return {
-        x: node._worldPos.x * this.scale,
-        y: node._worldPos.y * this.scale,
-        z: node._worldPos.z * this.scale
+        x: node.worldPos.x * this.scale,
+        y: node.worldPos.y * this.scale,
+        z: node.worldPos.z * this.scale
       };
     }
   }
 
-  // Apply quaternion rotation to a 3D point
-  rotateByQuaternion(px, py, pz, qx, qy, qz, qw) {
-    const ix = qw * px + qy * pz - qz * py;
-    const iy = qw * py + qz * px - qx * pz;
-    const iz = qw * pz + qx * py - qy * px;
-    const iw = -qx * px - qy * py - qz * pz;
-
-    return {
-      x: ix * qw + iw * -qx + iy * -qz - iz * -qy,
-      y: iy * qw + iw * -qy + iz * -qx - ix * -qz,
-      z: iz * qw + iw * -qz + ix * -qy - iy * -qx
-    };
-  }
-
-  multiplyQuaternions(q1, q2) {
-    return {
-      x: q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
-      y: q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
-      z: q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w,
-      w: q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z
-    };
-  }
-
-  buildNodeData(node, parentWorldPos = null, parentWorldRot = null, parentNode = null, planetContext = null) {
-    const localPos = node.transform?.position || { x: 0, y: 0, z: 0 };
-    const localRot = node.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 };
+  buildNodeData(node, parentNode = null, planetContext = null) {
     const bound = node.bound || { x: 0, y: 0, z: 0 };
 
     // Check for orbital data
@@ -847,54 +823,6 @@ export class ViewBounds {
       };
     }
 
-    let worldPos, worldRot;
-
-    if (parentWorldPos && parentWorldRot) {
-      // Calculate world rotation first (parent rotation * local rotation)
-      worldRot = this.multiplyQuaternions(parentWorldRot, localRot);
-
-      if (orbitData) {
-        // Orbital positioning: calculate position on ellipse at t=0
-        const orbitalOffset = calculateOrbitalPosition(orbitData, 0);
-
-        // The node's rotation defines the orbital plane orientation
-        // Rotate the orbital position by the node's local rotation
-        const rotatedOrbital = this.rotateByQuaternion(
-          orbitalOffset.x, orbitalOffset.y, orbitalOffset.z,
-          localRot.x, localRot.y, localRot.z, localRot.w
-        );
-
-        // Then rotate by parent's world rotation to get into world space
-        const worldOrbital = this.rotateByQuaternion(
-          rotatedOrbital.x, rotatedOrbital.y, rotatedOrbital.z,
-          parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
-        );
-
-        // Position is parent position + orbital offset (ignoring transform.position for orbital bodies)
-        worldPos = {
-          x: parentWorldPos.x + worldOrbital.x,
-          y: parentWorldPos.y + worldOrbital.y,
-          z: parentWorldPos.z + worldOrbital.z
-        };
-      } else {
-        // Standard transform-based positioning
-        const rotatedPos = this.rotateByQuaternion(
-          localPos.x, localPos.y, localPos.z,
-          parentWorldRot.x, parentWorldRot.y, parentWorldRot.z, parentWorldRot.w
-        );
-        worldPos = {
-          x: parentWorldPos.x + rotatedPos.x,
-          y: parentWorldPos.y + rotatedPos.y,
-          z: parentWorldPos.z + rotatedPos.z
-        };
-      }
-    } else {
-      worldPos = { x: localPos.x, y: localPos.y, z: localPos.z };
-      worldRot = { x: localRot.x, y: localRot.y, z: localRot.z, w: localRot.w };
-    }
-
-    node._worldPos = worldPos;
-    node._worldRot = worldRot;
     node._bound = bound;
     node._orbitData = orbitData;
     if (planetContext) {
@@ -903,7 +831,7 @@ export class ViewBounds {
 
     if (node.children && node.children.length > 0) {
       node.children.forEach(child => {
-        this.buildNodeData(child, worldPos, worldRot, node, planetContext);
+        this.buildNodeData(child, node, planetContext);
       });
     }
   }
@@ -941,9 +869,9 @@ export class ViewBounds {
 
     this.nodeMeshes.forEach(({ mesh }) => {
       const node = mesh.userData.nodeData;
-      if (node && node._worldPos) {
+      if (node && node.worldPos) {
         const bound = this.getEffectiveBound(node);
-        const posY = node._worldPos.y * SCALE;
+        const posY = node.worldPos.y * SCALE;
         const isCelestial = this.isCelestialNode(node);
         const he = this.computeHalfExtents(node, bound, SCALE);
         const bottomY = isCelestial ? posY - he.y : posY;
@@ -959,8 +887,7 @@ export class ViewBounds {
   addVisibleNode(node) {
     const key = this.model.nodeKey(node);
 
-    // Skip nodes without world position data (not yet processed by buildNodeData)
-    if (!node._worldPos) {
+    if (!node.worldPos) {
       return;
     }
 
@@ -980,8 +907,8 @@ export class ViewBounds {
       return;
     }
 
-    const worldPos = node._worldPos;
-    const worldRot = node._worldRot;
+    const worldPos = node.worldPos;
+    const worldRot = node.worldRot;
     const bound = this.getEffectiveBound(node);
 
     const selectedNode = this.model.getSelectedNode();
@@ -1046,9 +973,9 @@ export class ViewBounds {
 
         // Position relative to parent, scaled by parent's scale factor
         const parentScale = parentOriginalSize > 0.001 ? parentScaledSize / parentOriginalSize : 1;
-        const relX = worldPos.x - celestialParent._worldPos.x;
-        const relY = worldPos.y - celestialParent._worldPos.y;
-        const relZ = worldPos.z - celestialParent._worldPos.z;
+        const relX = worldPos.x - celestialParent.worldPos.x;
+        const relY = worldPos.y - celestialParent.worldPos.y;
+        const relZ = worldPos.z - celestialParent.worldPos.z;
 
         const he = this.computeHalfExtents(node, bound, parentScale);
         scaledData = {
@@ -1336,12 +1263,10 @@ export class ViewBounds {
     const parent = this.model.nodes.get(parentKey);
     if (!parent) return;
 
-    const parentWorldPos = parent._worldPos;
-    const parentWorldRot = parent._worldRot;
     const parentPlanetContext = parent._planetContext;
 
     children.forEach(child => {
-      this.buildNodeData(child, parentWorldPos, parentWorldRot, parent, parentPlanetContext);
+      this.buildNodeData(child, parent, parentPlanetContext);
     });
 
     if (!parent.children) {
@@ -1361,7 +1286,7 @@ export class ViewBounds {
     this._rebuildTimer = setTimeout(() => {
       this._rebuildTimer = null;
       if (this.model.tree) {
-        this.buildNodeData(this.model.tree, null, null, null, this.model.inheritedPlanetContext);
+        this.buildNodeData(this.model.tree, null, this.model.inheritedPlanetContext);
       }
       this.calculateDynamicScale();
       this.rebuildVisibleNodes();
@@ -1379,23 +1304,20 @@ export class ViewBounds {
     if (!existing) return;
 
     const parentNode = existing._parent;
-    const parentWorldPos = parentNode?._worldPos || null;
-    const parentWorldRot = parentNode?._worldRot || null;
     const planetContext = existing._planetContext || null;
 
-    this.buildNodeData(node, parentWorldPos, parentWorldRot, parentNode, planetContext);
+    this.buildNodeData(node, parentNode, planetContext);
     this.rebuildVisibleNodes();
   }
 
   zoomToNode(node) {
     if (!node) return;
 
-    // Use passed node if it has _worldPos, otherwise look it up in our data
     let targetNode = node;
-    if (!node._worldPos) {
+    if (!node.worldPos) {
       const key = this.model.nodeKey(node);
       targetNode = this.model.nodes.get(key);
-      if (!targetNode || !targetNode._worldPos) return;
+      if (!targetNode || !targetNode.worldPos) return;
     }
 
     const bound = this.getEffectiveBound(targetNode);
@@ -1423,7 +1345,7 @@ export class ViewBounds {
     } else {
       // Fallback to static position
       const SCALE = this.scale;
-      const worldPos = targetNode._worldPos;
+      const worldPos = targetNode.worldPos;
       targetPos = new THREE.Vector3(
         worldPos.x * SCALE,
         worldPos.y * SCALE,
@@ -1488,12 +1410,12 @@ export class ViewBounds {
 
     // Calculate bounding box of all visible nodes
     this.model.nodes.forEach(node => {
-      if (node._worldPos) {
-        const r = Math.sqrt(node._worldPos.x ** 2 + node._worldPos.y ** 2 + node._worldPos.z ** 2);
+      if (node.worldPos) {
+        const r = Math.sqrt(node.worldPos.x ** 2 + node.worldPos.y ** 2 + node.worldPos.z ** 2);
         if (r > 1000) {
-          const px = node._worldPos.x * SCALE;
-          const py = node._worldPos.y * SCALE;
-          const pz = node._worldPos.z * SCALE;
+          const px = node.worldPos.x * SCALE;
+          const py = node.worldPos.y * SCALE;
+          const pz = node.worldPos.z * SCALE;
           const bound = this.getEffectiveBound(node);
           const he = this.computeHalfExtents(node, bound, SCALE);
 
@@ -1672,7 +1594,7 @@ export class ViewBounds {
     }
 
     // Calculate bounds from children in world space (recursive to traverse unexpanded children)
-    const result = this.calculateBoundsFromChildren(node, node._worldPos, null, true);
+    const result = this.calculateBoundsFromChildren(node, node.worldPos, null, true);
     if (!result) {
       return { x: 1, y: 1, z: 1 };
     }
@@ -1704,7 +1626,7 @@ export class ViewBounds {
     let hasValidChild = false;
 
     for (const child of node.children) {
-      if (!child._worldPos || !this.isTypeEnabled(child)) continue;
+      if (!child.worldPos || !this.isTypeEnabled(child)) continue;
 
       hasValidChild = true;
 
@@ -1729,9 +1651,9 @@ export class ViewBounds {
         childRadius = (maxDim || 1) * scale;
       } else {
         // World space - use positions directly
-        relX = child._worldPos.x - parentPos.x;
-        relY = child._worldPos.y - parentPos.y;
-        relZ = child._worldPos.z - parentPos.z;
+        relX = child.worldPos.x - parentPos.x;
+        relY = child.worldPos.y - parentPos.y;
+        relZ = child.worldPos.z - parentPos.z;
         const maxDim = Math.max(childBound.x || 0, childBound.y || 0, childBound.z || 0);
         childRadius = maxDim;
       }
@@ -1749,8 +1671,8 @@ export class ViewBounds {
   }
 
   calculateLogarithmicPosition(node, focusNode) {
-    const focusPos = focusNode._worldPos;
-    const nodePos = node._worldPos;
+    const focusPos = focusNode.worldPos;
+    const nodePos = node.worldPos;
     if (!focusPos || !nodePos) return { x: 0, y: 0, z: 0 };
 
     // Distance vector from focus to node
@@ -1804,8 +1726,8 @@ export class ViewBounds {
     if (node === focusNode) return false;
 
     // Don't cull nodes at the same position (likely parent/child containers)
-    const focusPos = focusNode._worldPos;
-    const nodePos = node._worldPos;
+    const focusPos = focusNode.worldPos;
+    const nodePos = node.worldPos;
     if (!focusPos || !nodePos) return false;
     const dx = nodePos.x - focusPos.x;
     const dy = nodePos.y - focusPos.y;
