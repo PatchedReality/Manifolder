@@ -205,9 +205,6 @@ export class HierarchyPanel {
 
     const content = document.createElement('div');
     content.className = 'tree-node-content';
-    if (this.model.isLiveUpdateEnabled(nodeData)) {
-      content.classList.add('live-updates');
-    }
 
     const toggle = document.createElement('span');
     toggle.className = 'tree-toggle';
@@ -567,32 +564,9 @@ export class HierarchyPanel {
       this.hideContextMenu();
     });
 
-    const nodeData = this._getNodeData(nodeKey);
-    const isLive = nodeData && this.model.isLiveUpdateEnabled(nodeData);
-
-    const liveUpdateSeparator = document.createElement('div');
-    liveUpdateSeparator.className = 'tree-context-menu-separator';
-
-    const liveUpdateBtn = document.createElement('button');
-    liveUpdateBtn.className = 'tree-context-menu-item';
-    liveUpdateBtn.textContent = isLive ? 'Disable Live Updates' : 'Enable Live Updates';
-    liveUpdateBtn.addEventListener('click', () => {
-      const data = this._getNodeData(nodeKey);
-      if (data) {
-        if (this.model.isLiveUpdateEnabled(data)) {
-          this.model.disableLiveUpdates(data);
-        } else if (confirm('Are you sure? This should only be performed on fabrics you own.')) {
-          this.model.enableLiveUpdates(data);
-        }
-      }
-      this.hideContextMenu();
-    });
-
     menu.appendChild(expandChildrenBtn);
     menu.appendChild(separator);
     menu.appendChild(collapseAllBtn);
-    menu.appendChild(liveUpdateSeparator);
-    menu.appendChild(liveUpdateBtn);
 
     document.body.appendChild(menu);
 
@@ -657,12 +631,6 @@ export class HierarchyPanel {
 
     // Toggle icon
     this._updateToggleIcon(element, node);
-
-    // Live updates indicator
-    const content = element.querySelector(':scope > .tree-node-content');
-    if (content) {
-      content.classList.toggle('live-updates', this.model.isLiveUpdateEnabled(node));
-    }
 
     // Children visibility
     const children = element.querySelector(':scope > .tree-children');

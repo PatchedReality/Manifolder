@@ -29,8 +29,6 @@ globalThis.MV = {
 
 const {
   ManifolderClient,
-  MVFabricClient,
-  MVClient,
   asManifolderSubscriptionClient,
   asManifolderPromiseClient,
   createManifolderSubscriptionClient,
@@ -77,13 +75,6 @@ function getRawNotice(handler, fallback, predicate = null) {
   const matched = candidates.find(predicate);
   return matched || fallback;
 }
-
-test('MVClient and MVFabricClient exports are backwards-compatible aliases', () => {
-  const client = new MVClient();
-  assert.equal(client instanceof ManifolderClient, true);
-  const fabricAlias = new MVFabricClient();
-  assert.equal(fabricAlias instanceof ManifolderClient, true);
-});
 
 test('interface views expose only intended client surfaces', () => {
   const base = new ManifolderClient();

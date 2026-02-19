@@ -97,13 +97,6 @@ class App {
       }
     });
 
-    this.model.on('nodeUpdated', (node) => {
-      if (!this._restoringState) {
-        this.stateManager.updateSection('hierarchy', {
-          liveUpdateNodeIds: this.model.getLiveUpdateNodeKeys()
-        });
-      }
-    });
   }
 
   setupResetButton() {
@@ -559,7 +552,7 @@ class App {
     });
 
     this.client.on('error', (error) => {
-      console.error('MV Client error:', error);
+      console.error('Client error:', error);
       this.layout.setStatus('Error: ' + error.message, 'disconnected');
     });
 
@@ -609,10 +602,6 @@ class App {
           if (hasSavedExpanded) {
             this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
           }
-          if (hierarchyState.liveUpdateNodeIds?.length > 0) {
-            this.model.enableLiveUpdatesByKeys(hierarchyState.liveUpdateNodeIds);
-          }
-
           const navState = this.stateManager.getSection('navigation');
           if (navState.selectedNodePath?.length > 0) {
             this.restoreNodePath(navState.selectedNodePath);
@@ -647,8 +636,7 @@ class App {
       }
 
       this.stateManager.updateSection('hierarchy', {
-        expandedNodeIds: this.model.getExpandedNodeKeys(),
-        liveUpdateNodeIds: this.model.getLiveUpdateNodeKeys()
+        expandedNodeIds: this.model.getExpandedNodeKeys()
       });
     };
 

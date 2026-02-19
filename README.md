@@ -38,6 +38,7 @@ The toolbar provides:
 - **Bookmarks** (▼): Access saved bookmarks, rename, or delete them
 - **Share** (↗): Copy a shareable URL to clipboard that encodes the current state
 - **Go To→** (RP1): Navigate to the selected location in the RP1 metaverse client (Earth maps only)
+- **Reset View**: Clear all saved state and reload the application
 
 ### Hierarchy Panel (Left)
 
@@ -48,9 +49,6 @@ A tree view displaying the node hierarchy:
 - **Context Menu**: Right-click (or long-press on mobile) for options:
   - **Expand Children**: Expands only the immediate children of the selected node
   - **Collapse All**: Recursively collapses the selected node and all descendants
-  - **Enable/Disable Live Updates**: Toggle real-time updates from the server for this node and expanded children (disabled by default)
-
-> **Caution**: Live updates are disabled by default to reduce load on the server - ONLY USE for your own fabrics you are actively editing.
 
 Node icons are color-coded by type (celestial bodies, terrestrial regions, etc.).
 
@@ -99,19 +97,22 @@ A 3D visualization using Three.js showing:
 A 3D model viewer for GLB (GLTF Binary) assets associated with nodes:
 - Loads and displays 3D models from node resource references
 - Supports blueprint hierarchies with nested physical objects
-- Automatic LOD (Level of Detail) selection
+- Automatic LOD (Level of Detail) selection (highest available LOD is used)
 - Models are centered and scaled to fit the viewport
 - Supports video textures via HLS streaming
-- Physics-enabled rotators and animations
+- Config-driven rotator animations
+- Point lights and text sprites from blueprint data
 
 **Resource-specific Controls:**
 - **Grid**: Adaptive grid that scales based on content size
-- **Time of Day**: Slider to adjust sun position for realistic lighting preview
+- **Show Bounds**: Toggle bounding volume wireframes for loaded models
+- **Time of Day**: Slider to adjust sun position for realistic lighting preview (shown for Earth-based nodes)
 
 ### Inspector Panel (Right)
 
 Shows detailed information about the selected node:
 - **Basic Info**: Name, type, class, ID
+- **Location**: Latitude/longitude coordinates (shown for nodes on Earth or other planets with a known radius)
 - **Transform**: Position, rotation, scale
 - **Bounds**: Spatial dimensions
 - **Raw JSON**: Expandable view of the complete node data

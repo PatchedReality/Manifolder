@@ -1997,7 +1997,3 @@ export function createManifolderSubscriptionClient() {
 export function createManifolderPromiseClient() {
     return asManifolderPromiseClient(new ManifolderClient());
 }
-export class MVClient extends ManifolderClient {
-}
-export class MVFabricClient extends ManifolderClient {
-}

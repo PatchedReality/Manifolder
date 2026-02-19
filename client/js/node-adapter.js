@@ -39,7 +39,6 @@ export class NodeAdapter {
     this._model = model;
     this.children = [];
     this._parent = null;
-    this.liveUpdatesEnabled = false;
     this._isLoading = false;
 
     // Cached normalized properties (invalidated by markDirty)

@@ -6,9 +6,8 @@ import { NodeAdapter } from './node-adapter.js';
 
 /**
  * Model - Single source of truth for shared application state.
- * Subscribes to MVClient server events and maintains the node tree.
+ * Subscribes to server events and maintains the node tree.
  * Views subscribe to Model events and only hold rendering-specific state.
- * Uses the same on/off callback pattern as MVClient.
  */
 export class Model {
   constructor(client) {
@@ -113,7 +112,6 @@ export class Model {
     this.selectedNode = null;
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
-    this._pendingLiveUpdateKeys = null;
     this.inheritedPlanetContext = inheritedPlanetContext;
 
     if (rootModel) {
@@ -181,7 +179,6 @@ export class Model {
         if (this._pendingExpandedKeys) {
           this._checkPendingExpansion(child);
         }
-        this._checkPendingLiveUpdate(child);
       }
     }
 
@@ -205,12 +202,6 @@ export class Model {
         this._pendingExpandedKeys = new Map();
       }
       this._pendingExpandedKeys.set(key, node._parent?.key || null);
-    }
-    if (node.liveUpdatesEnabled) {
-      if (!this._pendingLiveUpdateKeys) {
-        this._pendingLiveUpdateKeys = new Set();
-      }
-      this._pendingLiveUpdateKeys.add(key);
     }
     if (this.selectedNode?.key === key) {
       this._pendingSelectedKey = key;
@@ -369,18 +360,6 @@ export class Model {
     }
   }
 
-  _checkPendingLiveUpdate(node) {
-    if (!node || !this._pendingLiveUpdateKeys) return;
-    const key = node.key;
-    if (this._pendingLiveUpdateKeys.has(key)) {
-      this._pendingLiveUpdateKeys.delete(key);
-      this.enableLiveUpdates(node);
-      if (this._pendingLiveUpdateKeys.size === 0) {
-        this._pendingLiveUpdateKeys = null;
-      }
-    }
-  }
-
   _clearDescendantPendingKeys(node) {
     if (!node || !this._pendingExpandedKeys?.size) return;
 
@@ -509,68 +488,6 @@ export class Model {
     }
   }
 
-  // --- Live Updates ---
-
-  enableLiveUpdates(node) {
-    if (!node) return;
-    node.liveUpdatesEnabled = true;
-    this.client.subscribe({ sID: node.type, twObjectIx: node.id });
-    this._emit('nodeUpdated', node);
-    if (node.isExpanded && node.children) {
-      for (const child of node.children) {
-        this.enableLiveUpdates(child);
-      }
-    }
-  }
-
-  disableLiveUpdates(node) {
-    if (!node) return;
-    node.liveUpdatesEnabled = false;
-    this.client.closeModel({ sID: node.type, twObjectIx: node.id });
-    this._emit('nodeUpdated', node);
-    if (node.children) {
-      for (const child of node.children) {
-        if (child.liveUpdatesEnabled) {
-          this.disableLiveUpdates(child);
-        }
-      }
-    }
-  }
-
-  isLiveUpdateEnabled(node) {
-    return node.liveUpdatesEnabled;
-  }
-
-  getLiveUpdateNodeKeys() {
-    const keys = [];
-    for (const [key, node] of this.nodes) {
-      if (node.liveUpdatesEnabled) {
-        keys.push(key);
-      }
-    }
-    return keys;
-  }
-
-  enableLiveUpdatesByKeys(keys) {
-    if (!keys || keys.length === 0) return;
-    if (!this._pendingLiveUpdateKeys) {
-      this._pendingLiveUpdateKeys = new Set();
-    }
-    for (const key of keys) {
-      const node = this.nodes.get(key);
-      if (node) {
-        node.liveUpdatesEnabled = true;
-        this.client.subscribe({ sID: node.type, twObjectIx: node.id });
-        this._emit('nodeUpdated', node);
-      } else {
-        this._pendingLiveUpdateKeys.add(key);
-      }
-    }
-    if (this._pendingLiveUpdateKeys.size === 0) {
-      this._pendingLiveUpdateKeys = null;
-    }
-  }
-
   // --- Client Event Handlers ---
 
   _handleNodeInserted(mvmfModel, parentType, parentId) {
@@ -605,10 +522,6 @@ export class Model {
       existingNode.updateModel(mvmfModel);
       parentNode.children.push(existingNode);
       existingNode._parent = parentNode;
-      if (parentNode.liveUpdatesEnabled && !existingNode.liveUpdatesEnabled) {
-        existingNode.liveUpdatesEnabled = true;
-        this.client.subscribe({ sID: existingNode.type, twObjectIx: existingNode.id });
-      }
       this._emit('nodeInserted', { node: existingNode, parentNode });
       this._checkPendingExpansion(existingNode);
       this._checkPendingSelection();
