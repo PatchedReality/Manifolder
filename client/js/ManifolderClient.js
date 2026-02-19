@@ -1,5 +1,22 @@
 // Unified Manifolder client for both browser and Node runtimes.
 // Assumes globalThis.MV is initialized by host project bootstrap code.
+/** @typedef {import('../types.js').BulkOperation} BulkOperation */
+/** @typedef {import('../types.js').ConnectionStatus} ConnectionStatus */
+/** @typedef {import('../types.js').CreateObjectParams} CreateObjectParams */
+/** @typedef {import('../types.js').FabricObject} FabricObject */
+/** @typedef {import('../types.js').ObjectFilter} ObjectFilter */
+/** @typedef {import('../types.js').Scene} Scene */
+/** @typedef {import('../types.js').SearchQuery} SearchQuery */
+/** @typedef {import('../types.js').UpdateObjectParams} UpdateObjectParams */
+/**
+ * @typedef {object} ConnectOptions
+ * @property {string} [adminKey]
+ * @property {number} [timeoutMs]
+ */
+/** @typedef {'connected' | 'disconnected' | 'error' | 'status' | 'mapData' | 'nodeInserted' | 'nodeUpdated' | 'nodeDeleted' | 'modelReady'} ClientEvent */
+/** @typedef {(data: any) => void} ClientEventHandler */
+/** @typedef {{ sID: string; twObjectIx: number }} ModelRef */
+/** @typedef {{ matches: any[]; paths: any[]; unavailable: string[] }} SearchNodesResult */
 function debugLog(_msg) { }
 const ClassIds = {
     RMRoot: 70,
@@ -565,6 +582,12 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             debugLog(`[onDeleting] ERROR: ${err.message}`);
         }
     }
+    /**
+     * @param {string} fabricUrl
+     * @param {string | ConnectOptions} [optionsOrAdminKey]
+     * @param {number} [timeoutMs]
+     * @returns {Promise<any>}
+     */
     async connect(fabricUrl, optionsOrAdminKey = '', timeoutMs = 60000) {
         if (this.connected || this.pFabric) {
             await this.disconnect();
@@ -785,6 +808,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             pObject.Child_Enum(childType, this, callback, null);
         }
     }
+    /**
+     * @param {ModelRef} params
+     * @returns {void}
+     */
     openModel({ sID, twObjectIx }) {
         if (!this.pLnG)
             return;
@@ -796,9 +823,17 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             this._emit('modelReady', { mvmfModel });
         }
     }
+    /**
+     * @param {ModelRef} params
+     * @returns {void}
+     */
     subscribe({ sID, twObjectIx }) {
         this.openModel({ sID, twObjectIx });
     }
+    /**
+     * @param {ModelRef} params
+     * @returns {void}
+     */
     closeModel({ sID, twObjectIx }) {
         if (!this.pLnG)
             return;
@@ -813,6 +848,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             // best effort close
         }
     }
+    /**
+     * @param {any} model
+     * @returns {any[]}
+     */
     enumerateChildren(model) {
         const children = [];
         if (!model?.Child_Enum) {
@@ -855,6 +894,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         rmcObjectIndices.push(...this.searchableRMCObjectIndices);
         rmtObjectIndices.push(...this.searchableRMTObjectIndices);
     }
+    /**
+     * @param {string} searchText
+     * @returns {Promise<SearchNodesResult>}
+     */
     async searchNodes(searchText) {
         if (!this.connected || !searchText) {
             return { matches: [], paths: [], unavailable: [] };
@@ -956,11 +999,21 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         };
         return classIds[wClass];
     }
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
     on(event, handler) {
         if (this.callbacks[event]) {
             this.callbacks[event].push(handler);
         }
     }
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
     off(event, handler) {
         if (!this.callbacks[event]) {
             return;
@@ -980,6 +1033,9 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             }
         });
     }
+    /**
+     * @returns {Promise<void>}
+     */
     async disconnect() {
         if (this.isDisconnecting) {
             return;
@@ -1048,6 +1104,9 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             this.isDisconnecting = false;
         }
     }
+    /**
+     * @returns {ConnectionStatus}
+     */
     getStatus() {
         return {
             connected: this.connected,
@@ -1057,6 +1116,9 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             resourceRootUrl: this.getResourceRootUrl() || null,
         };
     }
+    /**
+     * @returns {Promise<Scene[]>}
+     */
     async listScenes() {
         await this.ensureConnected();
         await this.waitForReady(this.pRMRoot);
@@ -1074,6 +1136,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         this.enumAllChildTypes(this.pRMRoot, enumCallback);
         return scenes;
     }
+    /**
+     * @param {string} sceneId
+     * @returns {Promise<FabricObject>}
+     */
     async openScene(sceneId) {
         await this.ensureConnected();
         const { classId, numericId } = parseObjectRef(sceneId);
@@ -1106,6 +1172,11 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             }));
         }
     }
+    /**
+     * @param {string} name
+     * @param {string} [objectType]
+     * @returns {Promise<Scene>}
+     */
     async createScene(name, objectType) {
         const obj = await this.createObject({
             parentId: 'root',
@@ -1115,6 +1186,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         });
         return { id: obj.id, name, rootObjectId: obj.id, classId: obj.classId };
     }
+    /**
+     * @param {string} sceneId
+     * @returns {Promise<void>}
+     */
     async deleteScene(sceneId) {
         await this.ensureConnected();
         await this.waitForReady(this.pRMRoot);
@@ -1146,6 +1221,11 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         this.objectCache.delete(sceneId);
     }
+    /**
+     * @param {string} scopeId
+     * @param {ObjectFilter} [filter]
+     * @returns {Promise<FabricObject[]>}
+     */
     async listObjects(scopeId, filter) {
         await this.ensureConnected();
         if (!this.objectCache.has(scopeId)) {
@@ -1185,6 +1265,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         return result;
     }
+    /**
+     * @param {string} objectId
+     * @returns {Promise<FabricObject>}
+     */
     async getObject(objectId) {
         await this.ensureConnected();
         const { classId, numericId } = parseObjectRef(objectId);
@@ -1202,6 +1286,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         return this.rmxToFabricObject(pObject);
     }
+    /**
+     * @param {CreateObjectParams} params
+     * @returns {Promise<FabricObject>}
+     */
     async createObject(params) {
         await this.ensureConnected();
         // Determine child class from objectType
@@ -1330,6 +1418,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             properties: isCelestial ? params.properties ?? undefined : undefined,
         };
     }
+    /**
+     * @param {UpdateObjectParams} params
+     * @returns {Promise<FabricObject>}
+     */
     async updateObject(params) {
         await this.ensureConnected();
         const { classId, numericId } = parseObjectRef(params.objectId);
@@ -1483,6 +1575,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         return this.getObject(params.objectId);
     }
+    /**
+     * @param {string} objectId
+     * @returns {Promise<void>}
+     */
     async deleteObject(objectId) {
         await this.ensureConnected();
         const { classId, numericId } = parseObjectRef(objectId);
@@ -1530,6 +1626,12 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }, `delete object ${objectId}`, undefined, startedAt);
         this.objectCache.delete(objectId);
     }
+    /**
+     * @param {string} objectId
+     * @param {string} newParentId
+     * @param {boolean} [skipRefetch]
+     * @returns {Promise<FabricObject>}
+     */
     async moveObject(objectId, newParentId, skipRefetch) {
         await this.ensureConnected();
         const { classId, numericId } = parseObjectRef(objectId);
@@ -1598,6 +1700,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         return this.getObject(objectId);
     }
+    /**
+     * @param {BulkOperation[]} operations
+     * @returns {Promise<{ success: number; failed: number; createdIds: string[]; errors: string[] }>}
+     */
     async bulkUpdate(operations) {
         let success = 0;
         let failed = 0;
@@ -1719,6 +1825,11 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         }
         return objects;
     }
+    /**
+     * @param {string} scopeId
+     * @param {SearchQuery} query
+     * @returns {Promise<FabricObject[]>}
+     */
     async findObjects(scopeId, query) {
         await this.ensureConnected();
         if (query.namePattern) {
@@ -1883,6 +1994,10 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         });
         return childIds;
     }
+    /**
+     * @param {any} rmx
+     * @returns {FabricObject}
+     */
     rmxToFabricObject(rmx) {
         const id = this.getPrefixedId(rmx);
         const name = this.getObjectName(rmx);
@@ -1940,13 +2055,19 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             } : undefined,
         };
     }
+    /**
+     * @returns {string}
+     */
     getResourceRootUrl() {
         return this.pFabric?.pMSFConfig?.map?.sRootUrl || '';
     }
 }
-const SUBSCRIPTION_CLIENT_METHODS = [
+const COMMON_CLIENT_METHODS = /** @type {const} */ ([
     'connect',
     'disconnect',
+    'getResourceRootUrl',
+]);
+const SUBSCRIPTION_ONLY_METHODS = /** @type {const} */ ([
     'on',
     'off',
     'openModel',
@@ -1954,13 +2075,9 @@ const SUBSCRIPTION_CLIENT_METHODS = [
     'subscribe',
     'enumerateChildren',
     'searchNodes',
-    'getResourceRootUrl',
-];
-const PROMISE_CLIENT_METHODS = [
-    'connect',
-    'disconnect',
+]);
+const PROMISE_ONLY_METHODS = /** @type {const} */ ([
     'getStatus',
-    'getResourceRootUrl',
     'listScenes',
     'openScene',
     'createScene',
@@ -1973,7 +2090,26 @@ const PROMISE_CLIENT_METHODS = [
     'moveObject',
     'bulkUpdate',
     'findObjects',
-];
+]);
+const SUBSCRIPTION_CLIENT_METHODS = /** @type {const} */ ([
+    ...COMMON_CLIENT_METHODS,
+    ...SUBSCRIPTION_ONLY_METHODS,
+]);
+const PROMISE_CLIENT_METHODS = /** @type {const} */ ([
+    ...COMMON_CLIENT_METHODS,
+    ...PROMISE_ONLY_METHODS,
+]);
+/**
+ * @typedef {{ connected: ManifolderClient['connected'] } & Pick<ManifolderClient, (typeof COMMON_CLIENT_METHODS)[number]>} IManifolderClientCommon
+ * @typedef {IManifolderClientCommon & Pick<ManifolderClient, (typeof SUBSCRIPTION_ONLY_METHODS)[number]>} IManifolderSubscriptionClient
+ * @typedef {IManifolderClientCommon & Pick<ManifolderClient, (typeof PROMISE_ONLY_METHODS)[number]>} IManifolderPromiseClient
+ */
+/**
+ * @template {readonly (keyof ManifolderClient)[]} TMethodNames
+ * @param {ManifolderClient} client
+ * @param {TMethodNames} methodNames
+ * @returns {{ readonly connected: ManifolderClient['connected'] } & Readonly<Pick<ManifolderClient, TMethodNames[number]>>}
+ */
 function createClientView(client, methodNames) {
     const view = {};
     Object.defineProperty(view, 'connected', {
@@ -1985,15 +2121,29 @@ function createClientView(client, methodNames) {
     }
     return Object.freeze(view);
 }
+/**
+ * @param {ManifolderClient} client
+ * @returns {IManifolderSubscriptionClient}
+ */
 export function asManifolderSubscriptionClient(client) {
     return createClientView(client, SUBSCRIPTION_CLIENT_METHODS);
 }
+/**
+ * @param {ManifolderClient} client
+ * @returns {IManifolderPromiseClient}
+ */
 export function asManifolderPromiseClient(client) {
     return createClientView(client, PROMISE_CLIENT_METHODS);
 }
+/**
+ * @returns {IManifolderSubscriptionClient}
+ */
 export function createManifolderSubscriptionClient() {
     return asManifolderSubscriptionClient(new ManifolderClient());
 }
+/**
+ * @returns {IManifolderPromiseClient}
+ */
 export function createManifolderPromiseClient() {
     return asManifolderPromiseClient(new ManifolderClient());
 }

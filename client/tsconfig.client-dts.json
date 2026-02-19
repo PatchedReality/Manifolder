@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./.types",
+    "rootDir": ".",
+    "strict": false,
+    "skipLibCheck": true
+  },
+  "include": ["js/ManifolderClient.js", "types.ts"]
+}
