@@ -8,9 +8,9 @@ import { ViewGraph } from './view-graph.js';
 import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
-import { MVClient } from './mv-client.js';
+import { createManifolderSubscriptionClient } from './ManifolderClient.js';
 import { CELESTIAL_NAMES, PHYSICAL_NAMES } from '../shared/node-types.js';
-import { getMsfReference } from './node-helpers.js';
+import { getMsfReference, setResourceBaseUrl } from './node-helpers.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
 import { calculateLatLong } from './geo-utils.js';
@@ -19,7 +19,7 @@ import { Model } from './model.js';
 class App {
   constructor() {
     this.stateManager = new UIStateManager();
-    this.client = new MVClient();
+    this.client = createManifolderSubscriptionClient();
     this.model = new Model(this.client);
     this.layout = new LayoutManager(this.stateManager);
     this.hierarchy = new HierarchyPanel('#hierarchy-tree', this.model);
@@ -573,7 +573,8 @@ class App {
     try {
       this.layout.setStatus('Loading map...', 'loading');
 
-      const tree = await this.client.loadMap(url);
+      const tree = await this.client.connect(url);
+      setResourceBaseUrl(this.client.getResourceRootUrl());
 
       // Detect Earth MSF and set default planet context
       let planetContext = this.model.inheritedPlanetContext;

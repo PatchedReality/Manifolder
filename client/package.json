@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
-    "watch": "node scripts/build.js --watch"
+    "watch": "node scripts/build.js --watch",
+    "test": "node --test js/ManifolderClient.test.js"
   },
   "dependencies": {
     "socket.io-client": "^4.8.3",
