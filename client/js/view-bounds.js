@@ -289,7 +289,14 @@ export class ViewBounds {
   setupEventListeners() {
     // Store bound handlers for cleanup
     this.boundResizeHandler = () => this.onWindowResize();
-    this.boundClickHandler = (e) => {
+    let downX, downY;
+    this.boundPointerDownHandler = (e) => {
+      downX = e.clientX;
+      downY = e.clientY;
+    };
+    this.boundPointerUpHandler = (e) => {
+      const dist = Math.sqrt((e.clientX - downX) ** 2 + (e.clientY - downY) ** 2);
+      if (dist >= 5) return;
       if (this.clickTimeout) {
         clearTimeout(this.clickTimeout);
         this.clickTimeout = null;
@@ -304,7 +311,8 @@ export class ViewBounds {
 
     window.addEventListener('resize', this.boundResizeHandler);
     this.clickTimeout = null;
-    this.renderer.domElement.addEventListener('click', this.boundClickHandler);
+    this.renderer.domElement.addEventListener('pointerdown', this.boundPointerDownHandler);
+    this.renderer.domElement.addEventListener('pointerup', this.boundPointerUpHandler);
 
     // ResizeObserver for container size changes
     this.resizeObserver = new ResizeObserver(() => this.onWindowResize());
@@ -1807,7 +1815,8 @@ export class ViewBounds {
     // Remove event listeners
     window.removeEventListener('resize', this.boundResizeHandler);
     if (this.renderer?.domElement) {
-      this.renderer.domElement.removeEventListener('click', this.boundClickHandler);
+      this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDownHandler);
+      this.renderer.domElement.removeEventListener('pointerup', this.boundPointerUpHandler);
     }
 
     // Disconnect ResizeObserver
