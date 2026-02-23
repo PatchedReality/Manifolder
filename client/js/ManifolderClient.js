@@ -1,12 +1,20 @@
 // Unified Manifolder client for both browser and Node runtimes.
 // Assumes globalThis.MV is initialized by host project bootstrap code.
+import { getMsfReference } from './node-helpers.js';
 /** @typedef {import('../types.js').BulkOperation} BulkOperation */
 /** @typedef {import('../types.js').ConnectionStatus} ConnectionStatus */
+/** @typedef {import('../types.js').ConnectRootParams} ConnectRootParams */
 /** @typedef {import('../types.js').CreateObjectParams} CreateObjectParams */
 /** @typedef {import('../types.js').FabricObject} FabricObject */
+/** @typedef {import('../types.js').FabricScopeId} FabricScopeId */
+/** @typedef {import('../types.js').FollowAttachmentParams} FollowAttachmentParams */
+/** @typedef {import('../types.js').FollowAttachmentResult} FollowAttachmentResult */
+/** @typedef {import('../types.js').NodeUid} NodeUid */
 /** @typedef {import('../types.js').ObjectFilter} ObjectFilter */
 /** @typedef {import('../types.js').Scene} Scene */
 /** @typedef {import('../types.js').SearchQuery} SearchQuery */
+/** @typedef {import('../types.js').ScopeInfo} ScopeInfo */
+/** @typedef {import('../types.js').ScopeStatus} ScopeStatus */
 /** @typedef {import('../types.js').UpdateObjectParams} UpdateObjectParams */
 /**
  * @typedef {object} ConnectOptions
@@ -114,7 +122,99 @@ const CLASS_ID_TO_NAME_FIELD = {
     [ClassIds.RMPObject]: 'wsRMPObjectId',
 };
 const BASELINE_REQUIRE_LIST = 'MVRP_Dev,MVRP_Map';
-export class ManifolderClient extends MV.MVMF.NOTIFICATION {
+
+/**
+ * Normalize a fabric URL to a canonical form used for deterministic scope IDs.
+ * @param {string} url
+ * @returns {string}
+ */
+export function normalizeUrl(url) {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    const isDefaultHttpPort = parsed.protocol === 'http:' && parsed.port === '80';
+    const isDefaultHttpsPort = parsed.protocol === 'https:' && parsed.port === '443';
+    if (isDefaultHttpPort || isDefaultHttpsPort) {
+        parsed.port = '';
+    }
+    const normalizedPath = parsed.pathname
+        .replace(/\/{2,}/g, '/')
+        .replace(/\/+$/, '');
+    parsed.pathname = normalizedPath.length > 0 ? normalizedPath : '/';
+    parsed.hash = '';
+    const host = parsed.port
+        ? `${parsed.hostname}:${parsed.port}`
+        : parsed.hostname;
+    return `${parsed.protocol}//${host}${parsed.pathname}${parsed.search}`;
+}
+
+/**
+ * @param {string} input
+ * @returns {Promise<string>}
+ */
+async function sha256Hex(input) {
+    const isNode = typeof process !== 'undefined'
+        && !!process.versions?.node
+        && typeof window === 'undefined';
+    if (isNode) {
+        const dynamicImport = new Function('specifier', 'return import(specifier)');
+        const nodeCrypto = await dynamicImport('node:crypto');
+        return nodeCrypto.createHash('sha256').update(input, 'utf8').digest('hex');
+    }
+    if (!globalThis.crypto?.subtle) {
+        throw new Error('crypto.subtle is not available for scope ID generation');
+    }
+    const bytes = new TextEncoder().encode(input);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    const view = new Uint8Array(digest);
+    let hex = '';
+    for (const value of view) {
+        hex += value.toString(16).padStart(2, '0');
+    }
+    return hex;
+}
+
+/**
+ * @param {string} normalizedInput
+ * @returns {Promise<FabricScopeId>}
+ */
+export async function computeScopeId(normalizedInput) {
+    const hex = await sha256Hex(normalizedInput);
+    return `1_${hex.slice(0, 16)}`;
+}
+
+/**
+ * @param {string} fabricUrl
+ * @returns {Promise<FabricScopeId>}
+ */
+export async function computeRootScopeId(fabricUrl) {
+    return computeScopeId(normalizeUrl(fabricUrl));
+}
+
+/**
+ * @param {NodeUid} parentNodeUid
+ * @param {string} childFabricUrl
+ * @returns {Promise<FabricScopeId>}
+ */
+export async function computeChildScopeId(parentNodeUid, childFabricUrl) {
+    return computeScopeId(`${parentNodeUid}|${normalizeUrl(childFabricUrl)}`);
+}
+
+/**
+ * @param {FabricScopeId} scopeId
+ * @param {number} classId
+ * @param {number} numericId
+ * @returns {NodeUid}
+ */
+export function computeNodeUid(scopeId, classId, numericId) {
+    const prefix = ClassIdToPrefix[classId];
+    if (!prefix) {
+        throw new Error(`Unknown class ID ${classId}`);
+    }
+    return `${scopeId}:${prefix}:${numericId}`;
+}
+
+export class SingleScopeClient extends MV.MVMF.NOTIFICATION {
     static eSTATE = {
         NOTREADY: 0,
         LOADING: 1,
@@ -158,7 +258,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
     isDisconnecting = false;
     bootstrapRequireHandle = null;
     IsReady() {
-        return this.ReadyState?.() === ManifolderClient.eSTATE.READY;
+        return this.ReadyState?.() === SingleScopeClient.eSTATE.READY;
     }
     _acquireBootstrapRequirements() {
         if (this.bootstrapRequireHandle) {
@@ -311,7 +411,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             wait.cancel();
         }
     }
-    waitForReady(pObject, timeoutMs = 30000) {
+    waitForReady(pObject, timeoutMs = 5000) {
         if (pObject.IsReady()) {
             return Promise.resolve();
         }
@@ -360,7 +460,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
                 this._emit('modelReady', { mvmfModel: pObject });
                 if (pObject === this.pRMRoot && !this.rootReadyEmitted) {
                     this.rootReadyEmitted = true;
-                    this.ReadyState?.(ManifolderClient.eSTATE.READY);
+                    this.ReadyState?.(SingleScopeClient.eSTATE.READY);
                     this._collectSearchableIndices(pObject);
                     this._emit('status', 'Map loaded');
                     this._emit('mapData', pObject);
@@ -610,7 +710,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         this.rootReadyEmitted = false;
         this.searchableRMCObjectIndices = [];
         this.searchableRMTObjectIndices = [];
-        this.ReadyState?.(ManifolderClient.eSTATE.LOADING);
+        this.ReadyState?.(SingleScopeClient.eSTATE.LOADING);
         this._emit('status', 'Loading map config...');
         ++this.connectionGeneration;
         const capturedGeneration = this.connectionGeneration;
@@ -797,14 +897,14 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
     };
     static CHILD_CLASS_TYPES = ['RMPObject', 'RMTObject', 'RMCObject'];
     async openWithKnownType(objectId, classId, timeoutMs) {
-        const modelType = ManifolderClient.CLASS_ID_TO_TYPE[classId];
+        const modelType = SingleScopeClient.CLASS_ID_TO_TYPE[classId];
         if (!modelType) {
             throw new Error(`Unknown class ID: ${classId}`);
         }
         return await this.openAndWait(modelType, objectId, timeoutMs);
     }
     enumAllChildTypes(pObject, callback) {
-        for (const childType of ManifolderClient.CHILD_CLASS_TYPES) {
+        for (const childType of SingleScopeClient.CHILD_CLASS_TYPES) {
             pObject.Child_Enum(childType, this, callback, null);
         }
     }
@@ -822,13 +922,6 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         if (mvmfModel.IsReady?.()) {
             this._emit('modelReady', { mvmfModel });
         }
-    }
-    /**
-     * @param {ModelRef} params
-     * @returns {void}
-     */
-    subscribe({ sID, twObjectIx }) {
-        this.openModel({ sID, twObjectIx });
     }
     /**
      * @param {ModelRef} params
@@ -1095,7 +1188,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             this.searchableRMCObjectIndices = [];
             this.searchableRMTObjectIndices = [];
             this.rootReadyEmitted = false;
-            this.ReadyState?.(ManifolderClient.eSTATE.NOTREADY);
+            this.ReadyState?.(SingleScopeClient.eSTATE.NOTREADY);
             this._emit('status', 'Disconnected from server');
             this._emit('disconnected');
         }
@@ -1736,6 +1829,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             if (id === 'root' || this.objectCache.has(id))
                 idsToPreload.delete(id);
         }
+        const prefetchFailed = new Set();
         if (idsToPreload.size > 0) {
             debugLog(`[bulkUpdate] pre-fetching ${idsToPreload.size} objects`);
             for (const id of idsToPreload) {
@@ -1746,10 +1840,21 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
                 }
                 catch (err) {
                     debugLog(`[bulkUpdate] pre-fetch failed for ${id}: ${err.message}`);
+                    prefetchFailed.add(id);
                 }
             }
         }
+        const getFailedId = (op) => {
+            const ids = op.type === 'create' ? [op.params.parentId]
+                : op.type === 'move' ? [op.params.objectId, op.params.newParentId]
+                : [op.params.objectId];
+            return ids.find(id => prefetchFailed.has(id));
+        };
         const executeOp = async (op) => {
+            const badId = getFailedId(op);
+            if (badId) {
+                throw new Error(`Object not found: ${badId}`);
+            }
             switch (op.type) {
                 case 'create': {
                     const createParams = op.params;
@@ -1901,7 +2006,7 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             await this.connect(this.fabricUrl, this.adminKey);
             return;
         }
-        throw new Error('Not connected. Call fabric_connect first.');
+        throw new Error('Not connected. Call connect() or connectRoot() first.');
     }
     static TERM_SUBSTITUTIONS = [
         [/\bRMCObject\b/gi, 'celestial'],
@@ -1937,12 +2042,12 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
             'terrestrial:parcel is the only terrestrial type that accepts physical children'],
     ];
     translateError(raw) {
-        for (const [pattern, replacement] of ManifolderClient.ERROR_REWRITES) {
+        for (const [pattern, replacement] of SingleScopeClient.ERROR_REWRITES) {
             if (pattern.test(raw))
                 return replacement;
         }
         let translated = raw;
-        for (const [pattern, replacement] of ManifolderClient.TERM_SUBSTITUTIONS) {
+        for (const [pattern, replacement] of SingleScopeClient.TERM_SUBSTITUTIONS) {
             translated = translated.replace(pattern, replacement);
         }
         return translated;
@@ -2062,9 +2167,642 @@ export class ManifolderClient extends MV.MVMF.NOTIFICATION {
         return this.pFabric?.pMSFConfig?.map?.sRootUrl || '';
     }
 }
+/**
+ * @param {FabricScopeId} scopeId
+ * @returns {Error}
+ */
+function createScopeClosingError(scopeId) {
+    const err = new Error(`Scope is closing: ${scopeId}`);
+    err.code = 'SCOPE_CLOSING';
+    err.scopeId = scopeId;
+    return err;
+}
+/**
+ * @param {BulkOperation[]} operations
+ * @returns {string[]}
+ */
+function getBulkOperationInvalidationIds(operations) {
+    if (!Array.isArray(operations)) {
+        return [];
+    }
+    const ids = [];
+    for (const operation of operations) {
+        const params = operation?.params ?? {};
+        if (operation?.type === 'create') {
+            ids.push(params.parentId);
+            continue;
+        }
+        if (operation?.type === 'update' || operation?.type === 'delete') {
+            ids.push(params.objectId);
+            continue;
+        }
+        if (operation?.type === 'move') {
+            ids.push(params.objectId, params.newParentId);
+        }
+    }
+    return ids.filter((value) => typeof value === 'string' && value.length > 0);
+}
+export class ManifolderClient {
+    /** @type {Map<FabricScopeId, ScopeInfo>} */
+    scopeRegistry = new Map();
+    scopeRuntimes = new Map();
+    rootConnectInFlight = new Map();
+    closingScopes = new Set();
+    callbacks = {
+        connected: [],
+        disconnected: [],
+        error: [],
+        status: [],
+        mapData: [],
+        nodeInserted: [],
+        nodeUpdated: [],
+        nodeDeleted: [],
+        modelReady: [],
+    };
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
+    on(event, handler) {
+        if (this.callbacks[event]) {
+            this.callbacks[event].push(handler);
+        }
+    }
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
+    off(event, handler) {
+        if (!this.callbacks[event]) {
+            return;
+        }
+        const index = this.callbacks[event].indexOf(handler);
+        if (index !== -1) {
+            this.callbacks[event].splice(index, 1);
+        }
+    }
+    _emit(event, data) {
+        this.callbacks[event]?.forEach((handler) => {
+            try {
+                handler(data);
+            }
+            catch {
+                // handler errors should not propagate
+            }
+        });
+    }
+    get connected() {
+        for (const runtime of this.scopeRuntimes.values()) {
+            if (runtime.connected) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /**
+     * @param {ScopeInfo} scopeInfo
+     * @returns {ScopeInfo}
+     */
+    _registerScope(scopeInfo) {
+        this.scopeRegistry.set(scopeInfo.scopeId, { ...scopeInfo });
+        return this.scopeRegistry.get(scopeInfo.scopeId);
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {boolean}
+     */
+    _unregisterScope(scopeId) {
+        return this.scopeRegistry.delete(scopeId);
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {ScopeInfo | null}
+     */
+    _getScope(scopeId) {
+        return this.scopeRegistry.get(scopeId) ?? null;
+    }
+    /**
+     * @returns {ScopeInfo[]}
+     */
+    listScopes() {
+        return Array.from(this.scopeRegistry.values()).map((scope) => ({ ...scope }));
+    }
+    /**
+     * @param {FabricScopeId} candidateChildScopeId
+     * @param {FabricScopeId} currentScopeId
+     * @returns {{ isCycle: true; existingScopeId: FabricScopeId } | { isCycle: false }}
+     */
+    _detectCycle(candidateChildScopeId, currentScopeId) {
+        let cursorScopeId = currentScopeId;
+        while (cursorScopeId) {
+            if (cursorScopeId === candidateChildScopeId) {
+                return { isCycle: true, existingScopeId: cursorScopeId };
+            }
+            cursorScopeId = this.scopeRegistry.get(cursorScopeId)?.parentScopeId ?? null;
+        }
+        return { isCycle: false };
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {SingleScopeClient}
+     */
+    _requireScopeRuntime(scopeId) {
+        if (this.closingScopes.has(scopeId)) {
+            throw createScopeClosingError(scopeId);
+        }
+        const runtime = this.scopeRuntimes.get(scopeId);
+        if (!runtime) {
+            throw new Error(`Scope not found: ${scopeId}`);
+        }
+        return runtime;
+    }
+    /**
+     * @returns {SingleScopeClient}
+     */
+    _createScopeRuntime() {
+        return new SingleScopeClient();
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {SingleScopeClient} runtime
+     * @returns {void}
+     */
+    _wireScopeRuntime(scopeId, runtime) {
+        const getScopeInfo = () => this.scopeRegistry.get(scopeId);
+
+        const modelNodeUid = (model) =>
+            model?.wClass_Object && model?.twObjectIx
+                ? computeNodeUid(scopeId, model.wClass_Object, model.twObjectIx)
+                : null;
+
+        const classNodeUid = (className, id) => {
+            const classId = this._classNameToId(className);
+            return classId && id != null ? computeNodeUid(scopeId, classId, id) : null;
+        };
+
+        runtime.on('connected', () => {
+            const scopeInfo = getScopeInfo();
+            this._emit('connected', {
+                scopeId,
+                parentScopeId: scopeInfo?.parentScopeId ?? null,
+                depth: scopeInfo?.depth ?? 0,
+            });
+        });
+        runtime.on('disconnected', () => {
+            const scopeInfo = getScopeInfo();
+            this._emit('disconnected', {
+                scopeId,
+                parentScopeId: scopeInfo?.parentScopeId ?? null,
+                depth: scopeInfo?.depth ?? 0,
+            });
+        });
+        runtime.on('error', (error) => {
+            if (error && typeof error === 'object' && !Object.prototype.hasOwnProperty.call(error, 'scopeId')) {
+                try {
+                    error.scopeId = scopeId;
+                }
+                catch {
+                    // Best effort scope attribution.
+                }
+            }
+            this._emit('error', error);
+        });
+        runtime.on('status', (status) => {
+            const scopeInfo = getScopeInfo();
+            if (scopeInfo?.parentScopeId === null) {
+                this._emit('status', status);
+            }
+        });
+        runtime.on('mapData', ({ mvmfModel }) => {
+            this._emit('mapData', { scopeId, nodeUid: modelNodeUid(mvmfModel), mvmfModel });
+        });
+        runtime.on('modelReady', ({ mvmfModel }) => {
+            this._emit('modelReady', { scopeId, nodeUid: modelNodeUid(mvmfModel), mvmfModel });
+        });
+        runtime.on('nodeInserted', ({ mvmfModel, parentType, parentId }) => {
+            this._emit('nodeInserted', {
+                scopeId,
+                nodeUid: modelNodeUid(mvmfModel),
+                parentNodeUid: classNodeUid(parentType, parentId),
+                mvmfModel,
+                parentType,
+                parentId,
+            });
+        });
+        runtime.on('nodeUpdated', ({ id, type, mvmfModel }) => {
+            const classId = mvmfModel?.wClass_Object ?? this._classNameToId(type);
+            this._emit('nodeUpdated', {
+                scopeId,
+                nodeUid: classId && id != null ? computeNodeUid(scopeId, classId, id) : null,
+                id,
+                type,
+                mvmfModel,
+            });
+        });
+        runtime.on('nodeDeleted', ({ id, type, sourceParentType, sourceParentId }) => {
+            this._emit('nodeDeleted', {
+                scopeId,
+                nodeUid: classNodeUid(type, id),
+                parentNodeUid: classNodeUid(sourceParentType, sourceParentId),
+                id,
+                type,
+                sourceParentType,
+                sourceParentId,
+            });
+        });
+    }
+    /**
+     * @template {keyof SingleScopeClient} TMethodName
+     * @param {SingleScopeClient} runtime
+     * @param {TMethodName} methodName
+     * @param {...any} args
+     * @returns {any}
+     */
+    /**
+     * @param {string | null | undefined} className
+     * @returns {number | null}
+     */
+    _classNameToId(className) {
+        return ClassIds[className] ?? null;
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {FabricObject} obj
+     * @returns {FabricObject}
+     */
+    _enrichObjectWithScope(scopeId, obj) {
+        const { classId, numericId } = parseObjectRef(obj.id);
+        const nodeUid = computeNodeUid(scopeId, classId, numericId);
+        let parentNodeUid = null;
+        if (obj.parentId) {
+            const parsedParent = parseObjectRef(obj.parentId);
+            parentNodeUid = computeNodeUid(scopeId, parsedParent.classId, parsedParent.numericId);
+        }
+        return {
+            ...obj,
+            scopeId,
+            nodeUid,
+            parentNodeUid,
+        };
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {string | null}
+     */
+    _getScopeFabricKey(scopeId) {
+        const scopeInfo = this.scopeRegistry.get(scopeId);
+        if (!scopeInfo?.fabricUrl) {
+            return null;
+        }
+        try {
+            return normalizeUrl(scopeInfo.fabricUrl);
+        }
+        catch {
+            return scopeInfo.fabricUrl;
+        }
+    }
+    /**
+     * Invalidate object cache entries across all open scopes connected to the same fabric URL.
+     * @param {FabricScopeId} scopeId
+     * @param {string} objectId
+     * @returns {void}
+     */
+    _invalidateObjectCachesAcrossFabric(scopeId, objectId) {
+        if (!objectId) {
+            return;
+        }
+        const sourceFabricKey = this._getScopeFabricKey(scopeId);
+        if (!sourceFabricKey) {
+            return;
+        }
+        for (const [candidateScopeId] of this.scopeRegistry.entries()) {
+            const runtime = this.scopeRuntimes.get(candidateScopeId);
+            if (!runtime?.objectCache) {
+                continue;
+            }
+            const candidateFabricKey = this._getScopeFabricKey(candidateScopeId);
+            if (candidateFabricKey !== sourceFabricKey) {
+                continue;
+            }
+            const cachedModel = runtime.objectCache.get(objectId);
+            if (cachedModel?.sID && Number.isInteger(cachedModel.twObjectIx)) {
+                try {
+                    runtime.closeModel({ sID: cachedModel.sID, twObjectIx: cachedModel.twObjectIx });
+                }
+                catch {
+                    // best effort close
+                }
+            }
+            runtime.objectCache.delete(objectId);
+        }
+    }
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {Array<string | null | undefined>} objectIds
+     * @returns {void}
+     */
+    _invalidateObjectIdsAcrossFabric(scopeId, objectIds) {
+        if (!Array.isArray(objectIds) || objectIds.length === 0) {
+            return;
+        }
+        const uniqueIds = new Set(objectIds.filter((value) => typeof value === 'string' && value.length > 0));
+        for (const objectId of uniqueIds) {
+            this._invalidateObjectCachesAcrossFabric(scopeId, objectId);
+        }
+    }
+    async connectRoot({ fabricUrl, adminKey = '', timeoutMs = 60000 }) {
+        const scopeId = await computeRootScopeId(fabricUrl);
+        if (this.closingScopes.has(scopeId)) {
+            throw createScopeClosingError(scopeId);
+        }
+        const existingConnect = this.rootConnectInFlight.get(scopeId);
+        if (existingConnect) {
+            return existingConnect;
+        }
+        const connectPromise = (async () => {
+            const existingScope = this.scopeRegistry.get(scopeId);
+            if (existingScope) {
+                const runtime = this._requireScopeRuntime(scopeId);
+                if (!runtime.connected) {
+                    await runtime.connect(existingScope.fabricUrl, { adminKey, timeoutMs }, timeoutMs);
+                }
+                const rootModel = runtime.pRMRoot;
+                const rootClassId = rootModel?.wClass_Object ?? ClassIds.RMRoot;
+                const rootObjectIx = rootModel?.twObjectIx ?? 1;
+                return {
+                    scopeId,
+                    rootObjectId: rootModel ? runtime.getPrefixedId(rootModel) : 'root',
+                    rootNodeUid: computeNodeUid(scopeId, rootClassId, rootObjectIx),
+                    rootModel,
+                };
+            }
+            const runtime = this._createScopeRuntime();
+            await runtime.connect(fabricUrl, { adminKey, timeoutMs }, timeoutMs);
+            this._wireScopeRuntime(scopeId, runtime);
+            this.scopeRuntimes.set(scopeId, runtime);
+            const registered = this._registerScope({
+                scopeId,
+                fabricUrl,
+                parentScopeId: null,
+                attachmentNodeUid: null,
+                depth: 0,
+            });
+            const rootModel = runtime.pRMRoot;
+            const rootClassId = rootModel?.wClass_Object ?? ClassIds.RMRoot;
+            const rootObjectIx = rootModel?.twObjectIx ?? 1;
+            return {
+                scopeId: registered.scopeId,
+                rootObjectId: rootModel ? runtime.getPrefixedId(rootModel) : 'root',
+                rootNodeUid: computeNodeUid(scopeId, rootClassId, rootObjectIx),
+                rootModel,
+            };
+        })();
+        this.rootConnectInFlight.set(scopeId, connectPromise);
+        try {
+            return await connectPromise;
+        }
+        finally {
+            if (this.rootConnectInFlight.get(scopeId) === connectPromise) {
+                this.rootConnectInFlight.delete(scopeId);
+            }
+        }
+    }
+    async closeScope({ scopeId, cascade = false }) {
+        if (!this.scopeRegistry.has(scopeId)) {
+            throw new Error(`Scope not found: ${scopeId}`);
+        }
+        const toClose = new Set([scopeId]);
+        if (cascade) {
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const scope of this.scopeRegistry.values()) {
+                    if (!scope.parentScopeId || toClose.has(scope.scopeId)) {
+                        continue;
+                    }
+                    if (toClose.has(scope.parentScopeId)) {
+                        toClose.add(scope.scopeId);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        const ordered = Array.from(toClose).sort((a, b) => {
+            const depthA = this.scopeRegistry.get(a)?.depth ?? 0;
+            const depthB = this.scopeRegistry.get(b)?.depth ?? 0;
+            return depthB - depthA;
+        });
+        for (const closingScopeId of ordered) {
+            this.closingScopes.add(closingScopeId);
+        }
+        try {
+            for (const closingScopeId of ordered) {
+                this.rootConnectInFlight.delete(closingScopeId);
+                const runtime = this.scopeRuntimes.get(closingScopeId);
+                if (runtime) {
+                    await Promise.resolve(runtime.disconnect()).catch(() => { });
+                    this.scopeRuntimes.delete(closingScopeId);
+                }
+                this._unregisterScope(closingScopeId);
+            }
+        }
+        finally {
+            for (const closingScopeId of ordered) {
+                this.closingScopes.delete(closingScopeId);
+            }
+        }
+        return { closedScopeIds: ordered };
+    }
+    getScopeStatus({ scopeId }) {
+        const status = this._requireScopeRuntime(scopeId).getStatus();
+        return {
+            ...status,
+            scopeId,
+        };
+    }
+    getResourceRootUrl({ scopeId }) {
+        return this._requireScopeRuntime(scopeId).getResourceRootUrl();
+    }
+    openModel({ scopeId, sID, twObjectIx }) {
+        return this._requireScopeRuntime(scopeId).openModel({ sID, twObjectIx });
+    }
+    closeModel({ scopeId, sID, twObjectIx }) {
+        return this._requireScopeRuntime(scopeId).closeModel({ sID, twObjectIx });
+    }
+    enumerateChildren({ scopeId, model }) {
+        return this._requireScopeRuntime(scopeId).enumerateChildren(model);
+    }
+    async searchNodes({ scopeId, searchText }) {
+        return this._requireScopeRuntime(scopeId).searchNodes(searchText);
+    }
+    async listScenes({ scopeId }) {
+        const scenes = await this._requireScopeRuntime(scopeId).listScenes();
+        return scenes.map((scene) => ({ ...scene, scopeId }));
+    }
+    async openScene({ scopeId, sceneId }) {
+        const obj = await this._requireScopeRuntime(scopeId).openScene(sceneId);
+        return this._enrichObjectWithScope(scopeId, obj);
+    }
+    async createScene({ scopeId, name, objectType }) {
+        const scene = await this._requireScopeRuntime(scopeId).createScene(name, objectType);
+        return { ...scene, scopeId };
+    }
+    async deleteScene({ scopeId, sceneId }) {
+        return this._requireScopeRuntime(scopeId).deleteScene(sceneId);
+    }
+    async listObjects({ scopeId, anchorObjectId, filter }) {
+        const objects = await this._requireScopeRuntime(scopeId).listObjects(anchorObjectId, filter);
+        return objects.map((obj) => this._enrichObjectWithScope(scopeId, obj));
+    }
+    async getObject({ scopeId, objectId }) {
+        const obj = await this._requireScopeRuntime(scopeId).getObject(objectId);
+        return this._enrichObjectWithScope(scopeId, obj);
+    }
+    async createObject({ scopeId, ...createParams }) {
+        const obj = await this._requireScopeRuntime(scopeId).createObject(createParams);
+        this._invalidateObjectIdsAcrossFabric(scopeId, [createParams.parentId, obj?.id ?? null]);
+        return this._enrichObjectWithScope(scopeId, obj);
+    }
+    async updateObject({ scopeId, ...updateParams }) {
+        const obj = await this._requireScopeRuntime(scopeId).updateObject(updateParams);
+        this._invalidateObjectIdsAcrossFabric(scopeId, [updateParams.objectId, obj?.parentId ?? null]);
+        return this._enrichObjectWithScope(scopeId, obj);
+    }
+    async deleteObject({ scopeId, objectId }) {
+        const runtime = this._requireScopeRuntime(scopeId);
+        const cached = runtime.objectCache?.get(objectId);
+        const parentId = cached?.wClass_Parent && Number.isInteger(cached?.twParentIx)
+            ? formatObjectRef(cached.wClass_Parent, cached.twParentIx)
+            : null;
+        await runtime.deleteObject(objectId);
+        this._invalidateObjectIdsAcrossFabric(scopeId, [objectId, parentId]);
+    }
+    async moveObject({ scopeId, objectId, newParentId, skipRefetch }) {
+        const runtime = this._requireScopeRuntime(scopeId);
+        const cached = runtime.objectCache?.get(objectId);
+        const oldParentId = cached?.wClass_Parent && Number.isInteger(cached?.twParentIx)
+            ? formatObjectRef(cached.wClass_Parent, cached.twParentIx)
+            : null;
+        const obj = await runtime.moveObject(objectId, newParentId, skipRefetch);
+        this._invalidateObjectIdsAcrossFabric(scopeId, [objectId, newParentId, oldParentId, obj?.parentId ?? null]);
+        return this._enrichObjectWithScope(scopeId, obj);
+    }
+    async bulkUpdate({ scopeId, operations }) {
+        const result = await this._requireScopeRuntime(scopeId).bulkUpdate(operations);
+        const createdIds = Array.isArray(result?.createdIds) ? result.createdIds : [];
+        this._invalidateObjectIdsAcrossFabric(scopeId, [...getBulkOperationInvalidationIds(operations), ...createdIds]);
+        return result;
+    }
+    async findObjects({ scopeId, anchorObjectId, query }) {
+        const objects = await this._requireScopeRuntime(scopeId).findObjects(anchorObjectId, query);
+        return objects.map((obj) => this._enrichObjectWithScope(scopeId, obj));
+    }
+    async followAttachment({ scopeId, objectId, autoOpenRoot = true }) {
+        const parentRuntime = this._requireScopeRuntime(scopeId);
+        let attachmentObject;
+        try {
+            attachmentObject = await parentRuntime.getObject(objectId);
+        }
+        catch (error) {
+            const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+            const invalidRef = message.includes('invalid object reference')
+                || message.includes('unknown class prefix')
+                || message.includes('invalid numeric id');
+            const missingObject = message.includes('not found')
+                || message.includes('failed to open')
+                || message.includes('cannot find');
+            if (!invalidRef && missingObject) {
+                const err = new Error(`Attachment object not found: ${objectId}`);
+                err.code = 'ATTACHMENT_NOT_FOUND';
+                err.scopeId = scopeId;
+                err.details = { objectId };
+                throw err;
+            }
+            throw error;
+        }
+        const msfReference = await getMsfReference({
+            resourceRef: attachmentObject.resourceReference,
+            properties: {
+                pResource: {
+                    sReference: attachmentObject.resourceReference,
+                },
+            },
+        });
+        if (!msfReference) {
+            const err = new Error(`Object ${objectId} is not an attachment point`);
+            err.code = 'ATTACHMENT_REFERENCE_INVALID';
+            err.scopeId = scopeId;
+            throw err;
+        }
+        const parsedAttachment = parseObjectRef(attachmentObject.id);
+        const attachmentNodeUid = computeNodeUid(scopeId, parsedAttachment.classId, parsedAttachment.numericId);
+        const childScopeId = await computeChildScopeId(attachmentNodeUid, msfReference);
+        const cycleCheck = this._detectCycle(childScopeId, scopeId);
+        if (cycleCheck.isCycle) {
+            const existingScopeInfo = this.scopeRegistry.get(cycleCheck.existingScopeId);
+            const existingRuntime = this.scopeRuntimes.get(cycleCheck.existingScopeId);
+            const existingRoot = existingRuntime?.pRMRoot;
+            const existingNodeUid = existingRoot
+                ? computeNodeUid(cycleCheck.existingScopeId, existingRoot.wClass_Object ?? ClassIds.RMRoot, existingRoot.twObjectIx ?? 1)
+                : (existingScopeInfo?.attachmentNodeUid || cycleCheck.existingScopeId);
+            const existingLabel = existingRoot
+                ? (existingRuntime.getObjectName(existingRoot) || existingScopeInfo?.fabricUrl || cycleCheck.existingScopeId)
+                : (existingScopeInfo?.fabricUrl || cycleCheck.existingScopeId);
+            const err = new Error(`Attachment cycle detected for scope ${childScopeId}`);
+            err.code = 'ATTACHMENT_CYCLE_DETECTED';
+            err.scopeId = scopeId;
+            err.nodeUid = attachmentNodeUid;
+            err.details = {
+                existingNodeUid,
+                existingLabel,
+            };
+            throw err;
+        }
+        let childRuntime = this.scopeRuntimes.get(childScopeId);
+        let reused = true;
+        if (!childRuntime) {
+            reused = false;
+            childRuntime = this._createScopeRuntime();
+            await childRuntime.connect(msfReference, { adminKey: '' }, 60000);
+            this._wireScopeRuntime(childScopeId, childRuntime);
+            this.scopeRuntimes.set(childScopeId, childRuntime);
+            const parentScopeInfo = this.scopeRegistry.get(scopeId);
+            this._registerScope({
+                scopeId: childScopeId,
+                fabricUrl: msfReference,
+                parentScopeId: scopeId,
+                attachmentNodeUid,
+                depth: (parentScopeInfo?.depth ?? 0) + 1,
+            });
+        }
+        const result = {
+            parentScopeId: scopeId,
+            attachmentNodeUid,
+            childScopeId,
+            childFabricUrl: msfReference,
+            reused,
+        };
+        if (autoOpenRoot) {
+            const root = childRuntime.pRMRoot;
+            if (root) {
+                result.root = {
+                    id: childRuntime.getPrefixedId(root),
+                    name: childRuntime.getObjectName(root),
+                    childCount: root.nChildren ?? 0,
+                };
+            }
+        }
+        return result;
+    }
+}
 const COMMON_CLIENT_METHODS = /** @type {const} */ ([
-    'connect',
-    'disconnect',
+    'connectRoot',
+    'closeScope',
+    'getScopeStatus',
+    'listScopes',
+    'followAttachment',
     'getResourceRootUrl',
 ]);
 const SUBSCRIPTION_ONLY_METHODS = /** @type {const} */ ([
@@ -2072,12 +2810,10 @@ const SUBSCRIPTION_ONLY_METHODS = /** @type {const} */ ([
     'off',
     'openModel',
     'closeModel',
-    'subscribe',
     'enumerateChildren',
     'searchNodes',
 ]);
 const PROMISE_ONLY_METHODS = /** @type {const} */ ([
-    'getStatus',
     'listScenes',
     'openScene',
     'createScene',

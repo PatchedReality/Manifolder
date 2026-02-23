@@ -13,10 +13,34 @@ const NAME_FIELDS = {
   RMPObject: 'wsRMPObjectId'
 };
 
+const TYPE_TO_PREFIX = {
+  RMRoot: 'root',
+  RMCObject: 'celestial',
+  RMTObject: 'terrestrial',
+  RMPObject: 'physical',
+};
+
 const TIME_UNIT_TO_SECONDS = 1 / 64;
 
 export class NodeAdapter {
-  static fromSearchResult({ id, name, type, nodeType }) {
+  static scopeResourceRoots = new Map();
+
+
+  static setScopeResourceRoot(scopeId, rootUrl) {
+    if (!scopeId) return;
+    if (!rootUrl) {
+      NodeAdapter.scopeResourceRoots.delete(scopeId);
+      return;
+    }
+    NodeAdapter.scopeResourceRoots.set(scopeId, rootUrl.endsWith('/') ? rootUrl : `${rootUrl}/`);
+  }
+
+  static getScopeResourceRoot(scopeId) {
+    if (!scopeId) return null;
+    return NodeAdapter.scopeResourceRoots.get(scopeId) || null;
+  }
+
+  static fromSearchResult({ id, name, type, nodeType, scopeId }) {
     const nameField = NAME_FIELDS[type];
     const stub = {
       sID: type,
@@ -30,13 +54,14 @@ export class NodeAdapter {
     if (nodeType !== undefined) {
       stub.pType = { bType: nodeType };
     }
-    const adapter = new NodeAdapter(stub);
+    const adapter = new NodeAdapter(stub, scopeId);
     adapter._isSearchStub = true;
     return adapter;
   }
 
-  constructor(model) {
+  constructor(model, scopeId = null) {
     this._model = model;
+    this.fabricScopeId = scopeId || model?.scopeId || model?.__scopeId || 'fs1_unknown';
     this.children = [];
     this._parent = null;
     this._isLoading = false;
@@ -55,7 +80,13 @@ export class NodeAdapter {
 
   get id() { return this._model.twObjectIx; }
 
-  get key() { return `${this.type}_${this.id}`; }
+  get nodeUid() {
+    if (this._model?.nodeUid) return this._model.nodeUid;
+    const typePrefix = TYPE_TO_PREFIX[this.type] || this.type.toLowerCase();
+    return `${this.fabricScopeId}:${typePrefix}:${this.id}`;
+  }
+
+  get key() { return this.nodeUid; }
 
   get name() {
     const nameField = NAME_FIELDS[this.type];
@@ -178,7 +209,9 @@ export class NodeAdapter {
   }
 
   get hasChildren() {
-    return (this._model.nChildren || 0) > 0 || this.children.length > 0;
+    return (this._model.nChildren || 0) > 0
+      || this.children.length > 0
+      || this._model.__attachmentExpandable === true;
   }
 
   get resourceUrl() {
@@ -271,6 +304,7 @@ export class NodeAdapter {
 
   _resolveResourceUrl(pResource) {
     if (!pResource) return null;
+    const scopeBaseUrl = NodeAdapter.scopeResourceRoots.get(this.fabricScopeId) || null;
 
     const ref = pResource.sReference;
     const name = pResource.sName;
@@ -280,11 +314,11 @@ export class NodeAdapter {
     }
 
     if (ref && ref.startsWith('action://') && name) {
-      return resolveResourceUrl(name);
+      return resolveResourceUrl(name, scopeBaseUrl);
     }
 
     if (ref) {
-      return resolveResourceUrl(ref);
+      return resolveResourceUrl(ref, scopeBaseUrl);
     }
 
     return null;

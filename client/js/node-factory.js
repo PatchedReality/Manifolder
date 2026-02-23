@@ -6,6 +6,7 @@
  */
 
 import { resolveResourceUrl } from './node-helpers.js';
+import { NodeAdapter } from './node-adapter.js';
 
 export class NodeFactory {
   static async getResourceData(node) {
@@ -13,7 +14,8 @@ export class NodeFactory {
     if (node._resourceData !== undefined) return node._resourceData;
     if (node._resourceLoading) return node._resourceLoading;
 
-    node._resourceLoading = this.#fetchAndProcessResource(node.resourceUrl);
+    const scopeBaseUrl = NodeAdapter.getScopeResourceRoot(node.fabricScopeId);
+    node._resourceLoading = this.#fetchAndProcessResource(node.resourceUrl, scopeBaseUrl);
     try {
       node._resourceData = await node._resourceLoading;
     } catch (err) {
@@ -24,7 +26,7 @@ export class NodeFactory {
     return node._resourceData;
   }
 
-  static async #fetchAndProcessResource(url) {
+  static async #fetchAndProcessResource(url, scopeBaseUrl = null) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -34,10 +36,10 @@ export class NodeFactory {
     }
 
     const json = await response.json();
-    return this.#processResourceJson(json, url);
+    return this.#processResourceJson(json, url, scopeBaseUrl);
   }
 
-  static #processResourceJson(json, resourceUrl) {
+  static #processResourceJson(json, resourceUrl, scopeBaseUrl = null) {
     const baseDir = resourceUrl.substring(0, resourceUrl.lastIndexOf('/') + 1);
 
     if (json.lods || json.LODs) {
@@ -45,7 +47,7 @@ export class NodeFactory {
     }
 
     if (json.body?.blueprint) {
-      return this.#processBlueprintResource(json);
+      return this.#processBlueprintResource(json, scopeBaseUrl);
     }
 
     return json;
@@ -72,17 +74,17 @@ export class NodeFactory {
     return result;
   }
 
-  static #processBlueprintResource(json) {
+  static #processBlueprintResource(json, scopeBaseUrl = null) {
     const result = JSON.parse(JSON.stringify(json));
 
     const hasFileExtension = (str) => /\.[a-zA-Z0-9]+$/.test(str);
 
     const processNode = (node) => {
       if (node.resourceReference && !node.resourceReference.startsWith('action://')) {
-        node._resourceReferenceUrl = resolveResourceUrl(node.resourceReference);
+        node._resourceReferenceUrl = resolveResourceUrl(node.resourceReference, scopeBaseUrl);
       }
       if (node.resourceName && hasFileExtension(node.resourceName)) {
-        node._resourceNameUrl = resolveResourceUrl('action://' + node.resourceName);
+        node._resourceNameUrl = resolveResourceUrl('action://' + node.resourceName, scopeBaseUrl);
       }
       if (node.children) {
         node.children.forEach(processNode);

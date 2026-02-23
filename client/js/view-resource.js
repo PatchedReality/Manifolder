@@ -12,6 +12,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import Hls from 'hls.js';
 import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
 import { resolveResourceUrl } from './node-helpers.js';
+import { NodeAdapter } from './node-adapter.js';
 import { calculateSunPosition, getSunLightingParams, calculateLatLong } from './geo-utils.js';
 import { NODE_COLORS } from '../shared/node-types.js';
 
@@ -556,7 +557,7 @@ export class ViewResource {
       return;
     }
 
-    const nodeKey = `${node.type}_${node.id}`;
+    const nodeKey = this.model.nodeKey(node);
     const cacheKey = `${nodeKey}:${resourceUrls.sort().join('|')}`;
 
     if (cacheKey === this.currentResourceUrl && !this.isLoading) {
@@ -629,10 +630,14 @@ export class ViewResource {
     group.scale.set(scl.x, scl.y, scl.z);
   }
 
+  _getScopeBaseUrl(node = this.currentNode) {
+    return NodeAdapter.getScopeResourceRoot(node?.fabricScopeId || null);
+  }
+
   async _drawNode(node, parentGroup, requestId, isRoot = false) {
     if (requestId !== null && requestId !== this.loadRequestId) return;
 
-    const nodeKey = `${node.type}_${node.id}`;
+    const nodeKey = this.model.nodeKey(node);
     const isNew = !this.nodeGroups.has(nodeKey);
 
     const hasResource = !!node.resourceUrl;
@@ -1003,9 +1008,9 @@ export class ViewResource {
     return false;
   }
 
-  async fetchResourceJson(resourceName, requestId = null) {
+  async fetchResourceJson(resourceName, requestId = null, scopeBaseUrl = null) {
     if (!resourceName) return null;
-    const url = resolveResourceUrl(resourceName);
+    const url = resolveResourceUrl(resourceName, scopeBaseUrl);
     if (!url) {
       console.warn('fetchResourceJson: Could not resolve URL for', resourceName);
       return null;
@@ -1026,7 +1031,7 @@ export class ViewResource {
   }
 
   async setupRotator(rotatorNode, targetGroup, requestId = null) {
-    const data = await this.fetchResourceJson(rotatorNode.resourceName, requestId);
+    const data = await this.fetchResourceJson(rotatorNode.resourceName, requestId, this._getScopeBaseUrl());
     if (!data) return;
 
     const parentLevels = data?.body?.parent || 0;
@@ -1084,7 +1089,7 @@ export class ViewResource {
     model.applyMatrix4(offsetMatrix);
   }
 
-  async loadPhysicalObject(obj, requestId = null) {
+  async loadPhysicalObject(obj, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     const { resourceReference, resourceName, objectBounds, transform } = obj;
 
     // Extract action type from action:// references (strip .json if present)
@@ -1095,17 +1100,17 @@ export class ViewResource {
 
     // Handle point lights
     if (actionType === 'pointlight') {
-      return this.loadPointLight(resourceName, transform, requestId);
+      return this.loadPointLight(resourceName, transform, requestId, scopeBaseUrl);
     }
 
     // Handle text sprites
     if (actionType === 'showtext') {
-      return this.loadTextSprite(resourceName, transform, objectBounds, requestId);
+      return this.loadTextSprite(resourceName, transform, objectBounds, requestId, scopeBaseUrl);
     }
 
     // Handle video planes
     if (actionType === 'video') {
-      return this.loadVideoPlane(resourceName, transform, objectBounds, requestId);
+      return this.loadVideoPlane(resourceName, transform, objectBounds, requestId, scopeBaseUrl);
     }
 
     // Skip non-visual action types (behavioral, UI, sync components)
@@ -1132,7 +1137,7 @@ export class ViewResource {
 
     // Handle nested scenes (action://scene means load resourceName as another scene)
     if (actionType === 'scene' && resourceName) {
-      return this.loadNestedScene(resourceName, transform, requestId);
+      return this.loadNestedScene(resourceName, transform, requestId, scopeBaseUrl);
     }
 
     // Handle direct GLB/GLTF references
@@ -1146,7 +1151,7 @@ export class ViewResource {
     }
 
     // Handle metadata files with LODs
-    const { metadata, baseDir } = await this.loadMetadata(resourceReference);
+    const { metadata, baseDir } = await this.loadMetadata(resourceReference, scopeBaseUrl);
     const lods = metadata?.lods || metadata?.LODs;
     if (!metadata || !lods || lods.length === 0) {
       console.warn(`No LODs in metadata: ${resourceReference}`);
@@ -1162,7 +1167,7 @@ export class ViewResource {
     }
 
     const glbUrl = glbName.startsWith('http') ? glbName : (baseDir ? baseDir + glbName : glbName);
-    const model = await this.loadGlb(glbUrl, requestId);
+    const model = await this.loadGlb(glbUrl, requestId, scopeBaseUrl);
     if (!model) {
       return null;
     }
@@ -1172,9 +1177,9 @@ export class ViewResource {
     return model;
   }
 
-  async loadNestedScene(sceneName, parentTransform, requestId = null) {
+  async loadNestedScene(sceneName, parentTransform, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     try {
-      const url = resolveResourceUrl('action://' + sceneName);
+      const url = resolveResourceUrl('action://' + sceneName, scopeBaseUrl);
       const response = await fetch(url);
       if (!response.ok) {
         console.warn(`Failed to load nested scene: ${sceneName}`);
@@ -1197,8 +1202,8 @@ export class ViewResource {
     }
   }
 
-  async loadTextSprite(resourceName, transform, objectBounds, requestId = null) {
-    const data = await this.fetchResourceJson(resourceName, requestId);
+  async loadTextSprite(resourceName, transform, objectBounds, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
+    const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
     const text = data?.body?.text || 'Text';
 
     // Create canvas for text
@@ -1247,12 +1252,12 @@ export class ViewResource {
     return mesh;
   }
 
-  async loadPointLight(resourceName, transform, requestId = null) {
+  async loadPointLight(resourceName, transform, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     let color = new THREE.Color(1, 0.9, 0.8);
     let intensity = 1;
     let distance = 100;
 
-    const data = await this.fetchResourceJson(resourceName, requestId);
+    const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
     const colorArray = data?.body?.color;
     if (colorArray && colorArray.length >= 3) {
       color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
@@ -1271,8 +1276,8 @@ export class ViewResource {
     return light;
   }
 
-  async loadVideoPlane(resourceName, transform, objectBounds, requestId = null) {
-    const data = await this.fetchResourceJson(resourceName, requestId);
+  async loadVideoPlane(resourceName, transform, objectBounds, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
+    const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
     const sources = data?.body?.streamConfig?.sources;
     const videoUrl = sources?.[0];
 
@@ -1354,8 +1359,8 @@ export class ViewResource {
     return mesh;
   }
 
-  async loadMetadata(metadataRef) {
-    const url = resolveResourceUrl(metadataRef);
+  async loadMetadata(metadataRef, scopeBaseUrl = this._getScopeBaseUrl()) {
+    const url = resolveResourceUrl(metadataRef, scopeBaseUrl);
     if (!url) return { metadata: null, baseDir: null };
 
     if (this.metadataCache.has(url)) {
@@ -1379,8 +1384,8 @@ export class ViewResource {
     }
   }
 
-  async loadGlb(glbName, requestId = null) {
-    const url = resolveResourceUrl(glbName);
+  async loadGlb(glbName, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
+    const url = resolveResourceUrl(glbName, scopeBaseUrl);
 
     if (this.glbCache.has(url)) {
       return this.glbCache.get(url).clone();

@@ -127,9 +127,57 @@ export interface CelestialProperties {
   reflectivity: number;
 }
 
+export type FabricScopeId = string;
+export type NodeUid = string;
+
+export interface ScopeInfo {
+  scopeId: FabricScopeId;
+  fabricUrl: string;
+  parentScopeId: FabricScopeId | null;
+  attachmentNodeUid: NodeUid | null;
+  depth: number;
+}
+
+export interface ScopeStatus {
+  scopeId: FabricScopeId;
+  connected: boolean;
+  fabricUrl: string | null;
+  currentSceneId: string | null;
+  currentSceneName: string | null;
+  resourceRootUrl: string | null;
+}
+
+export interface ConnectRootParams {
+  fabricUrl: string;
+  adminKey?: string;
+  timeoutMs?: number;
+}
+
+export interface FollowAttachmentParams {
+  scopeId: FabricScopeId;
+  objectId: string;
+  autoOpenRoot?: boolean;
+}
+
+export interface FollowAttachmentResult {
+  parentScopeId: FabricScopeId;
+  attachmentNodeUid: NodeUid;
+  childScopeId: FabricScopeId;
+  childFabricUrl: string;
+  reused: boolean;
+  root?: {
+    id: string;
+    name: string;
+    childCount: number;
+  };
+}
+
 export interface FabricObject {
   id: string;
   parentId: string | null;
+  scopeId?: FabricScopeId;
+  nodeUid?: NodeUid;
+  parentNodeUid?: NodeUid | null;
   name: string;
   transform: Transform;
   resourceReference: string | null;
@@ -147,6 +195,8 @@ export interface Scene {
   name: string;
   rootObjectId: string;
   classId: number;
+  scopeId?: FabricScopeId;
+  url?: string;
 }
 
 export interface ObjectFilter {
@@ -196,6 +246,7 @@ export interface BulkOperation {
 
 export interface ConnectionStatus {
   connected: boolean;
+  scopeId?: FabricScopeId;
   fabricUrl: string | null;
   currentSceneId: string | null;
   currentSceneName: string | null;

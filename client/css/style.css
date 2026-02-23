@@ -27,43 +27,7 @@
   --accent-hover: #6ab0ff;
   --accent-dim: #2a5a9a;
 
-  /* Node type colors */
-  --node-rmroot: #ffd700;
-  --node-rmcobject: #4a9eff;
-  --node-rmtobject: #50c878;
-  --node-rmpobject: #ff8c42;
-
-  /* Terrestrial Node Types */
-  --node-root: #ffd700;
-  --node-water: #2266cc;
-  --node-land: #4a9eff;
-  --node-country: #9370db;
-  --node-territory: #ff7f50;
-  --node-state: #20b2aa;
-  --node-county: #87ceeb;
-  --node-city: #f08080;
-  --node-community: #dda0dd;
-  --node-sector: #98fb98;
-  --node-parcel: #ffaa44;
-
-  /* Celestial Node Types */
-  --node-universe: #e0e0ff;
-  --node-supercluster: #b8b8ff;
-  --node-galaxycluster: #9090ff;
-  --node-galaxy: #8080ff;
-  --node-blackhole: #303030;
-  --node-nebula: #ff80ff;
-  --node-starcluster: #ffffaa;
-  --node-constellation: #aaffff;
-  --node-starsystem: #ffdd44;
-  --node-star: #ffff00;
-  --node-planetsystem: #44aaff;
-  --node-planet: #44ff88;
-  --node-moon: #cccccc;
-  --node-debris: #666666;
-  --node-satellite: #88ff88;
-  --node-transport: #ff8800;
-  --node-surface: #886644;
+  /* Node type colors (--node-*) are generated at runtime from node-types.js */
 
   /* Status colors */
   --status-connected: #50c878;
@@ -987,43 +951,7 @@ body {
   margin: 4px 0;
 }
 
-/* Node type colors */
-.tree-node[data-type="RMRoot"] .tree-icon { color: var(--node-rmroot); }
-.tree-node[data-type="RMCObject"] .tree-icon { color: var(--node-rmcobject); }
-.tree-node[data-type="RMTObject"] .tree-icon { color: var(--node-rmtobject); }
-.tree-node[data-type="RMPObject"] .tree-icon { color: var(--node-rmpobject); }
-
-/* Terrestrial Node Types */
-.tree-node[data-nodetype="Root"] .tree-icon { color: var(--node-root); }
-.tree-node[data-nodetype="Water"] .tree-icon { color: var(--node-water); }
-.tree-node[data-nodetype="Land"] .tree-icon { color: var(--node-land); }
-.tree-node[data-nodetype="Country"] .tree-icon { color: var(--node-country); }
-.tree-node[data-nodetype="Territory"] .tree-icon { color: var(--node-territory); }
-.tree-node[data-nodetype="State"] .tree-icon { color: var(--node-state); }
-.tree-node[data-nodetype="County"] .tree-icon { color: var(--node-county); }
-.tree-node[data-nodetype="City"] .tree-icon { color: var(--node-city); }
-.tree-node[data-nodetype="Community"] .tree-icon { color: var(--node-community); }
-.tree-node[data-nodetype="Sector"] .tree-icon { color: var(--node-sector); }
-.tree-node[data-nodetype="Parcel"] .tree-icon { color: var(--node-parcel); }
-
-/* Celestial Node Types */
-.tree-node[data-nodetype="Universe"] .tree-icon { color: var(--node-universe); }
-.tree-node[data-nodetype="Supercluster"] .tree-icon { color: var(--node-supercluster); }
-.tree-node[data-nodetype="GalaxyCluster"] .tree-icon { color: var(--node-galaxycluster); }
-.tree-node[data-nodetype="Galaxy"] .tree-icon { color: var(--node-galaxy); }
-.tree-node[data-nodetype="BlackHole"] .tree-icon { color: var(--node-blackhole); }
-.tree-node[data-nodetype="Nebula"] .tree-icon { color: var(--node-nebula); }
-.tree-node[data-nodetype="StarCluster"] .tree-icon { color: var(--node-starcluster); }
-.tree-node[data-nodetype="Constellation"] .tree-icon { color: var(--node-constellation); }
-.tree-node[data-nodetype="StarSystem"] .tree-icon { color: var(--node-starsystem); }
-.tree-node[data-nodetype="Star"] .tree-icon { color: var(--node-star); }
-.tree-node[data-nodetype="PlanetSystem"] .tree-icon { color: var(--node-planetsystem); }
-.tree-node[data-nodetype="Planet"] .tree-icon { color: var(--node-planet); }
-.tree-node[data-nodetype="Moon"] .tree-icon { color: var(--node-moon); }
-.tree-node[data-nodetype="Debris"] .tree-icon { color: var(--node-debris); }
-.tree-node[data-nodetype="Satellite"] .tree-icon { color: var(--node-satellite); }
-.tree-node[data-nodetype="Transport"] .tree-icon { color: var(--node-transport); }
-.tree-node[data-nodetype="Surface"] .tree-icon { color: var(--node-surface); }
+/* Node type icon color rules are generated at runtime from node-types.js */
 
 /* ============================================
    INSPECTOR PANEL

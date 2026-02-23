@@ -33,6 +33,24 @@ export class HierarchyPanel {
     }
   }
 
+  _syncNodePresentation(element, nodeData) {
+    if (!element || !nodeData) return;
+
+    element.dataset.id = nodeData.id;
+    element.dataset.type = nodeData.type;
+    if (nodeData.nodeType) {
+      element.dataset.nodetype = nodeData.nodeType;
+    } else {
+      delete element.dataset.nodetype;
+    }
+
+    const icon = element.querySelector(':scope > .tree-node-content > .tree-icon');
+    if (icon) {
+      const isCelestial = CELESTIAL_NAMES.has(nodeData.nodeType);
+      icon.textContent = isCelestial ? '▲' : '●';
+    }
+  }
+
   _bindModelEvents() {
     this.model.on('selectionChanged', (node) => {
       if (node) {
@@ -128,13 +146,11 @@ export class HierarchyPanel {
 
   _nodeKey(node) {
     if (typeof node === 'string') return node;
-    return `${node.type}_${node.id}`;
+    return node.nodeUid || node.key;
   }
 
   _getNodeData(nodeKey) {
-    const parts = nodeKey.split('_');
-    if (parts.length < 2) return null;
-    return this.model.getNode(parts[0], Number(parts[1]));
+    return this.model.getNode(nodeKey);
   }
 
   init() {
@@ -148,7 +164,7 @@ export class HierarchyPanel {
 
     const parent = element.parentElement?.closest('.tree-node');
     if (parent) {
-      const parentKey = `${parent.dataset.type}_${parent.dataset.id}`;
+      const parentKey = parent.dataset.nodeUid;
       if (set.has(parentKey)) return;
       set.add(parentKey);
       this.addParentsToSet(parentKey, set, depth + 1);
@@ -185,7 +201,7 @@ export class HierarchyPanel {
     if (el) {
       const childEls = el.querySelectorAll('.tree-node');
       for (const childEl of childEls) {
-        const childKey = `${childEl.dataset.type}_${childEl.dataset.id}`;
+        const childKey = childEl.dataset.nodeUid;
         this.nodeElements.delete(childKey);
       }
     }
@@ -197,6 +213,7 @@ export class HierarchyPanel {
 
     const node = document.createElement('div');
     node.className = 'tree-node';
+    node.dataset.nodeUid = nodeKey;
     node.dataset.id = nodeData.id;
     node.dataset.type = nodeData.type;
     if (nodeData.nodeType) {
@@ -230,6 +247,13 @@ export class HierarchyPanel {
     content.addEventListener('click', () => {
       const data = this._getNodeData(nodeKey);
       if (data) {
+        if (data.isSyntheticAttachmentCycle) {
+          const handled = this.model.activateAttachmentCycleNode(data);
+          if (!handled) {
+            this.model.selectNode(data);
+          }
+          return;
+        }
         this.model.selectNode(data);
       }
     });
@@ -337,7 +361,7 @@ export class HierarchyPanel {
     // Remove old tree-node children from Maps before clearing DOM
     const oldChildElements = childrenContainer.querySelectorAll(':scope > .tree-node');
     for (const oldEl of oldChildElements) {
-      const oldKey = `${oldEl.dataset.type}_${oldEl.dataset.id}`;
+      const oldKey = oldEl.dataset.nodeUid;
       this._removeNodeAndDescendants(oldKey);
       oldEl.remove();
     }
@@ -425,7 +449,7 @@ export class HierarchyPanel {
 
     let parent = node.parentElement?.closest('.tree-node');
     while (parent) {
-      const parentKey = `${parent.dataset.type}_${parent.dataset.id}`;
+      const parentKey = parent.dataset.nodeUid;
       const parentData = this._getNodeData(parentKey);
 
       if (respectModel && parentData && !this.model.isNodeExpanded(parentData)) {
@@ -622,6 +646,8 @@ export class HierarchyPanel {
     const node = this._getNodeData(nodeKey);
     if (!node) return;
 
+    this._syncNodePresentation(element, node);
+
     // Label
     const label = element.querySelector('.tree-label');
     if (label) {
@@ -639,18 +665,38 @@ export class HierarchyPanel {
 
       // Loading indicator
       const loading = children.querySelector('.tree-loading');
-      if (node.isLoading && node.isExpanded) {
+      if ((node.isLoading || node._attachmentLoading) && node.isExpanded) {
+        const loadingText = node._attachmentLoading ? 'Loading attachment...' : 'Loading...';
         if (!loading) {
           const newLoading = document.createElement('div');
           newLoading.className = 'tree-loading';
-          newLoading.textContent = 'Loading...';
+          newLoading.textContent = loadingText;
           newLoading.style.color = 'var(--text-muted)';
           newLoading.style.fontStyle = 'italic';
           newLoading.style.padding = '2px 4px';
           children.appendChild(newLoading);
+        } else {
+          loading.textContent = loadingText;
         }
       } else if (loading) {
         loading.remove();
+      }
+
+      const attachmentError = children.querySelector('.tree-attachment-error');
+      if (node._attachmentError && node.isExpanded) {
+        if (!attachmentError) {
+          const errorEl = document.createElement('div');
+          errorEl.className = 'tree-attachment-error';
+          errorEl.style.color = 'var(--error-color, #ff6b6b)';
+          errorEl.style.fontStyle = 'italic';
+          errorEl.style.padding = '2px 4px';
+          errorEl.textContent = `Attachment load failed: ${node._attachmentError}`;
+          children.appendChild(errorEl);
+        } else {
+          attachmentError.textContent = `Attachment load failed: ${node._attachmentError}`;
+        }
+      } else if (attachmentError) {
+        attachmentError.remove();
       }
     }
 

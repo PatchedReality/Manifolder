@@ -33,13 +33,14 @@ export function getResourceBaseUrl() {
  * Resolves a resource reference to a full URL.
  * Handles action:// protocol, full URLs, and relative paths.
  */
-export function resolveResourceUrl(ref) {
+export function resolveResourceUrl(ref, baseUrl = null) {
   if (!ref || typeof ref !== 'string') return null;
+  const resolvedBaseUrl = baseUrl || resourceBaseUrl;
 
   // Handle action:// protocol
   if (ref.startsWith('action://')) {
     const path = ref.slice('action://'.length);
-    return resourceBaseUrl ? resourceBaseUrl + path : null;
+    return resolvedBaseUrl ? resolvedBaseUrl + path : null;
   }
 
   // Handle full URLs - pass through unchanged
@@ -48,7 +49,7 @@ export function resolveResourceUrl(ref) {
   }
 
   // Relative paths: use resourceBaseUrl
-  return resourceBaseUrl ? resourceBaseUrl + ref : null;
+  return resolvedBaseUrl ? resolvedBaseUrl + ref : null;
 }
 
 /**
@@ -81,9 +82,14 @@ export async function getMsfReference(node) {
   const ref = node?.resourceRef || node?.properties?.pResource?.sReference;
   if (!ref || typeof ref !== 'string') return null;
 
-  if (ref.endsWith('.msf') || ref.endsWith('.msf.json')) {
+  const path = ref.split(/[?#]/, 1)[0];
+
+  if (path.endsWith('.msf') || path.endsWith('.msf.json')) {
     return ref;
   }
+
+  const needsFetch = path.endsWith('.json') || /\/\d+\/\d+$/.test(path);
+  if (!needsFetch) return null;
 
   if (ref.startsWith('http://') || ref.startsWith('https://')) {
     try {
@@ -102,4 +108,3 @@ export async function getMsfReference(node) {
 
   return null;
 }
-

@@ -15,6 +15,7 @@ import {
   PHYSICAL_NAMES
 } from '../shared/node-types.js';
 import { resolveResourceUrl } from './node-helpers.js';
+import { NodeAdapter } from './node-adapter.js';
 
 // Re-export NODE_TYPES for consumers
 export { NODE_TYPES };
@@ -49,11 +50,17 @@ function getSurfaceTexture(node) {
            lower.endsWith('.webp') || lower.endsWith('.bmp');
   };
 
+  const resolveTextureUrl = (ref, scopeNode = null) => {
+    const scopeId = scopeNode?.fabricScopeId || node?.fabricScopeId || null;
+    const scopeBaseUrl = NodeAdapter.getScopeResourceRoot(scopeId);
+    return resolveResourceUrl(ref, scopeBaseUrl) || ref;
+  };
+
   // Check the node itself first
   const nodeRef = node.properties?.pResource?.sReference;
   if (isImageUrl(nodeRef)) {
     return {
-      url: resolveResourceUrl(nodeRef) || nodeRef,
+      url: resolveTextureUrl(nodeRef, node),
       rotation: { x: 0, y: 0, z: 0, w: 1 },
       spinData: getSpinData(node)
     };
@@ -66,7 +73,7 @@ function getSurfaceTexture(node) {
         const ref = child.properties?.pResource?.sReference;
         if (isImageUrl(ref)) {
           return {
-            url: resolveResourceUrl(ref) || ref,
+            url: resolveTextureUrl(ref, child),
             rotation: child.transform?.rotation || { x: 0, y: 0, z: 0, w: 1 },
             spinData: getSpinData(child)
           };
@@ -124,7 +131,7 @@ export class ViewBounds {
   _bindModelEvents() {
     this.model.on('selectionChanged', (node) => {
       if (node) {
-        this.selectNode(node.id, node.type);
+        this.selectNode(node);
         this._pendingZoomNode = node;
         this.zoomToNode(node);
       }
@@ -147,7 +154,7 @@ export class ViewBounds {
     this.model.on('nodeUpdated', (node) => {
       const selected = this.model.getSelectedNode();
       if (selected && node === selected && node.worldPos) {
-        this.selectNode(node.id, node.type);
+        this.selectNode(node);
       }
     });
   }
@@ -387,7 +394,8 @@ export class ViewBounds {
     return intersects.filter(i => {
       const nd = i.object.userData.nodeData;
       if (!nd) return false;
-      const key = `${nd.type}_${nd.id}`;
+      const key = this.model.nodeKey(nd);
+      if (!key) return false;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -397,9 +405,10 @@ export class ViewBounds {
   _findSelectedIndex(uniqueIntersects) {
     const selected = this.model.getSelectedNode();
     if (!selected) return -1;
+    const selectedKey = this.model.nodeKey(selected);
     return uniqueIntersects.findIndex(i => {
       const nd = i.object.userData.nodeData;
-      return nd && nd.id === selected.id && nd.type === selected.type;
+      return nd && this.model.nodeKey(nd) === selectedKey;
     });
   }
 
@@ -1204,14 +1213,14 @@ export class ViewBounds {
     return sprite;
   }
 
-  selectNode(id, type) {
-    const key = `${type}_${id}`;
-    const node = this.model.nodes.get(key);
-    if (node && this.isCelestialNode(node)) {
-      this.focusNode = node;
-    }
-
+  selectNode(nodeOrId, type = null) {
+    const node = (nodeOrId && typeof nodeOrId === 'object')
+      ? nodeOrId
+      : this.model.getNode(type, nodeOrId);
     if (node) {
+      if (this.isCelestialNode(node)) {
+        this.focusNode = node;
+      }
       this.updateGridForNode(node);
     }
 
@@ -1281,7 +1290,7 @@ export class ViewBounds {
       parent.children = [];
     }
     children.forEach(child => {
-      if (!parent.children.find(c => c.id === child.id && c.type === child.type)) {
+      if (!parent.children.find(c => this.model.nodeKey(c) === this.model.nodeKey(child))) {
         parent.children.push(child);
       }
     });

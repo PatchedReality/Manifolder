@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { NODE_COLORS } from '../shared/node-types.js';
 import { resolveResourceUrl } from './node-helpers.js';
+import { NodeAdapter } from './node-adapter.js';
 
 const HIGHLIGHT_INTENSITY = 1.5;
 const DEFAULT_NODE_RADIUS = 2;
@@ -108,7 +109,8 @@ export class ViewGraph {
       if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
           lower.endsWith('.png') || lower.endsWith('.gif') ||
           lower.endsWith('.webp') || lower.endsWith('.bmp')) {
-        return resolveResourceUrl(ref) || ref;
+        const scopeBaseUrl = NodeAdapter.getScopeResourceRoot(nodeData?.fabricScopeId || null);
+        return resolveResourceUrl(ref, scopeBaseUrl) || ref;
       }
     }
     return null;
@@ -151,6 +153,25 @@ export class ViewGraph {
       roughness: 0.3,
       metalness: 0.1
     });
+  }
+
+  _getNodeColor(node) {
+    return NODE_COLORS[node?.nodeType] || NODE_COLORS[node?.type] || 0x888888;
+  }
+
+  _updateNodeVisualStyle(mesh, node) {
+    if (!mesh?.material || !node) return;
+    const color = this._getNodeColor(node);
+
+    if (mesh.material.color && !mesh.material.map) {
+      mesh.material.color.setHex(color);
+      mesh.material.needsUpdate = true;
+    }
+
+    mesh.userData.originalColor = color;
+    mesh.userData.id = node.id;
+    mesh.userData.type = node.type;
+    mesh.userData.key = node.key;
   }
 
   init() {
@@ -241,11 +262,11 @@ export class ViewGraph {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const intersects = this.raycaster.intersectObjects(this.scene.children);
 
-    const nodeIntersect = intersects.find(hit => hit.object.userData && hit.object.userData.id !== undefined);
+    const nodeIntersect = intersects.find(hit => hit.object.userData && typeof hit.object.userData.key === 'string');
 
     if (nodeIntersect) {
-      const { id, type } = nodeIntersect.object.userData;
-      const node = this.graphNodes.find(n => n.id === id && n.type === type);
+      const { key } = nodeIntersect.object.userData;
+      const node = this.graphNodes.find(n => n.key === key);
       if (node) {
         // Check for MSF reference - prompt to load instead of toggling
         const msfUrl = await this._getMsfReference(node.data);
@@ -345,6 +366,7 @@ export class ViewGraph {
       
       // Initialize physics state
       this.graphNodes.push({
+        key: this.model.nodeKey(node),
         id: node.id,
         type: node.type,
         nodeType: node.nodeType,
@@ -371,15 +393,15 @@ export class ViewGraph {
   }
 
   _createNodeMesh(node, index) {
-    const color = NODE_COLORS[node.nodeType] || NODE_COLORS[node.type] || 0x888888;
+    const color = this._getNodeColor(node);
     const material = this._createNodeMaterial(node.data, color);
     const mesh = new THREE.Mesh(this.nodeGeometry, material);
-    mesh.userData = { id: node.id, type: node.type, index, originalColor: color };
+    mesh.userData = { key: node.key, id: node.id, type: node.type, index, originalColor: color };
     const label = this.createLabel(node.data);
     mesh.add(label);
     mesh.position.set(node.x, node.y, node.z);
     this.scene.add(mesh);
-    this.nodeMeshes.set(this.model.nodeKey(node), mesh);
+    this.nodeMeshes.set(node.key || this.model.nodeKey(node), mesh);
     return mesh;
   }
 
@@ -432,13 +454,24 @@ export class ViewGraph {
     children.forEach((child) => {
       const childKey = this.model.nodeKey(child);
       if (this.nodeMeshes.has(childKey)) {
-        const existing = this.graphNodes.find(n => n.id === child.id && n.type === child.type);
-        if (existing) existing.data = child;
+        const existing = this.graphNodes.find(n => n.key === childKey);
+        if (existing) {
+          existing.data = child;
+          existing.id = child.id;
+          existing.type = child.type;
+          existing.nodeType = child.nodeType;
+          const mesh = this.nodeMeshes.get(childKey);
+          if (mesh) {
+            this._updateNodeVisualStyle(mesh, existing);
+            this._updateNodeLabel(mesh, child);
+          }
+        }
         return;
       }
 
       const nodeIndex = this.graphNodes.length;
       const graphNode = {
+        key: childKey,
         id: child.id, type: child.type, nodeType: child.nodeType, data: child,
         x: parentGraphNode.x + (Math.random() - 0.5) * 10,
         y: parentGraphNode.y + (Math.random() - 0.5) * 10,
@@ -578,6 +611,7 @@ export class ViewGraph {
         const pz = parentGraphNode ? parentGraphNode.z + (Math.random() - 0.5) * 10 : (Math.random() - 0.5) * 100;
 
         graphNode = {
+          key,
           id: node.id, type: node.type, nodeType: node.nodeType, data: node,
           x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0
         };
@@ -587,8 +621,14 @@ export class ViewGraph {
       } else {
         graphNode = this.graphNodes.find(n => this.model.nodeKey(n) === key);
         graphNode.data = node;
+        graphNode.id = node.id;
+        graphNode.type = node.type;
+        graphNode.nodeType = node.nodeType;
         const mesh = this.nodeMeshes.get(key);
-        if (mesh) this._updateNodeLabel(mesh, node);
+        if (mesh) {
+          this._updateNodeVisualStyle(mesh, graphNode);
+          this._updateNodeLabel(mesh, node);
+        }
       }
 
       const shouldTraverse = this.model.isNodeExpanded(node) || node.isSearchAncestor;
@@ -863,11 +903,11 @@ export class ViewGraph {
     const intersects = this.raycaster.intersectObjects(this.scene.children);
 
     // Filter to only node meshes
-    const nodeIntersect = intersects.find(hit => hit.object.userData && hit.object.userData.id !== undefined);
+    const nodeIntersect = intersects.find(hit => hit.object.userData && typeof hit.object.userData.key === 'string');
 
     if (nodeIntersect) {
-      const { id, type } = nodeIntersect.object.userData;
-      const node = this.graphNodes.find(n => n.id === id && n.type === type);
+      const { key } = nodeIntersect.object.userData;
+      const node = this.graphNodes.find(n => n.key === key);
       if (node) {
         this.model.selectNode(node.data);
       }

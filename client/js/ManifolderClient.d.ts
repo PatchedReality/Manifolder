@@ -1,4 +1,33 @@
 /**
+ * Normalize a fabric URL to a canonical form used for deterministic scope IDs.
+ * @param {string} url
+ * @returns {string}
+ */
+export function normalizeUrl(url: string): string;
+/**
+ * @param {string} normalizedInput
+ * @returns {Promise<FabricScopeId>}
+ */
+export function computeScopeId(normalizedInput: string): Promise<FabricScopeId>;
+/**
+ * @param {string} fabricUrl
+ * @returns {Promise<FabricScopeId>}
+ */
+export function computeRootScopeId(fabricUrl: string): Promise<FabricScopeId>;
+/**
+ * @param {NodeUid} parentNodeUid
+ * @param {string} childFabricUrl
+ * @returns {Promise<FabricScopeId>}
+ */
+export function computeChildScopeId(parentNodeUid: NodeUid, childFabricUrl: string): Promise<FabricScopeId>;
+/**
+ * @param {FabricScopeId} scopeId
+ * @param {number} classId
+ * @param {number} numericId
+ * @returns {NodeUid}
+ */
+export function computeNodeUid(scopeId: FabricScopeId, classId: number, numericId: number): NodeUid;
+/**
  * @param {ManifolderClient} client
  * @returns {IManifolderSubscriptionClient}
  */
@@ -16,7 +45,7 @@ export function createManifolderSubscriptionClient(): IManifolderSubscriptionCli
  * @returns {IManifolderPromiseClient}
  */
 export function createManifolderPromiseClient(): IManifolderPromiseClient;
-export class ManifolderClient {
+export class SingleScopeClient {
     static eSTATE: {
         NOTREADY: number;
         LOADING: number;
@@ -107,11 +136,6 @@ export class ManifolderClient {
      * @returns {void}
      */
     openModel({ sID, twObjectIx }: ModelRef): void;
-    /**
-     * @param {ModelRef} params
-     * @returns {void}
-     */
-    subscribe({ sID, twObjectIx }: ModelRef): void;
     /**
      * @param {ModelRef} params
      * @returns {void}
@@ -267,13 +291,257 @@ export class ManifolderClient {
      */
     getResourceRootUrl(): string;
 }
+export class ManifolderClient {
+    /** @type {Map<FabricScopeId, ScopeInfo>} */
+    scopeRegistry: Map<FabricScopeId, ScopeInfo>;
+    scopeRuntimes: Map<any, any>;
+    rootConnectInFlight: Map<any, any>;
+    closingScopes: Set<any>;
+    callbacks: {
+        connected: any[];
+        disconnected: any[];
+        error: any[];
+        status: any[];
+        mapData: any[];
+        nodeInserted: any[];
+        nodeUpdated: any[];
+        nodeDeleted: any[];
+        modelReady: any[];
+    };
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
+    on(event: ClientEvent, handler: ClientEventHandler): void;
+    /**
+     * @param {ClientEvent} event
+     * @param {ClientEventHandler} handler
+     * @returns {void}
+     */
+    off(event: ClientEvent, handler: ClientEventHandler): void;
+    _emit(event: any, data: any): void;
+    get connected(): boolean;
+    /**
+     * @param {ScopeInfo} scopeInfo
+     * @returns {ScopeInfo}
+     */
+    _registerScope(scopeInfo: ScopeInfo): ScopeInfo;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {boolean}
+     */
+    _unregisterScope(scopeId: FabricScopeId): boolean;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {ScopeInfo | null}
+     */
+    _getScope(scopeId: FabricScopeId): ScopeInfo | null;
+    /**
+     * @returns {ScopeInfo[]}
+     */
+    listScopes(): ScopeInfo[];
+    /**
+     * @param {FabricScopeId} candidateChildScopeId
+     * @param {FabricScopeId} currentScopeId
+     * @returns {{ isCycle: true; existingScopeId: FabricScopeId } | { isCycle: false }}
+     */
+    _detectCycle(candidateChildScopeId: FabricScopeId, currentScopeId: FabricScopeId): {
+        isCycle: true;
+        existingScopeId: FabricScopeId;
+    } | {
+        isCycle: false;
+    };
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {SingleScopeClient}
+     */
+    _requireScopeRuntime(scopeId: FabricScopeId): SingleScopeClient;
+    /**
+     * @returns {SingleScopeClient}
+     */
+    _createScopeRuntime(): SingleScopeClient;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {SingleScopeClient} runtime
+     * @returns {void}
+     */
+    _wireScopeRuntime(scopeId: FabricScopeId, runtime: SingleScopeClient): void;
+    /**
+     * @template {keyof SingleScopeClient} TMethodName
+     * @param {SingleScopeClient} runtime
+     * @param {TMethodName} methodName
+     * @param {...any} args
+     * @returns {any}
+     */
+    /**
+     * @param {string | null | undefined} className
+     * @returns {number | null}
+     */
+    _classNameToId(className: string | null | undefined): number | null;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {FabricObject} obj
+     * @returns {FabricObject}
+     */
+    _enrichObjectWithScope(scopeId: FabricScopeId, obj: FabricObject): FabricObject;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @returns {string | null}
+     */
+    _getScopeFabricKey(scopeId: FabricScopeId): string | null;
+    /**
+     * Invalidate object cache entries across all open scopes connected to the same fabric URL.
+     * @param {FabricScopeId} scopeId
+     * @param {string} objectId
+     * @returns {void}
+     */
+    _invalidateObjectCachesAcrossFabric(scopeId: FabricScopeId, objectId: string): void;
+    /**
+     * @param {FabricScopeId} scopeId
+     * @param {Array<string | null | undefined>} objectIds
+     * @returns {void}
+     */
+    _invalidateObjectIdsAcrossFabric(scopeId: FabricScopeId, objectIds: Array<string | null | undefined>): void;
+    connectRoot({ fabricUrl, adminKey, timeoutMs }: {
+        fabricUrl: any;
+        adminKey?: string;
+        timeoutMs?: number;
+    }): Promise<any>;
+    closeScope({ scopeId, cascade }: {
+        scopeId: any;
+        cascade?: boolean;
+    }): Promise<{
+        closedScopeIds: any[];
+    }>;
+    getScopeStatus({ scopeId }: {
+        scopeId: any;
+    }): {
+        scopeId: any;
+        connected: boolean;
+        fabricUrl: string | null;
+        currentSceneId: string | null;
+        currentSceneName: string | null;
+        resourceRootUrl: string | null;
+    };
+    getResourceRootUrl({ scopeId }: {
+        scopeId: any;
+    }): string;
+    openModel({ scopeId, sID, twObjectIx }: {
+        scopeId: any;
+        sID: any;
+        twObjectIx: any;
+    }): void;
+    closeModel({ scopeId, sID, twObjectIx }: {
+        scopeId: any;
+        sID: any;
+        twObjectIx: any;
+    }): void;
+    enumerateChildren({ scopeId, model }: {
+        scopeId: any;
+        model: any;
+    }): any[];
+    searchNodes({ scopeId, searchText }: {
+        scopeId: any;
+        searchText: any;
+    }): Promise<SearchNodesResult>;
+    listScenes({ scopeId }: {
+        scopeId: any;
+    }): Promise<{
+        scopeId: any;
+        id: string;
+        name: string;
+        rootObjectId: string;
+        classId: number;
+        url?: string;
+    }[]>;
+    openScene({ scopeId, sceneId }: {
+        scopeId: any;
+        sceneId: any;
+    }): Promise<import("../types.js").FabricObject>;
+    createScene({ scopeId, name, objectType }: {
+        scopeId: any;
+        name: any;
+        objectType: any;
+    }): Promise<{
+        scopeId: any;
+        id: string;
+        name: string;
+        rootObjectId: string;
+        classId: number;
+        url?: string;
+    }>;
+    deleteScene({ scopeId, sceneId }: {
+        scopeId: any;
+        sceneId: any;
+    }): Promise<void>;
+    listObjects({ scopeId, anchorObjectId, filter }: {
+        scopeId: any;
+        anchorObjectId: any;
+        filter: any;
+    }): Promise<import("../types.js").FabricObject[]>;
+    getObject({ scopeId, objectId }: {
+        scopeId: any;
+        objectId: any;
+    }): Promise<import("../types.js").FabricObject>;
+    createObject({ scopeId, ...createParams }: {
+        [x: string]: any;
+        scopeId: any;
+    }): Promise<import("../types.js").FabricObject>;
+    updateObject({ scopeId, ...updateParams }: {
+        [x: string]: any;
+        scopeId: any;
+    }): Promise<import("../types.js").FabricObject>;
+    deleteObject({ scopeId, objectId }: {
+        scopeId: any;
+        objectId: any;
+    }): Promise<void>;
+    moveObject({ scopeId, objectId, newParentId, skipRefetch }: {
+        scopeId: any;
+        objectId: any;
+        newParentId: any;
+        skipRefetch: any;
+    }): Promise<import("../types.js").FabricObject>;
+    bulkUpdate({ scopeId, operations }: {
+        scopeId: any;
+        operations: any;
+    }): Promise<{
+        success: number;
+        failed: number;
+        createdIds: string[];
+        errors: string[];
+    }>;
+    findObjects({ scopeId, anchorObjectId, query }: {
+        scopeId: any;
+        anchorObjectId: any;
+        query: any;
+    }): Promise<import("../types.js").FabricObject[]>;
+    followAttachment({ scopeId, objectId, autoOpenRoot }: {
+        scopeId: any;
+        objectId: any;
+        autoOpenRoot?: boolean;
+    }): Promise<{
+        parentScopeId: any;
+        attachmentNodeUid: string;
+        childScopeId: string;
+        childFabricUrl: string;
+        reused: boolean;
+    }>;
+}
 export type BulkOperation = import("../types.js").BulkOperation;
 export type ConnectionStatus = import("../types.js").ConnectionStatus;
+export type ConnectRootParams = import("../types.js").ConnectRootParams;
 export type CreateObjectParams = import("../types.js").CreateObjectParams;
 export type FabricObject = import("../types.js").FabricObject;
+export type FabricScopeId = import("../types.js").FabricScopeId;
+export type FollowAttachmentParams = import("../types.js").FollowAttachmentParams;
+export type FollowAttachmentResult = import("../types.js").FollowAttachmentResult;
+export type NodeUid = import("../types.js").NodeUid;
 export type ObjectFilter = import("../types.js").ObjectFilter;
 export type Scene = import("../types.js").Scene;
 export type SearchQuery = import("../types.js").SearchQuery;
+export type ScopeInfo = import("../types.js").ScopeInfo;
+export type ScopeStatus = import("../types.js").ScopeStatus;
 export type UpdateObjectParams = import("../types.js").UpdateObjectParams;
 export type ConnectOptions = {
     adminKey?: string;
@@ -301,7 +569,7 @@ declare namespace ClassIds {
     let RMTObject: number;
     let RMPObject: number;
 }
-declare const COMMON_CLIENT_METHODS: readonly ["connect", "disconnect", "getResourceRootUrl"];
-declare const SUBSCRIPTION_ONLY_METHODS: readonly ["on", "off", "openModel", "closeModel", "subscribe", "enumerateChildren", "searchNodes"];
-declare const PROMISE_ONLY_METHODS: readonly ["getStatus", "listScenes", "openScene", "createScene", "deleteScene", "listObjects", "getObject", "createObject", "updateObject", "deleteObject", "moveObject", "bulkUpdate", "findObjects"];
+declare const COMMON_CLIENT_METHODS: readonly ["connectRoot", "closeScope", "getScopeStatus", "listScopes", "followAttachment", "getResourceRootUrl"];
+declare const SUBSCRIPTION_ONLY_METHODS: readonly ["on", "off", "openModel", "closeModel", "enumerateChildren", "searchNodes"];
+declare const PROMISE_ONLY_METHODS: readonly ["listScenes", "openScene", "createScene", "deleteScene", "listObjects", "getObject", "createObject", "updateObject", "deleteObject", "moveObject", "bulkUpdate", "findObjects"];
 export {};

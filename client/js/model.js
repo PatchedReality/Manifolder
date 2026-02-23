@@ -3,6 +3,28 @@
  */
 
 import { NodeAdapter } from './node-adapter.js';
+import { getMsfReference } from './node-helpers.js';
+
+const TYPE_TO_PREFIX = {
+  RMRoot: 'root',
+  RMCObject: 'celestial',
+  RMTObject: 'terrestrial',
+  RMPObject: 'physical'
+};
+
+const PREFIX_TO_TYPE = {
+  root: 'RMRoot',
+  celestial: 'RMCObject',
+  terrestrial: 'RMTObject',
+  physical: 'RMPObject'
+};
+
+const NAME_FIELDS = {
+  RMRoot: 'wsRMRootId',
+  RMCObject: 'wsRMCObjectId',
+  RMTObject: 'wsRMTObjectId',
+  RMPObject: 'wsRMPObjectId'
+};
 
 /**
  * Model - Single source of truth for shared application state.
@@ -13,6 +35,7 @@ export class Model {
   constructor(client) {
     this.client = client;
     this.tree = null;
+    this.rootScopeId = null;
     this.nodes = new Map();
     this.selectedNode = null;
     this._pendingExpandedKeys = null;  // Map<key, parentKey> for storage restore
@@ -44,17 +67,17 @@ export class Model {
   }
 
   _bindClientEvents() {
-    this.client.on('nodeInserted', ({ mvmfModel, parentType, parentId }) => {
+    this.client.on('nodeInserted', ({ scopeId, mvmfModel, parentType, parentId }) => {
       if (!mvmfModel) return;
-      this._handleNodeInserted(mvmfModel, parentType, parentId);
+      this._handleNodeInserted(scopeId, mvmfModel, parentType, parentId);
     });
 
-    this.client.on('nodeUpdated', ({ id, type, mvmfModel }) => {
-      this._handleNodeUpdated(id, type, mvmfModel);
+    this.client.on('nodeUpdated', ({ scopeId, id, type, mvmfModel }) => {
+      this._handleNodeUpdated(scopeId, id, type, mvmfModel);
     });
 
-    this.client.on('nodeDeleted', ({ id, type, sourceParentType, sourceParentId }) => {
-      this._handleNodeDeleted(id, type, sourceParentType, sourceParentId);
+    this.client.on('nodeDeleted', ({ scopeId, id, type, sourceParentType, sourceParentId }) => {
+      this._handleNodeDeleted(scopeId, id, type, sourceParentType, sourceParentId);
     });
 
     this.client.on('modelReady', (data) => {
@@ -102,23 +125,24 @@ export class Model {
 
   nodeKey(node) {
     if (!node) return null;
-    return `${node.type}_${node.id}`;
+    return node.nodeUid || node.key;
   }
 
   // --- Tree Management ---
 
-  setTree(rootModel, inheritedPlanetContext = null) {
+  setTree(rootModel, inheritedPlanetContext = null, rootScopeId = null) {
     this.nodes.clear();
     this.selectedNode = null;
     this._pendingExpandedKeys = null;
     this._pendingSelectedKey = null;
     this.inheritedPlanetContext = inheritedPlanetContext;
+    this.rootScopeId = rootScopeId;
 
     if (rootModel) {
-      this.tree = new NodeAdapter(rootModel);
-      const childModels = this.client.enumerateChildren(rootModel);
+      this.tree = new NodeAdapter(rootModel, rootScopeId);
+      const childModels = this.client.enumerateChildren({ scopeId: rootScopeId, model: rootModel });
       if (childModels.length > 0) {
-        this.tree.children = childModels.map(c => new NodeAdapter(c));
+        this.tree.children = childModels.map(c => new NodeAdapter(c, rootScopeId));
       }
       this._indexNode(this.tree, null);
     } else {
@@ -141,8 +165,18 @@ export class Model {
     }
   }
 
-  getNode(type, id) {
-    return this.nodes.get(`${type}_${id}`) || null;
+  getNode(typeOrKey, id, scopeId = this.rootScopeId) {
+    if (id === undefined) {
+      return this.nodes.get(typeOrKey) || null;
+    }
+    for (const node of this.nodes.values()) {
+      if (node.type === typeOrKey && node.id === id) {
+        if (!scopeId || node.fabricScopeId === scopeId) {
+          return node;
+        }
+      }
+    }
+    return null;
   }
 
   setChildren(parentNode, children) {
@@ -159,10 +193,11 @@ export class Model {
       this._pendingSelectedKey = savedKey;
     }
 
-    parentNode.children = children;
+    const mergedChildren = this._mergeChildrenWithAttachmentMounts(parentNode, children);
+    parentNode.children = mergedChildren;
 
-    if (children) {
-      for (const child of children) {
+    if (mergedChildren) {
+      for (const child of mergedChildren) {
         this._indexNode(child, parentNode);
       }
     }
@@ -174,22 +209,25 @@ export class Model {
 
     this._scheduleDataChanged();
 
-    if (children) {
-      for (const child of children) {
+    if (mergedChildren) {
+      for (const child of mergedChildren) {
         if (this._pendingExpandedKeys) {
           this._checkPendingExpansion(child);
         }
       }
     }
 
-    this._checkExpandAllDescendants(parentNode, children);
+    this._checkExpandAllDescendants(parentNode, mergedChildren);
   }
 
   _detachChildren(node) {
     if (!node?.children) return;
     for (const child of node.children) {
       this._detachChildren(child);
-      this.client.closeModel({ sID: child.type, twObjectIx: child.id });
+      if (child.isSyntheticAttachmentCycle) {
+        continue;
+      }
+      this.client.closeModel({ scopeId: child.fabricScopeId || this.rootScopeId, sID: child.type, twObjectIx: child.id });
     }
   }
 
@@ -197,6 +235,8 @@ export class Model {
     if (!node) return;
     const key = node.key;
     this.nodes.delete(key);
+    node._attachmentMountedChild = null;
+    node._attachmentExpansionState = null;
     if (node.isExpanded) {
       if (!this._pendingExpandedKeys) {
         this._pendingExpandedKeys = new Map();
@@ -227,7 +267,8 @@ export class Model {
 
   _openNode(node) {
     if (!node) return;
-    this.client.openModel({ sID: node.type, twObjectIx: node.id });
+    if (node.isSyntheticAttachmentCycle) return;
+    this.client.openModel({ scopeId: node.fabricScopeId || this.rootScopeId, sID: node.type, twObjectIx: node.id });
     node.isLoading = true;
     this._emit('nodeUpdated', node);
   }
@@ -256,6 +297,9 @@ export class Model {
     if (!node || node.isExpanded) return;
     node.isExpanded = true;
     this._openNode(node);
+    this._maybeExpandAttachment(node).catch((error) => {
+      console.warn('Attachment expansion failed:', error);
+    });
     this._emit('expansionChanged', node, true);
   }
 
@@ -309,8 +353,14 @@ export class Model {
     const keysToExpand = [];
 
     for (const item of keys) {
-      const key = typeof item === 'string' ? item : item.key;
-      const parentKey = typeof item === 'string' ? null : item.parent;
+      const rawKey = typeof item === 'string' ? item : (item.nodeUid || item.key);
+      const rawParentKey = typeof item === 'string' ? null : (item.parentNodeUid || item.parent);
+      const key = this._normalizeStateNodeKey(rawKey, item?.type, item?.id);
+      const parentKey = this._normalizeStateNodeKey(rawParentKey, item?.parentType, item?.parentId);
+
+      if (!key) {
+        continue;
+      }
 
       if (this.nodes.has(key)) {
         keysToExpand.push(key);
@@ -397,6 +447,277 @@ export class Model {
     }
 
     return false;
+  }
+
+  _normalizeStateNodeKey(key, fallbackType = null, fallbackId = null) {
+    if (typeof key === 'string') {
+      if (key.includes(':')) {
+        return key;
+      }
+      const legacy = /^([A-Za-z]+)_(\d+)$/.exec(key);
+      if (legacy && this.rootScopeId) {
+        const prefix = TYPE_TO_PREFIX[legacy[1]];
+        if (prefix) {
+          return `${this.rootScopeId}:${prefix}:${legacy[2]}`;
+        }
+      }
+      return key;
+    }
+
+    if (!this.rootScopeId) {
+      return null;
+    }
+
+    const numericId = Number.parseInt(`${fallbackId}`, 10);
+    if (!Number.isFinite(numericId)) {
+      return null;
+    }
+    const prefix = TYPE_TO_PREFIX[fallbackType];
+    if (!prefix) {
+      return null;
+    }
+    return `${this.rootScopeId}:${prefix}:${numericId}`;
+  }
+
+  _formatObjectId(node) {
+    if (!node?.type || node.id == null) {
+      return null;
+    }
+    const prefix = TYPE_TO_PREFIX[node.type];
+    if (!prefix) {
+      return null;
+    }
+    const numericId = Number.parseInt(`${node.id}`, 10);
+    if (!Number.isFinite(numericId)) {
+      return null;
+    }
+    if (prefix === 'root') {
+      return 'root';
+    }
+    return `${prefix}:${numericId}`;
+  }
+
+  _parseObjectId(objectId) {
+    if (objectId === 'root') {
+      return { type: 'RMRoot', id: 1, prefix: 'root' };
+    }
+    if (typeof objectId !== 'string') {
+      return null;
+    }
+    const [prefix, idRaw] = objectId.split(':');
+    const type = PREFIX_TO_TYPE[prefix];
+    const id = Number.parseInt(`${idRaw}`, 10);
+    if (!type || !Number.isFinite(id)) {
+      return null;
+    }
+    return { type, id, prefix };
+  }
+
+  _mergeChildrenWithAttachmentMounts(parentNode, children) {
+    const merged = [];
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        if (!child?._isAttachmentMountedChild) {
+          merged.push(child);
+        }
+      }
+    }
+
+    const mounted = parentNode?._attachmentMountedChild;
+    if (mounted && !merged.some((candidate) => candidate.key === mounted.key)) {
+      merged.push(mounted);
+    }
+
+    return merged;
+  }
+
+  _checkAttachmentExpandable(node) {
+    if (!node || node._model.__attachmentExpandable) return;
+    const ref = node._model?.pResource?.sReference;
+    if (!ref) return;
+    getMsfReference(node).then(msfUrl => {
+      if (msfUrl && !node._model.__attachmentExpandable) {
+        node._model.__attachmentExpandable = true;
+        this._emit('nodeUpdated', node);
+      }
+    }).catch(() => {});
+  }
+
+  _setAttachmentNodeState(node, { loading = false, error = null } = {}) {
+    if (!node) return;
+    node._attachmentLoading = loading;
+    node._attachmentError = error;
+    if (loading || error) {
+      node._model.__attachmentExpandable = true;
+    }
+    this._emit('nodeUpdated', node);
+  }
+
+  _buildAttachmentRootNode(attachmentNode, followResult) {
+    const parsedRoot = this._parseObjectId(followResult?.root?.id || 'root');
+    if (!parsedRoot) {
+      return null;
+    }
+
+    const nameField = NAME_FIELDS[parsedRoot.type];
+    const rootModel = {
+      sID: parsedRoot.type,
+      twObjectIx: parsedRoot.id,
+      nChildren: followResult?.root?.childCount ?? 0,
+      IsReady: () => false,
+      pName: nameField ? { [nameField]: followResult?.root?.name || parsedRoot.type } : undefined,
+      pResource: {
+        sReference: followResult?.childFabricUrl || null
+      }
+    };
+    const adapter = new NodeAdapter(rootModel, followResult.childScopeId);
+    adapter._attachmentFromNodeUid = attachmentNode.key;
+    adapter._isAttachmentMountedChild = true;
+    return adapter;
+  }
+
+  _buildAttachmentCycleNode(attachmentNode, error) {
+    const cycleTargetRaw = error?.details?.existingNodeUid || null;
+    const cycleTargetNode = cycleTargetRaw && cycleTargetRaw.includes(':')
+      ? cycleTargetRaw
+      : null;
+    const cycleTargetScopeId = cycleTargetNode ? cycleTargetNode.split(':').slice(0, -2).join(':') : cycleTargetRaw;
+    const label = error?.details?.existingLabel || cycleTargetRaw || 'existing scope';
+    const cycleKey = `${attachmentNode.key}:cycle:${label}`;
+
+    return {
+      key: cycleKey,
+      nodeUid: cycleKey,
+      fabricScopeId: attachmentNode.fabricScopeId || this.rootScopeId,
+      type: 'RMPObject',
+      id: -1,
+      nodeType: 'Attachment',
+      name: `Cycle detected - go to existing (${label})`,
+      children: [],
+      isExpanded: false,
+      isLoading: false,
+      hasChildren: false,
+      isSyntheticAttachmentCycle: true,
+      cycleTargetNodeUid: cycleTargetNode,
+      cycleTargetScopeId,
+      _isAttachmentMountedChild: true
+    };
+  }
+
+  _mountAttachmentChild(parentNode, childNode) {
+    if (!parentNode || !childNode) {
+      return;
+    }
+    parentNode._attachmentMountedChild = childNode;
+    parentNode._model.__attachmentExpandable = true;
+    this.setChildren(parentNode, parentNode.children || []);
+  }
+
+  async _maybeExpandAttachment(node) {
+    if (!node || node.isSyntheticAttachmentCycle || !node.isExpanded) {
+      return;
+    }
+
+    const existingState = node._attachmentExpansionState;
+    if (existingState?.status === 'loading' || existingState?.status === 'loaded') {
+      return;
+    }
+
+    const scopeId = node.fabricScopeId || this.rootScopeId;
+    const objectId = this._formatObjectId(node);
+    if (!scopeId || !objectId) {
+      return;
+    }
+
+    const msfRef = await getMsfReference(node);
+    if (!msfRef) {
+      node._attachmentExpansionState = { status: 'not-attachment' };
+      return;
+    }
+
+    node._model.__attachmentExpandable = true;
+    node._attachmentExpansionState = { status: 'loading', msfRef };
+    this._setAttachmentNodeState(node, { loading: true, error: null });
+
+    try {
+      const followResult = await this.client.followAttachment({
+        scopeId,
+        objectId,
+        autoOpenRoot: true
+      });
+
+      const childResourceRoot = this.client.getResourceRootUrl({ scopeId: followResult.childScopeId });
+      if (childResourceRoot) {
+        NodeAdapter.setScopeResourceRoot(followResult.childScopeId, childResourceRoot);
+      }
+
+      const mountedRoot = this._buildAttachmentRootNode(node, followResult);
+      if (mountedRoot) {
+        this._mountAttachmentChild(node, mountedRoot);
+      }
+
+      node._attachmentExpansionState = {
+        status: 'loaded',
+        childScopeId: followResult.childScopeId
+      };
+      this._setAttachmentNodeState(node, { loading: false, error: null });
+    } catch (error) {
+      if (error?.code === 'ATTACHMENT_CYCLE_DETECTED') {
+        const cycleNode = this._buildAttachmentCycleNode(node, error);
+        this._mountAttachmentChild(node, cycleNode);
+        node._attachmentExpansionState = {
+          status: 'cycle',
+          error
+        };
+        this._setAttachmentNodeState(node, { loading: false, error: null });
+        return;
+      }
+
+      node._attachmentExpansionState = {
+        status: 'error',
+        message: error?.message || 'Attachment load failed'
+      };
+      this._setAttachmentNodeState(node, {
+        loading: false,
+        error: error?.message || 'Attachment load failed'
+      });
+    }
+  }
+
+  activateAttachmentCycleNode(nodeOrKey) {
+    const cycleNode = typeof nodeOrKey === 'string'
+      ? this.nodes.get(nodeOrKey)
+      : nodeOrKey;
+    if (!cycleNode?.isSyntheticAttachmentCycle) {
+      return false;
+    }
+
+    let target = cycleNode.cycleTargetNodeUid
+      ? this.nodes.get(cycleNode.cycleTargetNodeUid)
+      : null;
+
+    if (!target && cycleNode.cycleTargetScopeId) {
+      for (const candidate of this.nodes.values()) {
+        if (candidate.fabricScopeId === cycleNode.cycleTargetScopeId && candidate.type === 'RMRoot') {
+          target = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!target) {
+      return false;
+    }
+
+    let parent = target._parent;
+    while (parent) {
+      if (!parent.isExpanded) {
+        this.expandNode(parent);
+      }
+      parent = parent._parent;
+    }
+    this.selectNode(target);
+    return true;
   }
 
   expandChildren(node) {
@@ -490,11 +811,11 @@ export class Model {
 
   // --- Client Event Handlers ---
 
-  _handleNodeInserted(mvmfModel, parentType, parentId) {
-    const childKey = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
+  _handleNodeInserted(scopeId, mvmfModel, parentType, parentId) {
+    const childKey = new NodeAdapter(mvmfModel, scopeId).key;
 
     const parentNode = (parentType && parentId !== undefined)
-      ? this.getNode(parentType, parentId)
+      ? this.getNode(parentType, parentId, scopeId)
       : null;
 
     if (!parentNode) {
@@ -502,7 +823,7 @@ export class Model {
     }
 
     const existingIdx = parentNode.children.findIndex(
-      c => c.type === mvmfModel.sID && c.id === mvmfModel.twObjectIx
+      c => c.key === childKey
     );
     if (existingIdx !== -1) {
       const node = parentNode.children[existingIdx];
@@ -529,7 +850,7 @@ export class Model {
       return;
     }
 
-    const adapter = new NodeAdapter(mvmfModel);
+    const adapter = new NodeAdapter(mvmfModel, scopeId);
     parentNode.children.push(adapter);
     this._indexNode(adapter, parentNode);
 
@@ -537,11 +858,16 @@ export class Model {
     this._checkPendingExpansion(adapter);
     this._checkPendingSelection();
     this._scheduleDataChanged();
+    this._checkAttachmentExpandable(adapter);
   }
 
-  _handleNodeUpdated(id, type, mvmfModel) {
-    const key = `${type}_${id}`;
-    const adapter = this.nodes.get(key);
+  _handleNodeUpdated(scopeId, id, type, mvmfModel) {
+    const key = mvmfModel
+      ? new NodeAdapter(mvmfModel, scopeId).key
+      : null;
+    const adapter = key
+      ? this.nodes.get(key)
+      : this.getNode(type, id, scopeId);
     if (adapter) {
       if (mvmfModel) {
         adapter.updateModel(mvmfModel);
@@ -550,16 +876,17 @@ export class Model {
       }
       this._emit('nodeUpdated', adapter);
       this._scheduleDataChanged();
+      this._checkAttachmentExpandable(adapter);
     }
   }
 
-  _handleNodeDeleted(id, type, sourceParentType, sourceParentId) {
+  _handleNodeDeleted(scopeId, id, type, sourceParentType, sourceParentId) {
     const sourceParent = (sourceParentType && sourceParentId !== undefined)
-      ? this.getNode(sourceParentType, sourceParentId)
+      ? this.getNode(sourceParentType, sourceParentId, scopeId)
       : null;
 
     if (sourceParent?.children) {
-      const idx = sourceParent.children.findIndex(c => c.type === type && c.id === id);
+      const idx = sourceParent.children.findIndex(c => c.type === type && c.id === id && (!scopeId || c.fabricScopeId === scopeId));
       if (idx !== -1) {
         const removed = sourceParent.children.splice(idx, 1)[0];
         this._removeFromIndex(removed);
@@ -574,15 +901,15 @@ export class Model {
     }
   }
 
-  _onModelReady({ mvmfModel }) {
+  _onModelReady({ scopeId, mvmfModel }) {
     if (!mvmfModel) return;
-    const key = `${mvmfModel.sID}_${mvmfModel.twObjectIx}`;
+    const key = new NodeAdapter(mvmfModel, scopeId).key;
     const adapter = this.nodes.get(key);
     if (!adapter) return;
 
     adapter.updateModel(mvmfModel);
-    const children = this.client.enumerateChildren(mvmfModel);
-    this.setChildren(adapter, children.map(c => new NodeAdapter(c)));
+    const children = this.client.enumerateChildren({ scopeId: scopeId || adapter.fabricScopeId || this.rootScopeId, model: mvmfModel });
+    this.setChildren(adapter, children.map(c => new NodeAdapter(c, scopeId || adapter.fabricScopeId || this.rootScopeId)));
     this._emit('nodeUpdated', adapter);
     this._scheduleDataChanged();
   }
@@ -612,10 +939,37 @@ export class Model {
     // Search local nodes in model
     const localMatches = this._searchLocalNodes(searchText.toLowerCase());
 
-    // Search server if connected
-    let serverResults = { matches: [], paths: [] };
-    if (this.client.connected) {
-      serverResults = await this.client.searchNodes(searchText);
+    // Search server across open scopes
+    const serverResults = { matches: [], paths: [] };
+    const searchScopeIds = this._getSearchScopeIds();
+    if (searchScopeIds.length > 0) {
+      const searchCalls = await Promise.allSettled(
+        searchScopeIds.map((scopeId) => this.client.searchNodes({ scopeId, searchText }))
+      );
+      for (let i = 0; i < searchCalls.length; i++) {
+        const scopeId = searchScopeIds[i];
+        const call = searchCalls[i];
+        if (call.status !== 'fulfilled' || !call.value) {
+          continue;
+        }
+        const result = call.value;
+        if (Array.isArray(result.matches)) {
+          for (const match of result.matches) {
+            serverResults.matches.push({
+              ...match,
+              scopeId: match?.scopeId || scopeId
+            });
+          }
+        }
+        if (Array.isArray(result.paths)) {
+          for (const path of result.paths) {
+            serverResults.paths.push({
+              ...path,
+              scopeId: path?.scopeId || scopeId
+            });
+          }
+        }
+      }
     }
 
     // Check if search is still current (user may have typed more)
@@ -626,7 +980,10 @@ export class Model {
     const allMatches = [];
 
     for (const match of serverResults.matches) {
-      const key = `${match.type}_${match.id}`;
+      const key = this._getSearchResultKey(match, match.scopeId);
+      if (!key) {
+        continue;
+      }
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         allMatches.push(match);
@@ -634,7 +991,10 @@ export class Model {
     }
 
     for (const match of localMatches) {
-      const key = `${match.type}_${match.id}`;
+      const key = this._getSearchResultKey(match, match.scopeId);
+      if (!key) {
+        continue;
+      }
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         allMatches.push(match);
@@ -655,6 +1015,8 @@ export class Model {
     for (const [key, node] of this.nodes) {
       if (node.name && node.name.toLowerCase().includes(searchTerm)) {
         matches.push({
+          nodeUid: node.key,
+          scopeId: node.fabricScopeId || this.rootScopeId,
           id: node.id,
           name: node.name,
           type: node.type,
@@ -663,6 +1025,86 @@ export class Model {
       }
     }
     return matches;
+  }
+
+  _getSearchScopeIds() {
+    const fromRegistry = typeof this.client.listScopes === 'function'
+      ? this.client.listScopes()
+          .map((scope) => scope?.scopeId)
+          .filter((scopeId) => typeof scopeId === 'string' && scopeId.length > 0)
+      : [];
+    if (fromRegistry.length > 0) {
+      return fromRegistry;
+    }
+    return this.rootScopeId ? [this.rootScopeId] : [];
+  }
+
+  _extractScopeIdFromNodeUid(nodeUid) {
+    if (typeof nodeUid !== 'string' || !nodeUid.includes(':')) {
+      return null;
+    }
+    const parts = nodeUid.split(':');
+    if (parts.length < 3) {
+      return null;
+    }
+    parts.pop();
+    parts.pop();
+    const scopeId = parts.join(':');
+    return scopeId || null;
+  }
+
+  _buildNodeUid(scopeId, type, id) {
+    if (!scopeId || typeof type !== 'string') {
+      return null;
+    }
+    const prefix = TYPE_TO_PREFIX[type];
+    if (!prefix) {
+      return null;
+    }
+    const numericId = Number.parseInt(`${id}`, 10);
+    if (!Number.isFinite(numericId)) {
+      return null;
+    }
+    return `${scopeId}:${prefix}:${numericId}`;
+  }
+
+  _getResultScopeId(item, fallbackScopeId = this.rootScopeId) {
+    if (!item || typeof item !== 'object') {
+      return fallbackScopeId || null;
+    }
+    if (typeof item.scopeId === 'string' && item.scopeId.length > 0) {
+      return item.scopeId;
+    }
+    const fromNodeUid = this._extractScopeIdFromNodeUid(item.nodeUid || item.key);
+    if (fromNodeUid) {
+      return fromNodeUid;
+    }
+    return fallbackScopeId || null;
+  }
+
+  _getSearchResultKey(item, fallbackScopeId = this.rootScopeId) {
+    const nodeUid = item?.nodeUid || item?.key;
+    if (typeof nodeUid === 'string' && nodeUid.includes(':')) {
+      return nodeUid;
+    }
+    const scopeId = this._getResultScopeId(item, fallbackScopeId);
+    const scopedKey = this._buildNodeUid(scopeId, item?.type, item?.id);
+    if (scopedKey) {
+      return scopedKey;
+    }
+    if (item?.type && item?.id != null) {
+      return `${item.type}_${item.id}`;
+    }
+    return null;
+  }
+
+  _getSearchParentKey(item, fallbackScopeId = this.rootScopeId) {
+    const parentNodeUid = item?.parentNodeUid;
+    if (typeof parentNodeUid === 'string' && parentNodeUid.includes(':')) {
+      return parentNodeUid;
+    }
+    const scopeId = this._getResultScopeId(item, fallbackScopeId);
+    return this._buildNodeUid(scopeId, item?.parentType, item?.parentId);
   }
 
   _processSearchResults(results) {
@@ -674,6 +1116,11 @@ export class Model {
       ...sortedPaths,
       ...(results.matches || [])
     ];
+    const matchKeys = new Set(
+      (results.matches || [])
+        .map((match) => this._getSearchResultKey(match, match?.scopeId))
+        .filter(Boolean)
+    );
 
     // Process in batches to avoid blocking UI
     const BATCH_SIZE = 50;
@@ -687,18 +1134,29 @@ export class Model {
 
       for (; index < batchEnd; index++) {
         const item = items[index];
-        const key = `${item.type}_${item.id}`;
+        const scopeId = this._getResultScopeId(item, this.rootScopeId);
+        const key = this._getSearchResultKey(item, scopeId);
+        if (!key) {
+          continue;
+        }
 
         let node = this.nodes.get(key);
         if (!node) {
           // Create new node
-          node = NodeAdapter.fromSearchResult(item);
-          this.nodes.set(key, node);
+          node = NodeAdapter.fromSearchResult({
+            ...item,
+            scopeId
+          });
+          this.nodes.set(node.key, node);
 
           // Wire parent link - only if actual parent exists, don't fall back to root
           let parentNode = null;
-          if (item.parentType && item.parentId !== undefined && item.parentId !== null) {
-            parentNode = this.getNode(item.parentType, item.parentId);
+          const parentKey = this._getSearchParentKey(item, scopeId);
+          if (parentKey) {
+            parentNode = this.nodes.get(parentKey);
+          }
+          if (!parentNode && item.parentType && item.parentId !== undefined && item.parentId !== null) {
+            parentNode = this.getNode(item.parentType, item.parentId, scopeId);
           }
           if (parentNode) {
             node._parent = parentNode;
@@ -711,8 +1169,12 @@ export class Model {
         } else if (!node._parent) {
           // Node exists but wasn't wired to parent yet - try again
           let parentNode = null;
-          if (item.parentType && item.parentId !== undefined && item.parentId !== null) {
-            parentNode = this.getNode(item.parentType, item.parentId);
+          const parentKey = this._getSearchParentKey(item, scopeId);
+          if (parentKey) {
+            parentNode = this.nodes.get(parentKey);
+          }
+          if (!parentNode && item.parentType && item.parentId !== undefined && item.parentId !== null) {
+            parentNode = this.getNode(item.parentType, item.parentId, scopeId);
           }
           if (parentNode) {
             node._parent = parentNode;
@@ -724,7 +1186,7 @@ export class Model {
         }
 
         // State on the node itself
-        const isMatch = results.matches?.some(m => m.type === item.type && m.id === item.id);
+        const isMatch = matchKeys.has(key);
         if (isMatch) {
           node.isSearchMatch = true;
           this._emit('nodeUpdated', node);
@@ -785,7 +1247,7 @@ export class Model {
     let current = node;
     while (current && !visited.has(current.key)) {
       visited.add(current.key);
-      path.unshift({ id: current.id, type: current.type });
+      path.unshift({ nodeUid: current.key, id: current.id, type: current.type });
       current = current._parent;
     }
     return path;

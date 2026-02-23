@@ -89,16 +89,50 @@ export const NODE_TYPES = [
   { name: 'City', color: 0xf08080, cssVar: '--node-city', category: 'terrestrial' },
   { name: 'Community', color: 0xdda0dd, cssVar: '--node-community', category: 'terrestrial' },
   { name: 'Sector', color: 0x98fb98, cssVar: '--node-sector', category: 'terrestrial' },
-  { name: 'Parcel', color: 0xffaa44, cssVar: '--node-parcel', category: 'terrestrial' },
+  { name: 'Parcel', color: 0xd4a76a, cssVar: '--node-parcel', category: 'terrestrial' },
   // Physical type
   { name: 'Physical', color: 0xff8c42, cssVar: '--node-physical', category: 'physical' }
 ];
 
-// Color lookup by type name, including RM-type entries
-export const NODE_COLORS = {
+// RM-type fallback colors (when specific nodeType isn't resolved yet)
+const RM_TYPE_COLORS = {
   RMRoot: 0xffd700,
   RMCObject: 0x4a9eff,
   RMTObject: 0x50c878,
   RMPObject: 0xff8c42,
+};
+
+// Color lookup by type name, including RM-type entries
+export const NODE_COLORS = {
+  ...RM_TYPE_COLORS,
   ...Object.fromEntries(NODE_TYPES.map(t => [t.name, t.color]))
 };
+
+function hexColor(color) {
+  return '#' + color.toString(16).padStart(6, '0');
+}
+
+/**
+ * Generates CSS variables and tree-icon color rules from NODE_TYPES.
+ * Inject the returned string into a <style> element at startup so that
+ * the CSS always matches the JS source of truth.
+ */
+export function generateNodeTypeStylesheet() {
+  const vars = [];
+  const rules = [];
+
+  // RM-type fallback CSS variables and rules
+  for (const [rmType, color] of Object.entries(RM_TYPE_COLORS)) {
+    const varName = `--node-${rmType.toLowerCase()}`;
+    vars.push(`  ${varName}: ${hexColor(color)};`);
+    rules.push(`.tree-node[data-type="${rmType}"] > .tree-node-content > .tree-icon { color: var(${varName}); }`);
+  }
+
+  // Per-nodeType CSS variables and rules
+  for (const type of NODE_TYPES) {
+    vars.push(`  ${type.cssVar}: ${hexColor(type.color)};`);
+    rules.push(`.tree-node[data-nodetype="${type.name}"] > .tree-node-content > .tree-icon { color: var(${type.cssVar}); }`);
+  }
+
+  return `:root {\n${vars.join('\n')}\n}\n${rules.join('\n')}`;
+}

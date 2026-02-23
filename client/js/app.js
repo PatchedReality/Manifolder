@@ -9,12 +9,25 @@ import { ViewBounds, NODE_TYPES } from './view-bounds.js';
 import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { createManifolderSubscriptionClient } from './ManifolderClient.js';
-import { CELESTIAL_NAMES, PHYSICAL_NAMES } from '../shared/node-types.js';
+import { CELESTIAL_NAMES, PHYSICAL_NAMES, generateNodeTypeStylesheet } from '../shared/node-types.js';
 import { getMsfReference, setResourceBaseUrl } from './node-helpers.js';
+import { NodeAdapter } from './node-adapter.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
 import { calculateLatLong } from './geo-utils.js';
 import { Model } from './model.js';
+
+const TYPE_TO_PREFIX = {
+  RMRoot: 'root',
+  RMCObject: 'celestial',
+  RMTObject: 'terrestrial',
+  RMPObject: 'physical'
+};
+
+// Inject node-type CSS variables and tree-icon rules from the JS source of truth
+const nodeTypeStyle = document.createElement('style');
+nodeTypeStyle.textContent = generateNodeTypeStylesheet();
+document.head.appendChild(nodeTypeStyle);
 
 class App {
   constructor() {
@@ -28,6 +41,7 @@ class App {
     this.viewResource = new ViewResource('#viewport-resource', this.stateManager, this.model);
     this.inspector = new InspectorPanel('#inspector-content', this.stateManager, this.model);
     this.bookmarkManager = new BookmarkManager(this.stateManager);
+    this.activeScopeId = null;
 
     this.rp1GoBtn = document.getElementById('rp1-go-btn');
     this.init();
@@ -566,8 +580,12 @@ class App {
     try {
       this.layout.setStatus('Loading map...', 'loading');
 
-      const tree = await this.client.connect(url);
-      setResourceBaseUrl(this.client.getResourceRootUrl());
+      const connection = await this.client.connectRoot({ fabricUrl: url });
+      this.activeScopeId = connection.scopeId;
+      const tree = connection.rootModel;
+      const scopeResourceRoot = this.client.getResourceRootUrl({ scopeId: this.activeScopeId });
+      setResourceBaseUrl(scopeResourceRoot);
+      NodeAdapter.setScopeResourceRoot(this.activeScopeId, scopeResourceRoot);
 
       // Detect Earth MSF and set default planet context
       let planetContext = this.model.inheritedPlanetContext;
@@ -579,7 +597,7 @@ class App {
         };
       }
 
-      this.model.setTree(tree, planetContext);
+      this.model.setTree(tree, planetContext, this.activeScopeId);
 
       this.layout.setFollowLink(null);
       this.rp1GoBtn?.classList.add('hidden');
@@ -661,7 +679,30 @@ class App {
       return;
     }
 
-    let startIndex = path.findIndex(p => p.id === this.model.tree.id && p.type === this.model.tree.type);
+    const resolvePathStepKey = (step) => {
+      if (!step) return null;
+      if (typeof step.nodeUid === 'string' && step.nodeUid.includes(':')) {
+        return step.nodeUid;
+      }
+      if (typeof step.key === 'string' && step.key.includes(':')) {
+        return step.key;
+      }
+      const prefix = TYPE_TO_PREFIX[step.type];
+      const numericId = Number.parseInt(`${step.id}`, 10);
+      if (prefix && Number.isFinite(numericId) && this.activeScopeId) {
+        return `${this.activeScopeId}:${prefix}:${numericId}`;
+      }
+      if (step.type && Number.isFinite(numericId)) {
+        return `${step.type}_${numericId}`;
+      }
+      return null;
+    };
+
+    const treeKey = this.model.tree.key;
+    let startIndex = path.findIndex((step) => {
+      const stepKey = resolvePathStepKey(step);
+      return stepKey === treeKey || (step.id === this.model.tree.id && step.type === this.model.tree.type);
+    });
     if (startIndex === -1) {
       this.model.selectNode(this.model.tree);
       return;
@@ -670,23 +711,23 @@ class App {
     // Ensure all intermediate nodes in the path are expanded (or pending expansion)
     // so the MVMF event cascade will load their children, eventually reaching the target
     for (let i = startIndex; i < path.length - 1; i++) {
-      const key = `${path[i].type}_${path[i].id}`;
-      const node = this.model.getNode(path[i].type, path[i].id);
+      const key = resolvePathStepKey(path[i]);
+      const node = key ? this.model.getNode(key) : this.model.getNode(path[i].type, path[i].id);
       if (node) {
         this.model.expandNode(node);
-      } else {
+      } else if (key) {
         this.model.addPendingExpandedKey(key);
       }
     }
 
     // Select the target node now if it exists, otherwise set pending selection
     const targetStep = path[path.length - 1];
-    const targetKey = `${targetStep.type}_${targetStep.id}`;
-    const targetNode = this.model.getNode(targetStep.type, targetStep.id);
+    const targetKey = resolvePathStepKey(targetStep);
+    const targetNode = targetKey ? this.model.getNode(targetKey) : this.model.getNode(targetStep.type, targetStep.id);
 
     if (targetNode) {
       this.model.selectNode(targetNode);
-    } else {
+    } else if (targetKey) {
       this.model._pendingSelectedKey = targetKey;
     }
   }
