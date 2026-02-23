@@ -218,6 +218,12 @@ export class Model {
     }
 
     this._checkExpandAllDescendants(parentNode, mergedChildren);
+
+    if (parentNode._expandChildrenPending && mergedChildren) {
+      for (const child of mergedChildren) {
+        this.expandNode(child);
+      }
+    }
   }
 
   _detachChildren(node) {
@@ -309,6 +315,7 @@ export class Model {
 
     node.isExpanded = false;
     node.expandAllActive = false;
+    node._expandChildrenPending = false;
     node.isSearchAncestor = false;
     this._detachChildren(node);
     this._clearDescendantPendingKeys(node);
@@ -723,10 +730,12 @@ export class Model {
   expandChildren(node) {
     if (!node) return;
     this.expandNode(node);
-    if (node.children) {
+    if (node.children?.length > 0) {
       for (const child of node.children) {
         this.expandNode(child);
       }
+    } else {
+      node._expandChildrenPending = true;
     }
   }
 
@@ -908,10 +917,34 @@ export class Model {
     if (!adapter) return;
 
     adapter.updateModel(mvmfModel);
-    const children = this.client.enumerateChildren({ scopeId: scopeId || adapter.fabricScopeId || this.rootScopeId, model: mvmfModel });
-    this.setChildren(adapter, children.map(c => new NodeAdapter(c, scopeId || adapter.fabricScopeId || this.rootScopeId)));
+    const childScopeId = scopeId || adapter.fabricScopeId || this.rootScopeId;
+    const children = this.client.enumerateChildren({ scopeId: childScopeId, model: mvmfModel });
+    const newChildren = children.map(c => new NodeAdapter(c, childScopeId));
+
+    if (this._childrenMatch(adapter, newChildren)) {
+      this._updateChildModels(adapter, newChildren);
+    } else {
+      this.setChildren(adapter, newChildren);
+    }
     this._emit('nodeUpdated', adapter);
     this._scheduleDataChanged();
+  }
+
+  _childrenMatch(parentNode, newChildren) {
+    const existing = parentNode.children;
+    if (!existing || !newChildren) return !existing && !newChildren;
+    if (existing.length !== newChildren.length) return false;
+    for (let i = 0; i < existing.length; i++) {
+      if (existing[i].key !== newChildren[i].key) return false;
+    }
+    return true;
+  }
+
+  _updateChildModels(parentNode, newChildren) {
+    for (let i = 0; i < parentNode.children.length; i++) {
+      parentNode.children[i].updateModel(newChildren[i]._model);
+      this._emit('nodeUpdated', parentNode.children[i]);
+    }
   }
 
   // --- Search ---
