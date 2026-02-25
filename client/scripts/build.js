@@ -44,8 +44,8 @@ html = html.replace(
 );
 
 html = html.replace(
-  /<script src="lib\/mvmf\/([^"?]+)(\?v=\d+)?"><\/script>/g,
-  `<script src="lib/mvmf/$1?v=${version}"></script>`
+  /<script src="lib\/ManifolderClient\/vendor\/mv\/([^"?]+)(\?v=\d+)?"><\/script>/g,
+  `<script src="lib/ManifolderClient/vendor/mv/$1?v=${version}"></script>`
 );
 
 fs.writeFileSync(htmlPath, html);

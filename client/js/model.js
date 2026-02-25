@@ -3,7 +3,7 @@
  */
 
 import { NodeAdapter } from './node-adapter.js';
-import { getMsfReference } from './node-helpers.js';
+import { getMsfReference } from '../lib/ManifolderClient/node-helpers.js';
 
 const TYPE_TO_PREFIX = {
   RMRoot: 'root',

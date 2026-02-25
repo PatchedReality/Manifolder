@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { NODE_COLORS } from '../shared/node-types.js';
-import { resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl } from '../lib/ManifolderClient/node-helpers.js';
 import { NodeAdapter } from './node-adapter.js';
 
 const HIGHLIGHT_INTENSITY = 1.5;
@@ -117,7 +117,7 @@ export class ViewGraph {
   }
 
   async _getMsfReference(nodeData) {
-    const { getMsfReference } = await import('./node-helpers.js');
+    const { getMsfReference } = await import('../lib/ManifolderClient/node-helpers.js');
     return getMsfReference(nodeData);
   }
 

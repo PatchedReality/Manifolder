@@ -1,0 +1,3 @@
+[submodule "client/lib/ManifolderClient"]
+	path = client/lib/ManifolderClient
+	url = https://github.com/PatchedReality/ManifolderClient.git

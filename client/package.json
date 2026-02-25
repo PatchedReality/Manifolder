@@ -4,10 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.js && npm run generate:client-dts",
+    "build": "node scripts/build.js",
     "watch": "node scripts/build.js --watch",
-    "test": "node --test js/ManifolderClient.test.js",
-    "generate:client-dts": "tsc -p tsconfig.client-dts.json && cp .types/js/ManifolderClient.d.ts js/ManifolderClient.d.ts && rm -rf .types"
+    "test": "node --test lib/ManifolderClient/ManifolderClient.test.js"
   },
   "dependencies": {
     "socket.io-client": "^4.8.3",

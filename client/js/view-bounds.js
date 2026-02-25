@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing, createLabelSprite } from './scene-helpers.js';
 import { getOrbitData, calculateOrbitalPosition, createOrbitPathGeometry, getSpinData, calculateSpinAngle } from './orbital-helpers.js';
-import { rotateByQuaternion } from './node-helpers.js';
+import { rotateByQuaternion } from '../lib/ManifolderClient/node-helpers.js';
 import {
   NODE_TYPES,
   NODE_COLORS,
@@ -14,7 +14,7 @@ import {
   TERRESTRIAL_NAMES,
   PHYSICAL_NAMES
 } from '../shared/node-types.js';
-import { resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl } from '../lib/ManifolderClient/node-helpers.js';
 import { NodeAdapter } from './node-adapter.js';
 
 // Re-export NODE_TYPES for consumers

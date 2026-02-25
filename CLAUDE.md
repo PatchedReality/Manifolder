@@ -3,7 +3,7 @@
 - Three.js for 3D views (ViewGraph, ViewBounds, ViewResource)
 - Socket.io via ManifolderClient for real-time communication with MVMF platform
 - esbuild for bundling (`client/scripts/build.js`)
-- `client/lib/mvmf/` contains vendored MVMF SDK libraries — do not modify
+- `client/lib/ManifolderClient/` is a git submodule containing ManifolderClient and vendored MVMF SDK libraries — do not modify directly
 
 ## Architecture
 - Follow MVC principles: Model is the single source of truth. Views reflect Model state. Do not spread state information across layers or maintain parallel state.

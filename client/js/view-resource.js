@@ -11,7 +11,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import Hls from 'hls.js';
 import { createSkyDome, createStarfield, createInfiniteGrid, calculateGridSpacing, updateGridSpacing } from './scene-helpers.js';
-import { resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl } from '../lib/ManifolderClient/node-helpers.js';
 import { NodeAdapter } from './node-adapter.js';
 import { calculateSunPosition, getSunLightingParams, calculateLatLong } from './geo-utils.js';
 import { NODE_COLORS } from '../shared/node-types.js';

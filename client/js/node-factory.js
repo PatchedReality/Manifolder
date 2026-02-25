@@ -5,7 +5,7 @@
  * Node creation logic has moved to NodeAdapter.
  */
 
-import { resolveResourceUrl } from './node-helpers.js';
+import { resolveResourceUrl } from '../lib/ManifolderClient/node-helpers.js';
 import { NodeAdapter } from './node-adapter.js';
 
 export class NodeFactory {

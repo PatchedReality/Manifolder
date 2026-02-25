@@ -3,7 +3,7 @@
  */
 
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PHYSICAL_TYPE } from '../shared/node-types.js';
-import { resolveResourceUrl, rotateByQuaternion, multiplyQuaternions } from './node-helpers.js';
+import { resolveResourceUrl, rotateByQuaternion, multiplyQuaternions } from '../lib/ManifolderClient/node-helpers.js';
 import { getOrbitData, calculateOrbitalPosition } from './orbital-helpers.js';
 
 const NAME_FIELDS = {
