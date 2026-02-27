@@ -97,10 +97,6 @@ export class ViewResource {
       this._refreshIfSelected();
     });
 
-    this.model.on('stateRestored', () => {
-      this._refreshIfSelected();
-    });
-
     this.model.on('nodeUpdated', (node) => {
       const selected = this.model.getSelectedNode();
       if (selected && node === selected && node.worldPos) {
@@ -535,7 +531,6 @@ export class ViewResource {
   }
 
   _refreshIfSelected() {
-    if (this.model.isRestoringState()) return;
     const selectedNode = this.model.getSelectedNode();
     if (selectedNode) {
       this.setNode(selectedNode);
@@ -566,13 +561,20 @@ export class ViewResource {
     const nodeKey = this.model.nodeKey(node);
     const cacheKey = `${nodeKey}:${resourceUrls.sort().join('|')}`;
 
-    if (cacheKey === this.currentResourceUrl && !this.isLoading) {
-      await this._drawNode(node, this.contentGroup, null, true);
-      this.applyWorldOrientation();
-      this.updateBoundsDisplay();
+    if (cacheKey === this.currentResourceUrl) {
+      if (!this.isLoading) {
+        await this._drawNode(node, this.contentGroup, null, true);
+        this.applyWorldOrientation();
+        this.updateBoundsDisplay();
+      }
       return;
     }
 
+    const previousRootKey = this.currentResourceUrl?.split(':')[0];
+    const isNewRoot = previousRootKey !== nodeKey;
+    if (isNewRoot) {
+      this.clearScene();
+    }
     this.currentResourceUrl = cacheKey;
     this.loadNodeHierarchy(node, resourceUrls.length);
   }
@@ -592,13 +594,24 @@ export class ViewResource {
     const requestId = ++this.loadRequestId;
     this.isLoading = true;
 
-    this.clearScene();
-    this.contentGroup = new THREE.Group();
-    this.scene.add(this.contentGroup);
+    const isFirstLoad = !this.contentGroup;
+
+    if (isFirstLoad) {
+      this.contentGroup = new THREE.Group();
+      this.scene.add(this.contentGroup);
+    }
+
     this._precomputeScale(rootNode);
     this.setStatus(`Loading ${resourceCount} resource(s)...`, 'loading');
 
     const isCancelled = () => requestId !== this.loadRequestId;
+
+    // Collect expected node keys before drawing
+    const expectedKeys = new Set();
+    this._collectVisibleNodeKeys(rootNode, expectedKeys);
+
+    // Remove stale nodes
+    this._removeStaleNodes(expectedKeys);
 
     try {
       await this._drawNode(rootNode, this.contentGroup, requestId, true);
@@ -608,9 +621,11 @@ export class ViewResource {
       }
 
       this.centerContentAtOrigin();
-      this.fitCameraToContent();
+      if (isFirstLoad) {
+        this.fitCameraToContent();
+        this.animateCameraToContent();
+      }
       this.applyWorldOrientation();
-      this.animateCameraToContent();
       this.updateGridFromContent();
       this.updateBoundsDisplay();
       this.setStatus('', '');
@@ -625,6 +640,51 @@ export class ViewResource {
         this.isLoading = false;
       }
     }
+  }
+
+  _collectVisibleNodeKeys(node, keys) {
+    const nodeKey = this.model.nodeKey(node);
+    keys.add(nodeKey);
+    if (this.model.isNodeExpanded(node) && node.children) {
+      for (const child of node.children) {
+        this._collectVisibleNodeKeys(child, keys);
+      }
+    }
+  }
+
+  _removeStaleNodes(expectedKeys) {
+    const staleKeys = [];
+    for (const [key, group] of this.nodeGroups) {
+      if (!expectedKeys.has(key)) {
+        staleKeys.push(key);
+        if (group) {
+          // Dispose geometry/materials and remove from scene
+          group.traverse((child) => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach(m => this.disposeMaterial(m));
+              } else {
+                this.disposeMaterial(child.material);
+              }
+            }
+          });
+          group.parent?.remove(group);
+        }
+      }
+    }
+    for (const key of staleKeys) {
+      this.nodeGroups.delete(key);
+    }
+
+    // Remove stale entries from loadedModels
+    this.loadedModels = this.loadedModels.filter(model => {
+      if (!model.parent) {
+        // Already removed from scene graph by group disposal
+        return false;
+      }
+      return true;
+    });
   }
 
   _applyNodeTransformToGroup(group, transform) {

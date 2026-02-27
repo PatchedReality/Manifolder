@@ -1265,13 +1265,11 @@ export class ViewBounds {
   }
 
   expandNode(node) {
-    this.rebuildVisibleNodes();
-    this.saveState();
+    this._scheduleRebuild();
   }
 
   collapseNode(node) {
-    this.rebuildVisibleNodes();
-    this.saveState();
+    this._scheduleRebuild();
   }
 
   addChildren(parentNode, children) {
