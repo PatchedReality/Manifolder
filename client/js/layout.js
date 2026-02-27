@@ -259,9 +259,10 @@ export class LayoutManager {
     // Skip auto-load if there's a shared URL param - let checkUrlForSharedState handle it
     let hasSharedUrl = false;
     try {
-      hasSharedUrl = (window.top.location.search || window.location.search).includes('loc=');
+      const s = window.top.location.search || window.location.search;
+      hasSharedUrl = s.includes('loc=') || s.includes('msf=');
     } catch (e) {
-      hasSharedUrl = window.location.search.includes('loc=');
+      hasSharedUrl = window.location.search.includes('loc=') || window.location.search.includes('msf=');
     }
     if (!hasSharedUrl) {
       const navState = this.stateManager?.getSection('navigation');

@@ -201,7 +201,17 @@ class App {
     }
 
     const search = targetWindow.location.search;
-    if (!search?.includes('loc=')) return;
+    const params = new URLSearchParams(search);
+
+    const msfUrl = params.get('msf');
+    if (msfUrl) {
+      targetWindow.history.replaceState(null, '', targetWindow.location.pathname);
+      this.layout.setUrl(msfUrl);
+      await this.handleLoadMap(msfUrl);
+      return;
+    }
+
+    if (!params.has('loc')) return;
 
     const state = this.bookmarkManager.decodeStateFromUrl(search);
     if (!state) {
