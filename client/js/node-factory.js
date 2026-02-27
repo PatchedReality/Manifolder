@@ -1,8 +1,6 @@
-/**
- * Copyright (c) 2026 Patched Reality, Inc.
- *
- * NodeFactory - Resource data fetching and processing.
- * Node creation logic has moved to NodeAdapter.
+/*
+ * Copyright 2026 Patched Reality, Inc.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import { resolveResourceUrl } from '../lib/ManifolderClient/node-helpers.js';

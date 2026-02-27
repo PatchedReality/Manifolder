@@ -1,5 +1,6 @@
-/**
- * Copyright (c) 2026 Patched Reality, Inc.
+/*
+ * Copyright 2026 Patched Reality, Inc.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import { TERRESTRIAL_TYPE_MAP, CELESTIAL_TYPE_MAP, PHYSICAL_TYPE } from '../shared/node-types.js';
