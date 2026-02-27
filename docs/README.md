@@ -1,4 +1,4 @@
-# Manifolder Wiki
+# Manifolder Technical Docs
 
 **Manifolder** is a web-based explorer for the [Open Metaverse](https://omb.wiki/) [Spatial Fabric](https://omb.wiki/en/spatial-fabric/architecture/), a hierarchical spatial data structure that describes everything from galaxies down to individual buildings. It provides interactive 2D and 3D views of map data, allowing developers and content creators to inspect node hierarchies, spatial bounds, and properties.
 
