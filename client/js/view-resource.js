@@ -96,6 +96,10 @@ export class ViewResource {
       this._refreshIfSelected();
     });
 
+    this.model.on('stateRestored', () => {
+      this._refreshIfSelected();
+    });
+
     this.model.on('nodeUpdated', (node) => {
       const selected = this.model.getSelectedNode();
       if (selected && node === selected && node.worldPos) {
@@ -530,6 +534,7 @@ export class ViewResource {
   }
 
   _refreshIfSelected() {
+    if (this.model.isRestoringState()) return;
     const selectedNode = this.model.getSelectedNode();
     if (selectedNode) {
       this.setNode(selectedNode);

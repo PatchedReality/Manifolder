@@ -60,7 +60,8 @@ export class Model {
       expansionChanged: [],
       disconnected: [],
       searchStateChanged: [],
-      searchResultsUpdated: []
+      searchResultsUpdated: [],
+      stateRestored: []
     };
 
     this._bindClientEvents();
@@ -111,6 +112,10 @@ export class Model {
         this._emit('dataChanged');
       }, 0);
     }
+  }
+
+  isRestoringState() {
+    return this._pendingExpandedKeys !== null;
   }
 
   _emit(event, ...args) {
@@ -218,12 +223,6 @@ export class Model {
     }
 
     this._checkExpandAllDescendants(parentNode, mergedChildren);
-
-    if (parentNode._expandChildrenPending && mergedChildren) {
-      for (const child of mergedChildren) {
-        this.expandNode(child);
-      }
-    }
   }
 
   _detachChildren(node) {
@@ -315,7 +314,6 @@ export class Model {
 
     node.isExpanded = false;
     node.expandAllActive = false;
-    node._expandChildrenPending = false;
     node.isSearchAncestor = false;
     this._detachChildren(node);
     this._clearDescendantPendingKeys(node);
@@ -385,6 +383,7 @@ export class Model {
 
     if (this._pendingExpandedKeys.size === 0) {
       this._pendingExpandedKeys = null;
+      this._emit('stateRestored');
     }
   }
 
@@ -413,6 +412,7 @@ export class Model {
 
       if (this._pendingExpandedKeys.size === 0) {
         this._pendingExpandedKeys = null;
+        this._emit('stateRestored');
       }
     }
   }
@@ -435,6 +435,7 @@ export class Model {
 
     if (this._pendingExpandedKeys.size === 0) {
       this._pendingExpandedKeys = null;
+      this._emit('stateRestored');
     }
   }
 
@@ -727,15 +728,33 @@ export class Model {
     return true;
   }
 
-  expandChildren(node) {
+  expandLevel(node) {
     if (!node) return;
     this.expandNode(node);
-    if (node.children?.length > 0) {
-      for (const child of node.children) {
-        this.expandNode(child);
+
+    const toExpand = [];
+    const walk = (n) => {
+      if (!n.isExpanded || !n.children) return;
+      for (const child of n.children) {
+        if (!child.isExpanded) {
+          toExpand.push(child);
+        } else {
+          walk(child);
+        }
       }
-    } else {
-      node._expandChildrenPending = true;
+    };
+    walk(node);
+
+    const expandNext = (i) => {
+      if (i >= toExpand.length) {
+        this._scheduleDataChanged();
+        return;
+      }
+      this.expandNode(toExpand[i]);
+      setTimeout(() => expandNext(i + 1), 0);
+    };
+    if (toExpand.length > 0) {
+      setTimeout(() => expandNext(0), 0);
     }
   }
 
@@ -814,7 +833,7 @@ export class Model {
     parentNode.expandAllActive = false;
 
     for (const child of children) {
-      this.expandAllDescendants(child);
+      setTimeout(() => this.expandAllDescendants(child), 0);
     }
   }
 

@@ -530,11 +530,11 @@ export class HierarchyPanel {
     };
   }
 
-  expandChildren(nodeOrKey) {
+  expandLevel(nodeOrKey) {
     const nodeKey = this._nodeKey(nodeOrKey);
     const nodeData = this._getNodeData(nodeKey);
     if (nodeData) {
-      this.model.expandChildren(nodeData);
+      this.model.expandLevel(nodeData);
       this.model.selectNode(nodeData);
     }
   }
@@ -569,11 +569,11 @@ export class HierarchyPanel {
     menu.className = 'tree-context-menu';
     menu.id = 'tree-context-menu';
 
-    const expandChildrenBtn = document.createElement('button');
-    expandChildrenBtn.className = 'tree-context-menu-item';
-    expandChildrenBtn.textContent = 'Expand Children';
-    expandChildrenBtn.addEventListener('click', () => {
-      this.expandChildren(nodeKey);
+    const expandLevelBtn = document.createElement('button');
+    expandLevelBtn.className = 'tree-context-menu-item';
+    expandLevelBtn.textContent = 'Expand Level';
+    expandLevelBtn.addEventListener('click', () => {
+      this.expandLevel(nodeKey);
       this.hideContextMenu();
     });
 
@@ -588,7 +588,7 @@ export class HierarchyPanel {
       this.hideContextMenu();
     });
 
-    menu.appendChild(expandChildrenBtn);
+    menu.appendChild(expandLevelBtn);
     menu.appendChild(separator);
     menu.appendChild(collapseAllBtn);
 
