@@ -15,8 +15,8 @@ https://patchedreality.com/manifolder
 
 ## Related Projects
 
-- **[ManifolderClient](/PatchedReality/ManifolderClient)** — JavaScript client library used by Manifolder to connect to Fabric servers
-- **[ManifolderMCP](/PatchedReality/ManifolderMCP)** — MCP server that allows AI agents to browse and edit Fabric scenes
+- **[ManifolderClient](https://github.com/PatchedReality/ManifolderClient)** — JavaScript client library used by Manifolder to connect to Fabric servers
+- **[ManifolderMCP](https://github.com/PatchedReality/ManifolderMCP)** — MCP server that allows AI agents to browse and edit Fabric scenes
 
 ## User Interface
 
