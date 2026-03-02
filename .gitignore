@@ -29,4 +29,3 @@ build/
 
 # Local deploy script
 deploy.sh
-docs

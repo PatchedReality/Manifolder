@@ -98,6 +98,30 @@ body {
 }
 
 /* ============================================
+   PRODUCT HEADER
+   ============================================ */
+#product-header {
+  position: relative;
+  background: linear-gradient(180deg, #1e1e1e 0%, var(--bg-panel) 100%);
+  border-bottom: 1px solid var(--border-default);
+  padding: 10px var(--spacing-sm) 8px;
+  text-align: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+#product-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 200px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+}
+
+/* ============================================
    TOOLBAR
    ============================================ */
 #toolbar {
@@ -120,6 +144,14 @@ body {
 
 .toolbar-right {
   margin-left: auto;
+}
+
+.product-name {
+  font-family: 'Chakra Petch', var(--font-ui);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.25em;
+  color: var(--text-primary);
 }
 
 .toolbar-label {
