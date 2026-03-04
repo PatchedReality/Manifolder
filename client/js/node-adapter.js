@@ -212,7 +212,11 @@ export class NodeAdapter {
   get hasChildren() {
     return (this._model.nChildren || 0) > 0
       || this.children.length > 0
-      || this._model.__attachmentExpandable === true;
+      || this.isAttachmentPoint;
+  }
+
+  get isAttachmentPoint() {
+    return (this._model.pType?.bSubtype ?? 0) === 255;
   }
 
   get resourceUrl() {

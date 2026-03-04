@@ -115,10 +115,6 @@ export class ViewGraph {
     return null;
   }
 
-  async _getMsfReference(nodeData) {
-    const { getMsfReference } = await import('../lib/ManifolderClient/node-helpers.js');
-    return getMsfReference(nodeData);
-  }
 
   _createNodeMaterial(nodeData, color) {
     const textureUrl = this._getTextureUrl(nodeData);
@@ -267,8 +263,7 @@ export class ViewGraph {
       const { key } = nodeIntersect.object.userData;
       const node = this.graphNodes.find(n => n.key === key);
       if (node) {
-        // Check for MSF reference - prompt to load instead of toggling
-        const msfUrl = await this._getMsfReference(node.data);
+        const msfUrl = node.data.isAttachmentPoint ? node.data.resourceRef : null;
         if (msfUrl) {
           if (confirm(`Load map: ${msfUrl}?`)) {
             this.msfLoadCallbacks.forEach(cb => cb(msfUrl));

@@ -11,7 +11,7 @@ import { ViewResource } from './view-resource.js';
 import { InspectorPanel } from './inspector-panel.js';
 import { createManifolderSubscriptionClient } from '../lib/ManifolderClient/ManifolderClient.js';
 import { CELESTIAL_NAMES, PHYSICAL_NAMES, generateNodeTypeStylesheet } from '../shared/node-types.js';
-import { getMsfReference, setResourceBaseUrl } from '../lib/ManifolderClient/node-helpers.js';
+import { setResourceBaseUrl } from '../lib/ManifolderClient/node-helpers.js';
 import { NodeAdapter } from './node-adapter.js';
 import { UIStateManager } from './ui-state-manager.js';
 import { BookmarkManager } from './bookmark-manager.js';
@@ -92,7 +92,7 @@ class App {
     this.model.on('selectionChanged', (node) => {
       if (!node) return;
 
-      getMsfReference(node).then(url => this.layout.setFollowLink(url));
+      this.layout.setFollowLink(node.isAttachmentPoint ? node.resourceRef : null);
       this.updateRP1GoButton(node);
 
       if (!this._restoringState) {

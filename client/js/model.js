@@ -4,7 +4,6 @@
  */
 
 import { NodeAdapter } from './node-adapter.js';
-import { getMsfReference } from '../lib/ManifolderClient/node-helpers.js';
 
 const TYPE_TO_PREFIX = {
   RMRoot: 'root',
@@ -540,25 +539,10 @@ export class Model {
     return merged;
   }
 
-  _checkAttachmentExpandable(node) {
-    if (!node || node._model.__attachmentExpandable) return;
-    const ref = node._model?.pResource?.sReference;
-    if (!ref) return;
-    getMsfReference(node).then(msfUrl => {
-      if (msfUrl && !node._model.__attachmentExpandable) {
-        node._model.__attachmentExpandable = true;
-        this._emit('nodeUpdated', node);
-      }
-    }).catch(() => {});
-  }
-
   _setAttachmentNodeState(node, { loading = false, error = null } = {}) {
     if (!node) return;
     node._attachmentLoading = loading;
     node._attachmentError = error;
-    if (loading || error) {
-      node._model.__attachmentExpandable = true;
-    }
     this._emit('nodeUpdated', node);
   }
 
@@ -618,7 +602,6 @@ export class Model {
       return;
     }
     parentNode._attachmentMountedChild = childNode;
-    parentNode._model.__attachmentExpandable = true;
     this.setChildren(parentNode, parentNode.children || []);
   }
 
@@ -638,13 +621,17 @@ export class Model {
       return;
     }
 
-    const msfRef = await getMsfReference(node);
+    if (!node.isAttachmentPoint) {
+      node._attachmentExpansionState = { status: 'not-attachment' };
+      return;
+    }
+
+    const msfRef = node.resourceRef;
     if (!msfRef) {
       node._attachmentExpansionState = { status: 'not-attachment' };
       return;
     }
 
-    node._model.__attachmentExpandable = true;
     node._attachmentExpansionState = { status: 'loading', msfRef };
     this._setAttachmentNodeState(node, { loading: true, error: null });
 
@@ -887,7 +874,6 @@ export class Model {
     this._checkPendingExpansion(adapter);
     this._checkPendingSelection();
     this._scheduleDataChanged();
-    this._checkAttachmentExpandable(adapter);
   }
 
   _handleNodeUpdated(scopeId, id, type, mvmfModel) {
@@ -905,7 +891,6 @@ export class Model {
       }
       this._emit('nodeUpdated', adapter);
       this._scheduleDataChanged();
-      this._checkAttachmentExpandable(adapter);
     }
   }
 
