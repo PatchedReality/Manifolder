@@ -164,16 +164,17 @@ export class UIStateManager {
     await new Promise(r => setTimeout(r, 0));
 
     const layoutState = normalizedSnapshot.layout || {};
-    const viewBoundsState = normalizedSnapshot.viewBounds || {};
-    const viewResourceState = normalizedSnapshot.viewResource || {};
 
     app.layout.restoreStateValues(layoutState);
-    app.viewBounds.restoreState(viewBoundsState);
-    app.viewResource.restoreState(viewResourceState);
+    app.viewBounds.restoreState(normalizedSnapshot.viewBounds || {});
+    app.viewResource.restoreState(normalizedSnapshot.viewResource || {});
 
-    if (newUrl && (newUrl !== currentUrl || !app.model.tree)) {
+    const needsMapLoad = newUrl && (newUrl !== currentUrl || !app.model.tree);
+    if (needsMapLoad) {
       document.getElementById('url-input').value = newUrl;
-      await app.handleLoadMap(newUrl, { skipStateRestore: true });
+      // State is pre-populated above so handleLoadMap's normal restore path
+      // picks it up and uses the pending-keys mechanism for async node loading.
+      await app.handleLoadMap(newUrl);
     }
 
     if (app.activeScopeId) {
@@ -189,12 +190,16 @@ export class UIStateManager {
       return false;
     }
 
-    if (normalizedSnapshot.hierarchy?.expandedNodeIds?.length > 0) {
-      app.model.expandNodesByKeys(normalizedSnapshot.hierarchy.expandedNodeIds);
-    }
+    // Only manually restore hierarchy/selection when the map was already
+    // loaded — handleLoadMap's normal path already handles this for new loads.
+    if (!needsMapLoad) {
+      if (normalizedSnapshot.hierarchy?.expandedNodeIds?.length > 0) {
+        app.model.expandNodesByKeys(normalizedSnapshot.hierarchy.expandedNodeIds);
+      }
 
-    if (normalizedSnapshot.navigation?.selectedNodePath?.length > 0) {
-      app.restoreNodePath(normalizedSnapshot.navigation.selectedNodePath);
+      if (normalizedSnapshot.navigation?.selectedNodePath?.length > 0) {
+        app.restoreNodePath(normalizedSnapshot.navigation.selectedNodePath);
+      }
     }
 
     return true;

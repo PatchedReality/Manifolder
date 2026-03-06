@@ -557,11 +557,15 @@ class App {
   }
 
   setupLayoutEvents() {
-    this.layout.onLoad(async ({ url }) => {
+    this.layout.onLoad(async ({ url, bookmarkState }) => {
       // Capture planet context from selected node before loading new map
       const selectedNode = this.model.getSelectedNode();
       if (selectedNode) {
         this.model.inheritedPlanetContext = this.model.getPlanetContext(selectedNode);
+      }
+      if (bookmarkState) {
+        await this.bookmarkManager.applyState(bookmarkState, this);
+        return;
       }
       await this.handleLoadMap(url);
     });
@@ -587,7 +591,7 @@ class App {
 
   }
 
-  async handleLoadMap(url, { skipStateRestore = false } = {}) {
+  async handleLoadMap(url) {
     try {
       this.layout.setStatus('Loading map...', 'loading');
 
@@ -618,25 +622,21 @@ class App {
 
       const root = this.model.tree;
       if (root) {
-        if (skipStateRestore) {
-          this.model.expandNode(root);
+        this._restoringState = true;
+        this._clearRestoringStateWhenReady();
+
+        const hierarchyState = this.stateManager.getSection('hierarchy');
+        const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
+
+        this.model.expandNode(root);
+        if (hasSavedExpanded) {
+          this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
+        }
+        const navState = this.stateManager.getSection('navigation');
+        if (navState.selectedNodePath?.length > 0) {
+          this.restoreNodePath(navState.selectedNodePath);
         } else {
-          this._restoringState = true;
-          this._clearRestoringStateWhenReady();
-
-          const hierarchyState = this.stateManager.getSection('hierarchy');
-          const hasSavedExpanded = hierarchyState.expandedNodeIds?.length > 0;
-
-          this.model.expandNode(root);
-          if (hasSavedExpanded) {
-            this.model.expandNodesByKeys(hierarchyState.expandedNodeIds);
-          }
-          const navState = this.stateManager.getSection('navigation');
-          if (navState.selectedNodePath?.length > 0) {
-            this.restoreNodePath(navState.selectedNodePath);
-          } else {
-            this.model.selectNode(root);
-          }
+          this.model.selectNode(root);
         }
       }
     } catch (error) {

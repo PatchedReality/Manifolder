@@ -309,6 +309,35 @@ export class LayoutManager {
         this.dispatchEvent('load', { url: this.followLinkUrl });
       }
     });
+
+    const featuredSelect = document.getElementById('featured-fabric-select');
+    this.loadFeaturedFabrics(featuredSelect);
+    featuredSelect?.addEventListener('change', () => {
+      const idx = featuredSelect.selectedIndex;
+      const fabric = this._featuredFabrics?.[idx - 1];
+      if (!fabric) return;
+      this.setUrl(fabric.url);
+      this.dispatchEvent('load', { url: fabric.url, bookmarkState: fabric.state || null });
+      featuredSelect.value = '';
+    });
+  }
+
+  async loadFeaturedFabrics(select) {
+    if (!select) return;
+    try {
+      const resp = await fetch('data/featured-fabrics.json');
+      if (!resp.ok) throw new Error(resp.statusText);
+      this._featuredFabrics = await resp.json();
+      const fragment = document.createDocumentFragment();
+      for (const { name } of this._featuredFabrics) {
+        const option = document.createElement('option');
+        option.textContent = name;
+        fragment.appendChild(option);
+      }
+      select.appendChild(fragment);
+    } catch (e) {
+      console.warn('Failed to load featured fabrics:', e);
+    }
   }
 
   loadUrlHistory() {

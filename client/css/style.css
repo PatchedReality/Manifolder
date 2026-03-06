@@ -108,6 +108,9 @@ body {
   text-align: center;
   flex-shrink: 0;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 #product-header::after {
@@ -152,6 +155,25 @@ body {
   font-size: 1.1rem;
   letter-spacing: 0.25em;
   color: var(--text-primary);
+}
+
+.featured-fabrics {
+  position: absolute;
+  right: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+}
+
+#featured-fabric-select {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .toolbar-label {

@@ -253,6 +253,15 @@ export class BookmarkManager {
       payload.o = 0;
     }
 
+    const layout = state.layout || {};
+    const views =
+      (layout.graphEnabled === false ? 0 : 4) |
+      (layout.boundsEnabled === false ? 0 : 2) |
+      (layout.resourceEnabled ? 1 : 0);
+    if (views !== 6) {
+      payload.w = views;
+    }
+
     return payload;
   }
 
@@ -291,7 +300,7 @@ export class BookmarkManager {
 
     const expandedNodeIds = this._decodeExpandedRefList(minimal.e, scopes);
 
-    return this.stateManager.mergeWithDefaults({
+    const decoded = {
       navigation: {
         mapUrl: minimal.m,
         selectedNodePath
@@ -301,7 +310,17 @@ export class BookmarkManager {
         typeFilter: this._decodeTypeFilter(minimal.t),
         orbitsVisible: minimal.o !== 0
       }
-    });
+    };
+
+    if (minimal.w != null) {
+      decoded.layout = {
+        graphEnabled: (minimal.w & 4) !== 0,
+        boundsEnabled: (minimal.w & 2) !== 0,
+        resourceEnabled: (minimal.w & 1) !== 0
+      };
+    }
+
+    return this.stateManager.mergeWithDefaults(decoded);
   }
 
   _decodeLegacySharedState(minimal) {
