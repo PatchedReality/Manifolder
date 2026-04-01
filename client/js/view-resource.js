@@ -47,6 +47,7 @@ export class ViewResource {
     this.mouse = new THREE.Vector2();
 
     this.nodeGroups = new Map();
+    this._fetchSemaphore = { active: 0, limit: 6, queue: [] };
 
     this.currentResourceUrl = null;
     this.currentNode = null;
@@ -755,6 +756,34 @@ export class ViewResource {
     }
   }
 
+  async _acquireFetchSlot() {
+    const sem = this._fetchSemaphore;
+    if (sem.active < sem.limit) {
+      sem.active++;
+      return;
+    }
+    await new Promise(resolve => sem.queue.push(resolve));
+  }
+
+  _releaseFetchSlot() {
+    const sem = this._fetchSemaphore;
+    if (sem.queue.length > 0) {
+      sem.queue.shift()();
+    } else {
+      sem.active--;
+    }
+  }
+
+  async _throttledFetch(url, requestId) {
+    await this._acquireFetchSlot();
+    try {
+      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      return await fetch(url);
+    } finally {
+      this._releaseFetchSlot();
+    }
+  }
+
   cleanupCancelledLoad() {
     if (this.contentGroup) {
       this.scene.remove(this.contentGroup);
@@ -782,35 +811,40 @@ export class ViewResource {
   }
 
   async loadDirectGlb(url, nodeTransform, requestId, targetGroup = null) {
-    return new Promise((resolve) => {
-      this.gltfLoader.load(
-        url,
-        (gltf) => {
-          const group = targetGroup || this.contentGroup;
-          // Check if this request is still current before adding to scene
-          if (requestId !== this.loadRequestId || !group) {
+    await this._acquireFetchSlot();
+    try {
+      if (requestId !== this.loadRequestId) return;
+      await new Promise((resolve) => {
+        this.gltfLoader.load(
+          url,
+          (gltf) => {
+            const group = targetGroup || this.contentGroup;
+            if (requestId !== this.loadRequestId || !group) {
+              resolve();
+              return;
+            }
+            const model = gltf.scene;
+            this.setupModelMaterials(model);
+            if (nodeTransform) {
+              this.applyNodeTransform(model, nodeTransform);
+            }
+            group.add(model);
+            this.loadedModels.push(model);
+            if (this.loadedModels.length === 1) {
+              this.centerContentAtOrigin();
+            }
             resolve();
-            return;
+          },
+          undefined,
+          (error) => {
+            console.warn(`Failed to load GLB ${url}:`, error);
+            resolve();
           }
-          const model = gltf.scene;
-          this.setupModelMaterials(model);
-          if (nodeTransform) {
-            this.applyNodeTransform(model, nodeTransform);
-          }
-          group.add(model);
-          this.loadedModels.push(model);
-          if (this.loadedModels.length === 1) {
-            this.centerContentAtOrigin();
-          }
-          resolve();
-        },
-        undefined,
-        (error) => {
-          console.warn(`Failed to load GLB ${url}:`, error);
-          resolve();
-        }
-      );
-    });
+        );
+      });
+    } finally {
+      this._releaseFetchSlot();
+    }
   }
 
   async loadActionResource(resourceRef, resourceName, nodeTransform, requestId, targetGroup = null) {
@@ -851,7 +885,8 @@ export class ViewResource {
 
   async loadResourceWithTransform(url, nodeTransform, requestId, targetGroup = null) {
     try {
-      const response = await fetch(url);
+      const response = await this._throttledFetch(url, requestId);
+      if (!response) return;
       if (!response.ok) {
         console.warn(`Failed to fetch ${url}: HTTP ${response.status}`);
         return;
@@ -1083,8 +1118,8 @@ export class ViewResource {
     }
 
     try {
-      const response = await fetch(url);
-      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      const response = await this._throttledFetch(url, requestId);
+      if (!response) return null;
       if (!response.ok) {
         console.warn(`fetchResourceJson: HTTP ${response.status} for ${url}`);
         return null;
@@ -1246,7 +1281,8 @@ export class ViewResource {
   async loadNestedScene(sceneName, parentTransform, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     try {
       const url = resolveResourceUrl('action://' + sceneName, scopeBaseUrl);
-      const response = await fetch(url);
+      const response = await this._throttledFetch(url, requestId);
+      if (!response) return null;
       if (!response.ok) {
         console.warn(`Failed to load nested scene: ${sceneName}`);
         return null;
@@ -1434,6 +1470,7 @@ export class ViewResource {
       return { metadata: this.metadataCache.get(url), baseDir };
     }
 
+    await this._acquireFetchSlot();
     try {
       const response = await fetch(url);
       if (!response.ok) {
@@ -1447,6 +1484,8 @@ export class ViewResource {
     } catch (error) {
       console.warn(`Failed to load metadata ${metadataRef}:`, error);
       return { metadata: null, baseDir: null };
+    } finally {
+      this._releaseFetchSlot();
     }
   }
 
@@ -1457,24 +1496,30 @@ export class ViewResource {
       return this.glbCache.get(url).clone();
     }
 
-    return new Promise((resolve) => {
-      this.gltfLoader.load(
-        url,
-        (gltf) => {
-          if (requestId !== null && requestId !== this.loadRequestId) {
+    await this._acquireFetchSlot();
+    try {
+      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      return await new Promise((resolve) => {
+        this.gltfLoader.load(
+          url,
+          (gltf) => {
+            if (requestId !== null && requestId !== this.loadRequestId) {
+              resolve(null);
+              return;
+            }
+            this.glbCache.set(url, gltf.scene);
+            resolve(gltf.scene.clone());
+          },
+          undefined,
+          (error) => {
+            console.warn(`Failed to load GLB ${glbName}:`, error);
             resolve(null);
-            return;
           }
-          this.glbCache.set(url, gltf.scene);
-          resolve(gltf.scene.clone());
-        },
-        undefined,
-        (error) => {
-          console.warn(`Failed to load GLB ${glbName}:`, error);
-          resolve(null);
-        }
       );
-    });
+      });
+    } finally {
+      this._releaseFetchSlot();
+    }
   }
 
   _nodeTransformToMatrix(transform) {
