@@ -45,10 +45,10 @@ export class HierarchyPanel {
       delete element.dataset.nodetype;
     }
 
-    const icon = element.querySelector(':scope > .tree-node-content > .tree-icon');
-    if (icon) {
+    const glyph = element.querySelector(':scope > .tree-node-content > .tree-icon > .tree-icon-glyph');
+    if (glyph) {
       const isCelestial = CELESTIAL_NAMES.has(nodeData.nodeType);
-      icon.textContent = isCelestial ? '▲' : '●';
+      glyph.textContent = isCelestial ? '▲' : '●';
     }
   }
 
@@ -85,6 +85,10 @@ export class HierarchyPanel {
     });
 
     this.model.on('expansionChanged', (node) => {
+      this.refreshNode(node);
+    });
+
+    this.model.on('nodeVisibilityChanged', (node) => {
       this.refreshNode(node);
     });
 
@@ -233,8 +237,11 @@ export class HierarchyPanel {
 
     const icon = document.createElement('span');
     icon.className = 'tree-icon';
+    const glyph = document.createElement('span');
+    glyph.className = 'tree-icon-glyph';
     const isCelestial = CELESTIAL_NAMES.has(nodeData.nodeType);
-    icon.textContent = isCelestial ? '▲' : '●';
+    glyph.textContent = isCelestial ? '▲' : '●';
+    icon.appendChild(glyph);
 
     const label = document.createElement('span');
     label.className = 'tree-label';
@@ -570,28 +577,36 @@ export class HierarchyPanel {
     menu.className = 'tree-context-menu';
     menu.id = 'tree-context-menu';
 
-    const expandLevelBtn = document.createElement('button');
-    expandLevelBtn.className = 'tree-context-menu-item';
-    expandLevelBtn.textContent = 'Expand Level';
-    expandLevelBtn.addEventListener('click', () => {
-      this.expandLevel(nodeKey);
-      this.hideContextMenu();
-    });
+    const makeItem = (label, onClick, { disabled = false } = {}) => {
+      const btn = document.createElement('button');
+      btn.className = 'tree-context-menu-item';
+      btn.textContent = label;
+      btn.disabled = disabled;
+      btn.addEventListener('click', () => {
+        onClick();
+        this.hideContextMenu();
+      });
+      return btn;
+    };
+    const makeSeparator = () => {
+      const sep = document.createElement('div');
+      sep.className = 'tree-context-menu-separator';
+      return sep;
+    };
 
-    const separator = document.createElement('div');
-    separator.className = 'tree-context-menu-separator';
+    const nodeData = this._getNodeData(nodeKey);
+    const isHidden = this.model.isNodeHiddenInResource(nodeData);
+    const canHide = !!nodeData?.resourceUrl && nodeData.resourceActionType !== 'rotator';
 
-    const collapseAllBtn = document.createElement('button');
-    collapseAllBtn.className = 'tree-context-menu-item';
-    collapseAllBtn.textContent = 'Collapse All';
-    collapseAllBtn.addEventListener('click', () => {
-      this.collapseAllDescendants(nodeKey);
-      this.hideContextMenu();
-    });
-
-    menu.appendChild(expandLevelBtn);
-    menu.appendChild(separator);
-    menu.appendChild(collapseAllBtn);
+    menu.appendChild(makeItem('Expand Level', () => this.expandLevel(nodeKey)));
+    menu.appendChild(makeSeparator());
+    menu.appendChild(makeItem('Collapse All', () => this.collapseAllDescendants(nodeKey)));
+    menu.appendChild(makeSeparator());
+    menu.appendChild(makeItem(
+      isHidden ? 'Show Resource' : 'Hide Resource',
+      () => this.model.setNodeHiddenInResource(nodeData, !isHidden),
+      { disabled: !canHide }
+    ));
 
     document.body.appendChild(menu);
 
@@ -704,6 +719,8 @@ export class HierarchyPanel {
     // Search state
     element.classList.toggle('search-match', !!node.isSearchMatch);
     element.classList.toggle('search-ancestor', !!node.isSearchAncestor);
+
+    element.classList.toggle('resource-hidden', !!node.isHiddenInResource);
   }
 
 }

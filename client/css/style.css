@@ -922,6 +922,32 @@ body {
   height: 16px;
   margin-right: 4px;
   flex-shrink: 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.tree-node.resource-hidden > .tree-node-content > .tree-icon > .tree-icon-glyph {
+  opacity: 0.4;
+}
+
+.tree-node.resource-hidden > .tree-node-content > .tree-icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 1.5px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  pointer-events: none;
+}
+
+.tree-node.resource-hidden > .tree-node-content > .tree-label {
+  opacity: 0.6;
+  font-style: italic;
 }
 
 .tree-label {

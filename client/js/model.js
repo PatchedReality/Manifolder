@@ -58,6 +58,7 @@ export class Model {
       dataChanged: [],
       selectionChanged: [],
       expansionChanged: [],
+      nodeVisibilityChanged: [],
       disconnected: [],
       searchStateChanged: [],
       searchResultsUpdated: [],
@@ -323,6 +324,20 @@ export class Model {
 
   isNodeExpanded(node) {
     return node?.isExpanded === true;
+  }
+
+  // --- Resource View Visibility (session-only, not persisted) ---
+
+  setNodeHiddenInResource(node, hidden) {
+    if (!node) return;
+    const next = !!hidden;
+    if (!!node.isHiddenInResource === next) return;
+    node.isHiddenInResource = next;
+    this._emit('nodeVisibilityChanged', node, next);
+  }
+
+  isNodeHiddenInResource(node) {
+    return !!node?.isHiddenInResource;
   }
 
   getExpandedNodeKeys() {

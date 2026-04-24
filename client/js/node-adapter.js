@@ -231,6 +231,12 @@ export class NodeAdapter {
     return this._model.pResource?.sName || null;
   }
 
+  get resourceActionType() {
+    const ref = this.resourceRef;
+    if (!ref?.startsWith('action://')) return null;
+    return ref.slice('action://'.length).split(/[:/]/)[0];
+  }
+
   get orbit() {
     if (this.type !== 'RMCObject') return null;
     const pOrbit = this._model.pOrbit_Spin;

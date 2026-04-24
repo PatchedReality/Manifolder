@@ -47,6 +47,7 @@ export class ViewResource {
     this.mouse = new THREE.Vector2();
 
     this.nodeGroups = new Map();
+    this.nodeResourceGroups = new Map();
     this._fetchSemaphore = { active: 0, limit: 6, queue: [] };
 
     this.currentResourceUrl = null;
@@ -109,6 +110,14 @@ export class ViewResource {
           }
         }
         this.setNode(node);
+      }
+    });
+
+    this.model.on('nodeVisibilityChanged', (node, hidden) => {
+      const nodeKey = this.model.nodeKey(node);
+      const resourceGroup = this.nodeResourceGroups.get(nodeKey);
+      if (resourceGroup) {
+        resourceGroup.visible = !hidden;
       }
     });
   }
@@ -676,6 +685,7 @@ export class ViewResource {
     }
     for (const key of staleKeys) {
       this.nodeGroups.delete(key);
+      this.nodeResourceGroups.delete(key);
     }
 
     // Remove stale entries from loadedModels
@@ -732,19 +742,21 @@ export class ViewResource {
     }
 
     if (isNew && hasResource) {
-      const resourceRef = node.resourceRef;
-      const actionType = resourceRef?.startsWith('action://')
-        ? resourceRef.slice('action://'.length).split(/[:/]/)[0]
-        : null;
+      const actionType = node.resourceActionType;
       if (actionType === 'rotator' && node.resourceName) {
         await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId);
       } else {
+        const resourceGroup = new THREE.Group();
+        resourceGroup.visible = !node.isHiddenInResource;
+        target.add(resourceGroup);
+        this.nodeResourceGroups.set(nodeKey, resourceGroup);
+
         const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
         const lower = node.resourceUrl.toLowerCase();
         if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-          await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, target);
+          await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, resourceGroup);
         } else {
-          await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, target);
+          await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, resourceGroup);
         }
       }
     }
@@ -791,6 +803,7 @@ export class ViewResource {
     }
     this.loadedModels = [];
     this.nodeGroups.clear();
+    this.nodeResourceGroups.clear();
     this.rotators = [];
 
     // Clean up video elements from cancelled load
@@ -1799,6 +1812,7 @@ export class ViewResource {
     this.loadedModels = [];
     this.contentGroup = null;
     this.nodeGroups.clear();
+    this.nodeResourceGroups.clear();
     this.rotators = [];
 
     // Clean up video elements and HLS instances
