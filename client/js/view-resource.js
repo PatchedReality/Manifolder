@@ -1546,12 +1546,31 @@ export class ViewResource {
     );
   }
 
+  // Like _nodeTransformToMatrix, but with identity scale. The node's own bound
+  // is in world units already (per fabric convention), so we must not multiply
+  // it by the node's own scale when computing world-space bound corners — that
+  // would double-apply the scale. Children still use the scaled matrix when
+  // they descend, so child positions inherit parent scale as expected.
+  _nodeTransformToBoundMatrix(transform) {
+    const pos = transform.position || { x: 0, y: 0, z: 0 };
+    const rot = transform.rotation || { x: 0, y: 0, z: 0, w: 1 };
+    return new THREE.Matrix4().compose(
+      new THREE.Vector3(pos.x, pos.y, pos.z),
+      new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w),
+      new THREE.Vector3(1, 1, 1)
+    );
+  }
+
   _computeNodeBounds(node, parentMatrix, isRoot = false) {
-    const localMatrix = (!isRoot && node.transform)
+    const localBoundMatrix = (!isRoot && node.transform)
+      ? this._nodeTransformToBoundMatrix(node.transform)
+      : new THREE.Matrix4();
+    const localChildMatrix = (!isRoot && node.transform)
       ? this._nodeTransformToMatrix(node.transform)
       : new THREE.Matrix4();
 
-    const worldMatrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, localMatrix);
+    const worldBoundMatrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, localBoundMatrix);
+    const worldChildMatrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, localChildMatrix);
     const bounds = new THREE.Box3();
 
     if (node.bound && node.bound.x != null && node.bound.y != null && node.bound.z != null) {
@@ -1570,17 +1589,17 @@ export class ViewResource {
         new THREE.Vector3(localBox.max.x, localBox.max.y, localBox.max.z),
       ];
       for (const corner of corners) {
-        corner.applyMatrix4(worldMatrix);
+        corner.applyMatrix4(worldBoundMatrix);
         bounds.expandByPoint(corner);
       }
     } else if (!isRoot && node.transform) {
-      const pos = new THREE.Vector3().setFromMatrixPosition(worldMatrix);
+      const pos = new THREE.Vector3().setFromMatrixPosition(worldChildMatrix);
       bounds.expandByPoint(pos);
     }
 
     if (this.model.isNodeExpanded(node) && node.children) {
       for (const child of node.children) {
-        const childBounds = this._computeNodeBounds(child, worldMatrix);
+        const childBounds = this._computeNodeBounds(child, worldChildMatrix);
         if (!childBounds.isEmpty()) {
           bounds.union(childBounds);
         }
