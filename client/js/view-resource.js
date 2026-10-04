@@ -17,6 +17,9 @@ import { NodeAdapter } from './node-adapter.js';
 import { calculateSunPosition, getSunLightingParams, calculateLatLong } from './geo-utils.js';
 import { NODE_COLORS } from '../shared/node-types.js';
 
+// Ownership lives on the assets shared by cached templates and their clones.
+const cachedAssetOwner = Symbol('cachedAssetOwner');
+
 export class ViewResource {
   constructor(containerSelector, stateManager, model) {
     this.container = document.querySelector(containerSelector);
@@ -51,6 +54,7 @@ export class ViewResource {
     this._fetchSemaphore = { active: 0, limit: 6, queue: [] };
 
     this.currentResourceUrl = null;
+    this.currentRootKey = null; // Scoped node keys contain colons; keep root identity separately.
     this.currentNode = null;
     this.isLoading = false;
     this.loadRequestId = 0;  // Increments on each load to handle race conditions
@@ -68,6 +72,7 @@ export class ViewResource {
     this.animationFrameId = null;
     this.disposed = false;
     this.initialized = false;
+    this._wasHidden = false;
 
     this._bindModelEvents();
     this.init();
@@ -209,10 +214,12 @@ export class ViewResource {
 
     // Store bound handlers for cleanup
     this.boundResizeHandler = () => this.onWindowResize();
+    this.boundVisibilityHandler = () => this.onWindowResize();
     this.boundDblClickHandler = (e) => this.onDoubleClick(e);
     this.boundClickHandler = (e) => this.onClick(e);
 
     window.addEventListener('resize', this.boundResizeHandler);
+    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
     this.setupEventListeners();
     this.setupBoundsToggle();
     this.initialized = true;
@@ -504,12 +511,45 @@ export class ViewResource {
 
   onWindowResize() {
     if (!this.container || !this.camera) return;
+    if (!this._isVisible()) {
+      this._suspendResourceLoads();
+      return;
+    }
+    const wasHidden = this._wasHidden;
+    this._wasHidden = false;
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    if (wasHidden) {
+      this.clock.getDelta(); // Exclude time spent in a background tab from resumed rotation.
+      if (this.currentNode) this.setNode(this.currentNode);
+    }
+  }
+
+  _isVisible() {
+    return !!this.container?.offsetHeight && !!this.container?.offsetWidth && !document.hidden;
+  }
+
+  _isRequestCancelled(requestId) {
+    return this.disposed || (requestId !== null && requestId !== this.loadRequestId);
+  }
+
+  _suspendResourceLoads() {
+    clearTimeout(this._setNodeDebounce);
+    if (this._wasHidden) return;
+    this._wasHidden = true;
+    ++this.loadRequestId;
+    this.isLoading = false;
+    // Retain completed models/caches; unfinished resources resume when shown.
+    this.currentResourceUrl = null;
+    if (this.cameraAnimationId) {
+      cancelAnimationFrame(this.cameraAnimationId);
+      this.cameraAnimationId = null;
+      if (this.contentGroup) this.contentGroup.userData.needsCameraFit = true;
+    }
   }
 
   animate() {
@@ -518,6 +558,11 @@ export class ViewResource {
     this.animationFrameId = requestAnimationFrame(() => this.animate());
 
     const delta = this.clock.getDelta();
+    if (!this._isVisible()) {
+      this._suspendResourceLoads();
+      return;
+    }
+    if (this._wasHidden) this.onWindowResize();
     this.updateRotators(delta);
 
     this.controls.update();
@@ -549,17 +594,23 @@ export class ViewResource {
 
   setNode(node) {
     this.currentNode = node;
-
-    if (!this.container.offsetHeight) return;
-
     clearTimeout(this._setNodeDebounce);
+    if (!this._isVisible()) {
+      this._suspendResourceLoads();
+      return;
+    }
     this._setNodeDebounce = setTimeout(() => this._applySetNode(node), 150);
   }
 
   async _applySetNode(node) {
     if (node !== this.currentNode) return;
+    if (!this._isVisible()) {
+      this._suspendResourceLoads();
+      return;
+    }
 
-    const resourceUrls = this._collectResourceUrls(node);
+    const resourceKeys = [];
+    const resourceUrls = this._collectResourceUrls(node, resourceKeys);
     if (resourceUrls.length === 0) {
       this.clearScene();
       this.currentResourceUrl = null;
@@ -569,34 +620,42 @@ export class ViewResource {
     }
 
     const nodeKey = this.model.nodeKey(node);
-    const cacheKey = `${nodeKey}:${resourceUrls.sort().join('|')}`;
+    // Include ownership, not just a URL multiset: two nodes may swap resources.
+    const cacheKey = JSON.stringify([nodeKey, resourceKeys.sort()]);
 
     if (cacheKey === this.currentResourceUrl) {
       if (!this.isLoading) {
-        await this._drawNode(node, this.contentGroup, null, true);
+        const requestId = this.loadRequestId;
+        await this._drawNode(node, this.contentGroup, requestId, true);
+        if (this._isRequestCancelled(requestId) || node !== this.currentNode) return;
         this.applyWorldOrientation();
         this.updateBoundsDisplay();
       }
       return;
     }
 
-    const previousRootKey = this.currentResourceUrl?.split(':')[0];
-    const isNewRoot = previousRootKey !== nodeKey;
+    const isNewRoot = this.currentRootKey !== nodeKey;
     if (isNewRoot) {
       this.clearScene();
     }
+    this.currentRootKey = nodeKey;
     this.currentResourceUrl = cacheKey;
-    this.loadNodeHierarchy(node, resourceUrls.length);
+    return this.loadNodeHierarchy(node, resourceUrls.length);
   }
 
-  _collectResourceUrls(node) {
+  _collectResourceUrls(node, resourceKeys = null) {
     const urls = [];
-    if (node.resourceUrl) urls.push(node.resourceUrl);
-    if (this.model.isNodeExpanded(node) && node.children) {
-      for (const child of node.children) {
-        urls.push(...this._collectResourceUrls(child));
+    const collect = current => {
+      if (current.resourceUrl) {
+        urls.push(current.resourceUrl);
+        resourceKeys?.push(JSON.stringify([this.model.nodeKey(current), current.resourceUrl,
+          current.resourceActionType || null, current.resourceName || null]));
       }
-    }
+      if (this.model.isNodeExpanded(current) && current.children) {
+        for (const child of current.children) collect(child);
+      }
+    };
+    collect(node);
     return urls;
   }
 
@@ -608,6 +667,7 @@ export class ViewResource {
 
     if (isFirstLoad) {
       this.contentGroup = new THREE.Group();
+      this.contentGroup.userData.needsCameraFit = true;
       this.scene.add(this.contentGroup);
     }
 
@@ -631,9 +691,10 @@ export class ViewResource {
       }
 
       this.centerContentAtOrigin();
-      if (isFirstLoad) {
+      if (this.contentGroup.userData.needsCameraFit) {
         this.fitCameraToContent();
         this.animateCameraToContent();
+        this.contentGroup.userData.needsCameraFit = false;
       }
       this.applyWorldOrientation();
       this.updateGridFromContent();
@@ -667,35 +728,38 @@ export class ViewResource {
     for (const [key, group] of this.nodeGroups) {
       if (!expectedKeys.has(key)) {
         staleKeys.push(key);
+        this._removeNodeResource(key, false);
         if (group) {
           // Dispose geometry/materials and remove from scene
-          group.traverse((child) => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-              if (Array.isArray(child.material)) {
-                child.material.forEach(m => this.disposeMaterial(m));
-              } else {
-                this.disposeMaterial(child.material);
-              }
-            }
-          });
+          this._disposeLoadedObject(group, true);
           group.parent?.remove(group);
         }
       }
     }
     for (const key of staleKeys) {
       this.nodeGroups.delete(key);
-      this.nodeResourceGroups.delete(key);
     }
 
     // Remove stale entries from loadedModels
-    this.loadedModels = this.loadedModels.filter(model => {
-      if (!model.parent) {
-        // Already removed from scene graph by group disposal
-        return false;
-      }
-      return true;
-    });
+    this.loadedModels = this.loadedModels.filter(model => this._isInGroup(model, this.contentGroup));
+  }
+
+  _isInGroup(object, group) {
+    for (let current = object; current; current = current.parent) {
+      if (current === group) return true;
+    }
+    return false;
+  }
+
+  _removeNodeResource(nodeKey, pruneModels = true) {
+    const group = this.nodeResourceGroups.get(nodeKey);
+    if (group) {
+      if (pruneModels) this.loadedModels = this.loadedModels.filter(model => !this._isInGroup(model, group));
+      this._disposeLoadedObject(group, true);
+      group.parent?.remove(group);
+    }
+    this.nodeResourceGroups.delete(nodeKey);
+    this.rotators = this.rotators.filter(rotator => rotator.sourceNodeKey !== nodeKey);
   }
 
   _applyNodeTransformToGroup(group, transform) {
@@ -712,7 +776,7 @@ export class ViewResource {
   }
 
   async _drawNode(node, parentGroup, requestId, isRoot = false) {
-    if (requestId !== null && requestId !== this.loadRequestId) return;
+    if (this._isRequestCancelled(requestId)) return;
 
     const nodeKey = this.model.nodeKey(node);
     const isNew = !this.nodeGroups.has(nodeKey);
@@ -741,24 +805,34 @@ export class ViewResource {
       this.nodeGroups.set(nodeKey, null);
     }
 
-    if (isNew && hasResource) {
+    const resourceKey = JSON.stringify([node.resourceUrl || null, node.resourceActionType || null, node.resourceName || null]);
+    const previousResource = this.nodeResourceGroups.get(nodeKey)?.userData.resourceState;
+    const needsResource = hasResource && (!previousResource || previousResource.key !== resourceKey ||
+      (!previousResource.complete && previousResource.requestId !== requestId));
+    if ((!hasResource && previousResource) || needsResource) this._removeNodeResource(nodeKey);
+
+    if (needsResource) {
+      const resourceState = { key: resourceKey, requestId, complete: false };
+      const resourceGroup = new THREE.Group();
+      resourceGroup.userData.resourceState = resourceState;
+      resourceGroup.visible = !node.isHiddenInResource;
+      target.add(resourceGroup);
+      this.nodeResourceGroups.set(nodeKey, resourceGroup);
+      let loaded = false;
       const actionType = node.resourceActionType;
       if (actionType === 'rotator' && node.resourceName) {
-        await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId);
+        loaded = await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId, nodeKey);
       } else {
-        const resourceGroup = new THREE.Group();
-        resourceGroup.visible = !node.isHiddenInResource;
-        target.add(resourceGroup);
-        this.nodeResourceGroups.set(nodeKey, resourceGroup);
-
         const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
         const lower = node.resourceUrl.toLowerCase();
         if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-          await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, resourceGroup);
+          loaded = await this.loadDirectGlb(node.resourceUrl, nodeTransform, requestId, resourceGroup);
         } else {
-          await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, resourceGroup);
+          loaded = await this.loadResourceWithTransform(node.resourceUrl, nodeTransform, requestId, resourceGroup);
         }
       }
+      if (this._isRequestCancelled(requestId)) return;
+      resourceState.complete = loaded === true;
     }
 
     if (expandedChildren) {
@@ -787,9 +861,10 @@ export class ViewResource {
   }
 
   async _throttledFetch(url, requestId) {
+    if (this._isRequestCancelled(requestId)) return null;
     await this._acquireFetchSlot();
     try {
-      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      if (this._isRequestCancelled(requestId)) return null;
       return await fetch(url);
     } finally {
       this._releaseFetchSlot();
@@ -807,15 +882,7 @@ export class ViewResource {
     this.rotators = [];
 
     // Clean up video elements from cancelled load
-    for (const mesh of this.videoPlanes) {
-      const video = mesh.userData.video;
-      if (video) {
-        video.pause();
-        video.src = '';
-        video.load();
-      }
-    }
-    this.videoPlanes = [];
+    for (const mesh of [...this.videoPlanes]) this._releaseVideoPlane(mesh);
 
     for (const hls of this.hlsInstances) {
       hls.destroy();
@@ -824,16 +891,19 @@ export class ViewResource {
   }
 
   async loadDirectGlb(url, nodeTransform, requestId, targetGroup = null) {
+    // Return true only after attachment; cancellation and load errors return false.
+    if (this._isRequestCancelled(requestId)) return false;
     await this._acquireFetchSlot();
     try {
-      if (requestId !== this.loadRequestId) return;
-      await new Promise((resolve) => {
+      if (this._isRequestCancelled(requestId)) return false;
+      return await new Promise((resolve) => {
         this.gltfLoader.load(
           url,
           (gltf) => {
             const group = targetGroup || this.contentGroup;
-            if (requestId !== this.loadRequestId || !group) {
-              resolve();
+            if (this._isRequestCancelled(requestId) || !group) {
+              this._disposeLoadedObject(gltf.scene);
+              resolve(false);
               return;
             }
             const model = gltf.scene;
@@ -846,12 +916,12 @@ export class ViewResource {
             if (this.loadedModels.length === 1) {
               this.centerContentAtOrigin();
             }
-            resolve();
+            resolve(true);
           },
           undefined,
           (error) => {
             console.warn(`Failed to load GLB ${url}:`, error);
-            resolve();
+            resolve(false);
           }
         );
       });
@@ -897,26 +967,28 @@ export class ViewResource {
   }
 
   async loadResourceWithTransform(url, nodeTransform, requestId, targetGroup = null) {
+    // Propagate attachment success so a failed retained resource can retry.
     try {
       const response = await this._throttledFetch(url, requestId);
-      if (!response) return;
+      if (!response) return false;
       if (!response.ok) {
         console.warn(`Failed to fetch ${url}: HTTP ${response.status}`);
-        return;
+        return false;
       }
 
-      if (requestId !== this.loadRequestId) return;
+      if (this._isRequestCancelled(requestId)) return false;
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('json')) {
-        return;
+        return false;
       }
 
       const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       const data = await response.json();
-      await this.processResourceData(data, nodeTransform, requestId, baseDir, targetGroup);
+      return await this.processResourceData(data, nodeTransform, requestId, baseDir, targetGroup);
     } catch (error) {
       console.warn(`Error loading resource ${url}:`, error);
+      return false;
     }
   }
 
@@ -930,6 +1002,7 @@ export class ViewResource {
     }
 
     this.clearScene();
+    this.isLoading = true;
     this.contentGroup = new THREE.Group();
     this.scene.add(this.contentGroup);
     this.setStatus('Loading resource...', 'loading');
@@ -966,6 +1039,7 @@ export class ViewResource {
   }
 
   async processResourceData(data, nodeTransform = null, requestId = null, baseDir = null, targetGroup = null) {
+    if (this._isRequestCancelled(requestId)) return false;
     const group = targetGroup || this.contentGroup;
 
     // Handle metadata files (have lods, no blueprint)
@@ -986,22 +1060,23 @@ export class ViewResource {
           if (this.loadedModels.length === 1) {
             this.centerContentAtOrigin();
           }
+          return true;
         }
       }
-      return;
+      return false;
     }
 
     // Handle scene files (have body.blueprint)
     const blueprint = data?.body?.blueprint;
     if (!blueprint) {
-      return;
+      return false;
     }
 
     if (!this.isEarthBased && this.isSimplePhysicalBlueprint(blueprint)) {
       this.setLocation(0, 0);
     }
 
-    if (requestId !== null && requestId !== this.loadRequestId) return;
+    if (this._isRequestCancelled(requestId)) return false;
 
     const result = await this.processBlueprintNode(blueprint, requestId);
     if (result && group && (requestId === null || requestId === this.loadRequestId)) {
@@ -1014,12 +1089,15 @@ export class ViewResource {
       if (this.loadedModels.length === 1) {
         this.centerContentAtOrigin();
       }
+      return !result.userData.resourceLoadFailed;
     }
+    if (result) this._disposeLoadedObject(result, true);
+    return false;
   }
 
   async processBlueprintNode(node, requestId = null) {
     // Check if request is still current
-    if (requestId !== null && requestId !== this.loadRequestId) return null;
+    if (this._isRequestCancelled(requestId)) return null;
 
     const hasChildren = node.children && Array.isArray(node.children) && node.children.length > 0;
     const isPhysical = node.blueprintType === 'physical' && node.resourceReference;
@@ -1034,53 +1112,65 @@ export class ViewResource {
       const group = new THREE.Group();
       group.name = node.name || 'group';
 
-      // Apply local transform to group
-      group.position.set(pos[0], pos[1], pos[2]);
-      group.quaternion.set(rot[0], rot[1], rot[2], rot[3]);
-      group.scale.set(scale[0], scale[1], scale[2]);
+      let retained = false;
+      try {
+        // Apply local transform to group
+        group.position.set(pos[0], pos[1], pos[2]);
+        group.quaternion.set(rot[0], rot[1], rot[2], rot[3]);
+        group.scale.set(scale[0], scale[1], scale[2]);
 
-      // If this node also has a resource (e.g., sign with text children), load it first
-      if (isPhysical) {
-        const obj = {
-          resourceReference: node.resourceReference,
-          resourceName: node.resourceName,
-          objectBounds: node.objectBounds,
-          transform: new THREE.Matrix4()
-        };
-        const nodeModel = await this.loadPhysicalObject(obj, requestId);
-        if (nodeModel) {
-          group.add(nodeModel);
-        }
-      }
-
-      // Process children and collect any rotators
-      const pendingRotators = [];
-      for (const child of node.children) {
-        // Check if request is still current before each child
-        if (requestId !== null && requestId !== this.loadRequestId) return null;
-
-        // Check for rotator - handle specially
-        const childActionType = child.resourceReference?.startsWith('action://')
-          ? child.resourceReference.split('/').pop().replace(/\.json$/, '')
-          : null;
-        if (childActionType === 'rotator') {
-          pendingRotators.push(child);
-          continue;
+        // If this node also has a resource (e.g., sign with text children), load it first
+        if (isPhysical) {
+          const obj = {
+            resourceReference: node.resourceReference,
+            resourceName: node.resourceName,
+            objectBounds: node.objectBounds,
+            transform: new THREE.Matrix4()
+          };
+          const nodeModel = await this.loadPhysicalObject(obj, requestId);
+          if (nodeModel) {
+            group.add(nodeModel);
+          } else {
+            group.userData.resourceLoadFailed = true;
+          }
         }
 
-        const childResult = await this.processBlueprintNode(child, requestId);
-        if (childResult) {
-          group.add(childResult);
+        // Process children and collect any rotators
+        const pendingRotators = [];
+        for (const child of node.children) {
+          // Check if request is still current before each child
+          if (requestId !== null && requestId !== this.loadRequestId) return null;
+
+          // Check for rotator - handle specially
+          const childActionType = child.resourceReference?.startsWith('action://')
+            ? child.resourceReference.split('/').pop().replace(/\.json$/, '')
+            : null;
+          if (childActionType === 'rotator') {
+            pendingRotators.push(child);
+            continue;
+          }
+
+          const childResult = await this.processBlueprintNode(child, requestId);
+          if (childResult) {
+            group.add(childResult);
+            if (childResult.userData.resourceLoadFailed) group.userData.resourceLoadFailed = true;
+          } else if (child.blueprintType === 'physical' && child.resourceReference) {
+            group.userData.resourceLoadFailed = true;
+          }
         }
-      }
 
-      // Set up rotators to target this group
-      for (const rotatorNode of pendingRotators) {
-        if (requestId !== null && requestId !== this.loadRequestId) return null;
-        await this.setupRotator(rotatorNode, group, requestId);
-      }
+        // Set up rotators to target this group
+        for (const rotatorNode of pendingRotators) {
+          if (requestId !== null && requestId !== this.loadRequestId) return null;
+          if (!await this.setupRotator(rotatorNode, group, requestId)) group.userData.resourceLoadFailed = true;
+        }
 
-      return group.children.length > 0 || pendingRotators.length > 0 ? group : null;
+        if (this._isRequestCancelled(requestId)) return null;
+        retained = group.children.length > 0 || pendingRotators.length > 0;
+        return retained ? group : null;
+      } finally {
+        if (!retained) this._disposeLoadedObject(group, true);
+      }
     }
 
     // For leaf physical nodes, load the resource
@@ -1093,6 +1183,10 @@ export class ViewResource {
       };
 
       const model = await this.loadPhysicalObject(obj, requestId);
+      if (this._isRequestCancelled(requestId)) {
+        if (model) this._disposeLoadedObject(model, true);
+        return null;
+      }
       if (model) {
         // Apply local transform
         model.position.set(pos[0], pos[1], pos[2]);
@@ -1144,9 +1238,9 @@ export class ViewResource {
     }
   }
 
-  async setupRotator(rotatorNode, targetGroup, requestId = null) {
+  async setupRotator(rotatorNode, targetGroup, requestId = null, sourceNodeKey = null) {
     const data = await this.fetchResourceJson(rotatorNode.resourceName, requestId, this._getScopeBaseUrl());
-    if (!data) return;
+    if (!data || this._isRequestCancelled(requestId)) return false;
 
     const parentLevels = data?.body?.parent || 0;
     let target = targetGroup;
@@ -1158,10 +1252,12 @@ export class ViewResource {
     const speed = data?.body?.rotSpeed || 10;
 
     this.rotators.push({
+      sourceNodeKey,
       target: target,
       axis: new THREE.Vector3(axisArray[0], axisArray[1], axisArray[2]).normalize(),
       speed: speed
     });
+    return true;
   }
 
   setupModelMaterials(model) {
@@ -1265,7 +1361,7 @@ export class ViewResource {
     }
 
     // Handle metadata files with LODs
-    const { metadata, baseDir } = await this.loadMetadata(resourceReference, scopeBaseUrl);
+    const { metadata, baseDir } = await this.loadMetadata(resourceReference, scopeBaseUrl, requestId);
     const lods = metadata?.lods || metadata?.LODs;
     if (!metadata || !lods || lods.length === 0) {
       console.warn(`No LODs in metadata: ${resourceReference}`);
@@ -1319,6 +1415,7 @@ export class ViewResource {
 
   async loadTextSprite(resourceName, transform, objectBounds, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
+    if (this._isRequestCancelled(requestId)) return null;
     const text = data?.body?.text || 'Text';
 
     // Create canvas for text
@@ -1373,6 +1470,7 @@ export class ViewResource {
     let distance = 100;
 
     const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
+    if (this._isRequestCancelled(requestId)) return null;
     const colorArray = data?.body?.color;
     if (colorArray && colorArray.length >= 3) {
       color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
@@ -1393,6 +1491,7 @@ export class ViewResource {
 
   async loadVideoPlane(resourceName, transform, objectBounds, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
+    if (this._isRequestCancelled(requestId)) return null;
     const sources = data?.body?.streamConfig?.sources;
     const videoUrl = sources?.[0];
 
@@ -1409,8 +1508,10 @@ export class ViewResource {
 
     // Handle HLS streams
     const isHls = videoUrl.toLowerCase().includes('.m3u8');
+    let hlsController = null;
     if (isHls && Hls.isSupported()) {
       const hls = new Hls();
+      hlsController = hls;
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.error('HLS error:', data.type, data.details);
       });
@@ -1439,10 +1540,12 @@ export class ViewResource {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.video = video;
+    mesh.userData.hls = hlsController;
     mesh.userData.isVideoPlane = true;
 
     let geometryUpdated = false;
     const updateGeometryFromVideo = () => {
+      if (!mesh.userData.video) return true;
       if (geometryUpdated) return true;
       if (video.videoWidth && video.videoHeight) {
         const aspect = video.videoWidth / video.videoHeight;
@@ -1463,6 +1566,10 @@ export class ViewResource {
         console.error('Video error:', e, video.error);
       });
     }
+    mesh.userData.releaseVideoListeners = () => {
+      video.removeEventListener('loadedmetadata', updateGeometryFromVideo);
+      video.removeEventListener('loadeddata', updateGeometryFromVideo);
+    };
 
 
     // Apply transform
@@ -1474,7 +1581,8 @@ export class ViewResource {
     return mesh;
   }
 
-  async loadMetadata(metadataRef, scopeBaseUrl = this._getScopeBaseUrl()) {
+  async loadMetadata(metadataRef, scopeBaseUrl = this._getScopeBaseUrl(), requestId = null) {
+    if (this._isRequestCancelled(requestId)) return { metadata: null, baseDir: null };
     const url = resolveResourceUrl(metadataRef, scopeBaseUrl);
     if (!url) return { metadata: null, baseDir: null };
 
@@ -1485,12 +1593,14 @@ export class ViewResource {
 
     await this._acquireFetchSlot();
     try {
+      if (this._isRequestCancelled(requestId)) return { metadata: null, baseDir: null };
       const response = await fetch(url);
       if (!response.ok) {
         console.warn(`Metadata not found: ${metadataRef}`);
         return { metadata: null, baseDir: null };
       }
       const metadata = await response.json();
+      if (this._isRequestCancelled(requestId)) return { metadata: null, baseDir: null };
       this.metadataCache.set(url, metadata);
       const baseDir = url.substring(0, url.lastIndexOf('/') + 1);
       return { metadata, baseDir };
@@ -1503,6 +1613,7 @@ export class ViewResource {
   }
 
   async loadGlb(glbName, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
+    if (this._isRequestCancelled(requestId)) return null;
     const url = resolveResourceUrl(glbName, scopeBaseUrl);
 
     if (this.glbCache.has(url)) {
@@ -1511,16 +1622,25 @@ export class ViewResource {
 
     await this._acquireFetchSlot();
     try {
-      if (requestId !== null && requestId !== this.loadRequestId) return null;
+      if (this._isRequestCancelled(requestId)) return null;
       return await new Promise((resolve) => {
         this.gltfLoader.load(
           url,
           (gltf) => {
-            if (requestId !== null && requestId !== this.loadRequestId) {
+            if (this._isRequestCancelled(requestId)) {
+              this._disposeLoadedObject(gltf.scene);
               resolve(null);
               return;
             }
             this.glbCache.set(url, gltf.scene);
+            // Three.js clones share these assets; the cached template owns disposal.
+            gltf.scene.traverse(child => {
+              if (child.geometry) child.geometry[cachedAssetOwner] = this;
+              if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                materials.forEach(material => { material[cachedAssetOwner] = this; });
+              }
+            });
             resolve(gltf.scene.clone());
           },
           undefined,
@@ -1807,6 +1927,12 @@ export class ViewResource {
   }
 
   clearScene() {
+    // Invalidate both active callbacks and semaphore waiters before detaching groups.
+    ++this.loadRequestId;
+    clearTimeout(this._setNodeDebounce);
+    this.isLoading = false;
+    this.currentRootKey = null;
+    this.currentResourceUrl = null;
     if (!this.initialized) return;
 
     this._precomputedScale = false;
@@ -1816,18 +1942,9 @@ export class ViewResource {
     }
     this.clearBoundsGroup();
     this._positionGroundPlane(0);
-    this.loadedModels.forEach(model => {
-      model.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) {
-            child.material.forEach(m => this.disposeMaterial(m));
-          } else {
-            this.disposeMaterial(child.material);
-          }
-        }
-      });
-    });
+    // One teardown owns all scene and template assets, including shared clones.
+    const disposedAssets = new Set();
+    this.loadedModels.forEach(model => this._disposeLoadedObject(model, false, disposedAssets));
     this.loadedModels = [];
     this.contentGroup = null;
     this.nodeGroups.clear();
@@ -1835,15 +1952,7 @@ export class ViewResource {
     this.rotators = [];
 
     // Clean up video elements and HLS instances
-    for (const mesh of this.videoPlanes) {
-      const video = mesh.userData.video;
-      if (video) {
-        video.pause();
-        video.src = '';
-        video.load();
-      }
-    }
-    this.videoPlanes = [];
+    for (const mesh of [...this.videoPlanes]) this._releaseVideoPlane(mesh);
 
     for (const hls of this.hlsInstances) {
       hls.destroy();
@@ -1852,19 +1961,48 @@ export class ViewResource {
 
     // Clear and dispose cached GLB scenes
     for (const [, cachedScene] of this.glbCache) {
-      cachedScene.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) {
-            child.material.forEach(m => this.disposeMaterial(m));
-          } else {
-            this.disposeMaterial(child.material);
-          }
-        }
-      });
+      this._disposeLoadedObject(cachedScene, false, disposedAssets);
     }
     this.glbCache.clear();
     this.metadataCache.clear();
+  }
+
+  // Share the transient disposal set across a full teardown to free cloned assets once.
+  _disposeLoadedObject(object, preserveCached = false, disposedAssets = new Set()) {
+    this.rotators = this.rotators.filter(rotator => !this._isInGroup(rotator.target, object));
+    object.traverse(child => {
+      if (child.userData?.isVideoPlane) this._releaseVideoPlane(child);
+      if (child.geometry && !disposedAssets.has(child.geometry) &&
+          (!preserveCached || child.geometry[cachedAssetOwner] !== this)) {
+        disposedAssets.add(child.geometry);
+        child.geometry.dispose();
+      }
+      if (child.material) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach(material => {
+          if (!disposedAssets.has(material) && (!preserveCached || material[cachedAssetOwner] !== this)) {
+            disposedAssets.add(material);
+            this.disposeMaterial(material);
+          }
+        });
+      }
+    });
+  }
+
+  _releaseVideoPlane(mesh) {
+    const { video, hls, releaseVideoListeners } = mesh.userData;
+    releaseVideoListeners?.();
+    if (hls) hls.destroy();
+    if (video) {
+      video.pause();
+      video.src = '';
+      video.load();
+    }
+    this.videoPlanes = this.videoPlanes.filter(plane => plane !== mesh);
+    this.hlsInstances = this.hlsInstances.filter(instance => instance !== hls);
+    mesh.userData.video = null;
+    mesh.userData.hls = null;
+    mesh.userData.releaseVideoListeners = null;
   }
 
   disposeMaterial(material) {
@@ -1900,6 +2038,7 @@ export class ViewResource {
 
     // Remove event listeners
     window.removeEventListener('resize', this.boundResizeHandler);
+    document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
     if (this.renderer?.domElement) {
       this.renderer.domElement.removeEventListener('dblclick', this.boundDblClickHandler);
       this.renderer.domElement.removeEventListener('click', this.boundClickHandler);

@@ -455,6 +455,10 @@ export class ViewBounds {
     if (this.disposed) return;
 
     this.animationFrameId = requestAnimationFrame(() => this.animate());
+    if (!this.container.offsetHeight || !this.container.offsetWidth || document.hidden) {
+      this.lastFrameTime = performance.now();
+      return;
+    }
     this.controls.update();
 
     // Update orbital animation
