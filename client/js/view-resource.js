@@ -19,9 +19,11 @@ import { NODE_COLORS } from '../shared/node-types.js';
 
 // Ownership lives on the assets shared by cached templates and their clones.
 const cachedAssetOwner = Symbol('cachedAssetOwner');
+const captureActionTypes = new Set(['scene', 'rotator', 'pointlight', 'showtext']);
 
 export class ViewResource {
-  constructor(containerSelector, stateManager, model) {
+  constructor(containerSelector, stateManager, model, options = {}) {
+    this.captureMode = options.capture === true;
     this.container = document.querySelector(containerSelector);
     this.stateManager = stateManager;
     this.model = model;
@@ -30,11 +32,20 @@ export class ViewResource {
     this.renderer = null;
     this.controls = null;
 
-    this.gltfLoader = new GLTFLoader();
+    this.loadingManager = new THREE.LoadingManager();
+    this.captureAssetFailures = [];
+    this.captureBlueprintNodes = 0;
+    this.captureAssetProgress = { loaded: 0, total: 0 };
+    if (this.captureMode) {
+      this.loadingManager.onProgress = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
+      this.loadingManager.onStart = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
+      this.loadingManager.onError = () => this.captureAssetFailures.push("required_asset_failed");
+    }
+    this.gltfLoader = new GLTFLoader(this.loadingManager);
 
     // Set up Draco loader for compressed geometry (store for disposal)
-    this.dracoLoader = new DRACOLoader();
-    this.dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    this.dracoLoader = new DRACOLoader(this.loadingManager);
+    this.dracoLoader.setDecoderPath(this.captureMode ? './dist/draco/' : 'https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
     this.gltfLoader.setDRACOLoader(this.dracoLoader);
     this.loadedModels = [];
     this.contentGroup = null;
@@ -74,9 +85,9 @@ export class ViewResource {
     this.initialized = false;
     this._wasHidden = false;
 
-    this._bindModelEvents();
+    if (!this.captureMode) this._bindModelEvents();
     this.init();
-    if (this.initialized) {
+    if (this.initialized && !this.captureMode) {
       this.animate();
     }
   }
@@ -142,9 +153,10 @@ export class ViewResource {
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100000);
     this.camera.position.set(50, 30, 50);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, preserveDrawingBuffer: this.captureMode });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    if (this.captureMode) this.renderer.debug.onShaderError = () => this.captureAssetFailures.push('shader_failed');
+    this.renderer.setPixelRatio(this.captureMode ? 1 : window.devicePixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = .75;
@@ -176,8 +188,8 @@ export class ViewResource {
     this.scene.add(this.camera);
 
     // Set up KTX2 loader for compressed textures (store for disposal)
-    this.ktx2Loader = new KTX2Loader();
-    this.ktx2Loader.setTranscoderPath('https://www.gstatic.com/basis-universal/versioned/2021-04-15-ba1c3e4/');
+    this.ktx2Loader = new KTX2Loader(this.loadingManager);
+    this.ktx2Loader.setTranscoderPath(this.captureMode ? './dist/basis/' : 'https://www.gstatic.com/basis-universal/versioned/2021-04-15-ba1c3e4/');
     this.ktx2Loader.detectSupport(this.renderer);
     this.gltfLoader.setKTX2Loader(this.ktx2Loader);
 
@@ -692,19 +704,23 @@ export class ViewResource {
 
       this.centerContentAtOrigin();
       if (this.contentGroup.userData.needsCameraFit) {
-        this.fitCameraToContent();
-        this.animateCameraToContent();
+        if (!this.captureMode) {
+          this.fitCameraToContent();
+          this.animateCameraToContent();
+        }
         this.contentGroup.userData.needsCameraFit = false;
       }
       this.applyWorldOrientation();
-      this.updateGridFromContent();
+      if (!this.captureMode) this.updateGridFromContent();
       this.updateBoundsDisplay();
       this.setStatus('', '');
       this.setResourceMode(true);
+      if (this.captureMode && [...this.nodeResourceGroups.values()].some(group => !group.userData.resourceState.complete)) throw new Error("capture_required_resource_failed");
     } catch (error) {
       if (requestId === this.loadRequestId) {
         this.setStatus(`Failed: ${error.message}`, 'error');
         console.error('Resource load error:', error);
+        if (this.captureMode) throw error;
       }
     } finally {
       if (requestId === this.loadRequestId) {
@@ -820,7 +836,16 @@ export class ViewResource {
       this.nodeResourceGroups.set(nodeKey, resourceGroup);
       let loaded = false;
       const actionType = node.resourceActionType;
-      if (actionType === 'rotator' && node.resourceName) {
+      if (this.captureMode && actionType && !captureActionTypes.has(actionType)) throw new Error("capture_unsupported_content");
+      if (this.captureMode && actionType && actionType !== 'rotator') {
+        const object = await this.loadPhysicalObject({ resourceReference: node.resourceRef, resourceName: node.resourceName, objectBounds: node.bound, transform: new THREE.Matrix4() }, requestId);
+        if (object) {
+          this.setupModelMaterials(object);
+          resourceGroup.add(object);
+          this.loadedModels.push(object);
+          loaded = !object.userData.resourceLoadFailed;
+        }
+      } else if (actionType === 'rotator' && node.resourceName) {
         loaded = await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId, nodeKey);
       } else {
         const nodeTransform = (hasTransform && !needsGroup) ? node.transform : null;
@@ -1096,6 +1121,7 @@ export class ViewResource {
   }
 
   async processBlueprintNode(node, requestId = null) {
+    if (this.captureMode && ++this.captureBlueprintNodes > 1000) throw new Error("capture_resource_limit");
     // Check if request is still current
     if (this._isRequestCancelled(requestId)) return null;
 
@@ -1130,6 +1156,7 @@ export class ViewResource {
           const nodeModel = await this.loadPhysicalObject(obj, requestId);
           if (nodeModel) {
             group.add(nodeModel);
+            if (nodeModel.userData.resourceLoadFailed) group.userData.resourceLoadFailed = true;
           } else {
             group.userData.resourceLoadFailed = true;
           }
@@ -1308,6 +1335,8 @@ export class ViewResource {
       actionType = resourceReference.split('/').pop().replace(/\.json$/, '');
     }
 
+    if (this.captureMode && actionType && !captureActionTypes.has(actionType)) throw new Error("capture_unsupported_content");
+
     // Handle point lights
     if (actionType === 'pointlight') {
       return this.loadPointLight(resourceName, transform, requestId, scopeBaseUrl);
@@ -1416,6 +1445,7 @@ export class ViewResource {
   async loadTextSprite(resourceName, transform, objectBounds, requestId = null, scopeBaseUrl = this._getScopeBaseUrl()) {
     const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
     if (this._isRequestCancelled(requestId)) return null;
+    if (this.captureMode && !data) return null;
     const text = data?.body?.text || 'Text';
 
     // Create canvas for text
@@ -1470,7 +1500,7 @@ export class ViewResource {
     let distance = 100;
 
     const data = await this.fetchResourceJson(resourceName, requestId, scopeBaseUrl);
-    if (this._isRequestCancelled(requestId)) return null;
+    if (this._isRequestCancelled(requestId) || (this.captureMode && !data)) return null;
     const colorArray = data?.body?.color;
     if (colorArray && colorArray.length >= 3) {
       color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
@@ -1790,6 +1820,8 @@ export class ViewResource {
   }
 
   centerContentAtOrigin() {
+    // Capture fits the completed scene in world space; load order must not move it.
+    if (this.captureMode) return;
     const boundingBox = this._computeLoadedModelsBounds();
     if (!boundingBox) return;
 

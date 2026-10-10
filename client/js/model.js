@@ -158,6 +158,24 @@ export class Model {
     this._emit('treeChanged', this.tree);
   }
 
+  // The caller validates complete discovery and target provenance before installing.
+  // No UI expansion state or client events participate in this immutable snapshot.
+  setCaptureSnapshot(snapshot) {
+    this.nodes.clear();
+    this.rootScopeId = snapshot.scopeId;
+    NodeAdapter.setScopeResourceRoot(snapshot.scopeId, snapshot.resourceRoot);
+    const adapt = (entry, parent = null) => {
+      const node = new NodeAdapter({ ...entry.record, IsReady: () => true }, snapshot.scopeId);
+      node._parent = parent;
+      node.isExpanded = true;
+      node.children = entry.children.map(child => adapt(child, node));
+      this.nodes.set(node.key, node);
+      return node;
+    };
+    this.tree = adapt(snapshot.root);
+    return this.tree;
+  }
+
   _indexNode(node, parent) {
     if (!node) return;
     const key = node.key;
