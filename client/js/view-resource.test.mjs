@@ -514,3 +514,19 @@ test('a 6000-resource root fetches one additional model when one child is added'
   await view._applySetNode(root);
   assert.equal(fetches, 6001);
 });
+
+test('capture rejects a failed required child instead of accepting partial siblings', async () => {
+  const { view } = await resource(); view.captureMode = true;
+  view.gltfLoader = { load: (url, done, progress, error) => url === 'bad.glb' ? error(new Error('failed')) : done({ scene: new Group() }) };
+  await assert.rejects(view.loadNodeHierarchy({key:'root',expanded:true,children:[{key:'good',resourceUrl:'good.glb'},{key:'bad',resourceUrl:'bad.glb'}]},2), /capture_required_resource_failed/);
+});
+
+test('capture awaits delayed required asset and rejects unsupported active content', async () => {
+  const { view } = await resource(); view.captureMode = true;
+  let finish; view.gltfLoader = { load: (url, done) => { finish=done; } };
+  let settled=false;
+  const pending=view.loadNodeHierarchy({key:'root',resourceUrl:'slow.glb'},1).then(()=>{settled=true;});
+  await tick(); assert.equal(settled,false);
+  finish({scene:new Group()}); await pending; assert.equal(settled,true);
+  await assert.rejects(view.loadPhysicalObject({resourceReference:'action://video'}), /capture_unsupported_content/);
+});
