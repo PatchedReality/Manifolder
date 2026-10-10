@@ -839,7 +839,12 @@ export class ViewResource {
       if (this.captureMode && actionType && !captureActionTypes.has(actionType)) throw new Error("capture_unsupported_content");
       if (this.captureMode && actionType && actionType !== 'rotator') {
         const object = await this.loadPhysicalObject({ resourceReference: node.resourceRef, resourceName: node.resourceName, objectBounds: node.bound, transform: new THREE.Matrix4() }, requestId);
-        if (object) { this.setupModelMaterials(object); resourceGroup.add(object); this.loadedModels.push(object); loaded = true; }
+        if (object) {
+          this.setupModelMaterials(object);
+          resourceGroup.add(object);
+          this.loadedModels.push(object);
+          loaded = !object.userData.resourceLoadFailed;
+        }
       } else if (actionType === 'rotator' && node.resourceName) {
         loaded = await this.setupRotator({ resourceName: node.resourceName }, parentGroup, requestId, nodeKey);
       } else {
@@ -1151,6 +1156,7 @@ export class ViewResource {
           const nodeModel = await this.loadPhysicalObject(obj, requestId);
           if (nodeModel) {
             group.add(nodeModel);
+            if (nodeModel.userData.resourceLoadFailed) group.userData.resourceLoadFailed = true;
           } else {
             group.userData.resourceLoadFailed = true;
           }
