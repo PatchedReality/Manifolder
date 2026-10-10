@@ -19,6 +19,7 @@ import { NODE_COLORS } from '../shared/node-types.js';
 
 // Ownership lives on the assets shared by cached templates and their clones.
 const cachedAssetOwner = Symbol('cachedAssetOwner');
+const captureActionTypes = new Set(['scene', 'rotator', 'pointlight', 'showtext']);
 
 export class ViewResource {
   constructor(containerSelector, stateManager, model, options = {}) {
@@ -35,9 +36,11 @@ export class ViewResource {
     this.captureAssetFailures = [];
     this.captureBlueprintNodes = 0;
     this.captureAssetProgress = { loaded: 0, total: 0 };
-    this.loadingManager.onProgress = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
-    this.loadingManager.onStart = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
-    this.loadingManager.onError = () => this.captureAssetFailures.push("required_asset_failed");
+    if (this.captureMode) {
+      this.loadingManager.onProgress = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
+      this.loadingManager.onStart = (_url, loaded, total) => { this.captureAssetProgress = { loaded, total }; };
+      this.loadingManager.onError = () => this.captureAssetFailures.push("required_asset_failed");
+    }
     this.gltfLoader = new GLTFLoader(this.loadingManager);
 
     // Set up Draco loader for compressed geometry (store for disposal)
@@ -701,12 +704,14 @@ export class ViewResource {
 
       this.centerContentAtOrigin();
       if (this.contentGroup.userData.needsCameraFit) {
-        this.fitCameraToContent();
-        if (!this.captureMode) this.animateCameraToContent();
+        if (!this.captureMode) {
+          this.fitCameraToContent();
+          this.animateCameraToContent();
+        }
         this.contentGroup.userData.needsCameraFit = false;
       }
       this.applyWorldOrientation();
-      this.updateGridFromContent();
+      if (!this.captureMode) this.updateGridFromContent();
       this.updateBoundsDisplay();
       this.setStatus('', '');
       this.setResourceMode(true);
@@ -831,7 +836,7 @@ export class ViewResource {
       this.nodeResourceGroups.set(nodeKey, resourceGroup);
       let loaded = false;
       const actionType = node.resourceActionType;
-      if (this.captureMode && actionType && !["scene", "rotator", "pointlight", "showtext"].includes(actionType)) throw new Error("capture_unsupported_content");
+      if (this.captureMode && actionType && !captureActionTypes.has(actionType)) throw new Error("capture_unsupported_content");
       if (this.captureMode && actionType && actionType !== 'rotator') {
         const object = await this.loadPhysicalObject({ resourceReference: node.resourceRef, resourceName: node.resourceName, objectBounds: node.bound, transform: new THREE.Matrix4() }, requestId);
         if (object) { this.setupModelMaterials(object); resourceGroup.add(object); this.loadedModels.push(object); loaded = true; }
@@ -1324,7 +1329,7 @@ export class ViewResource {
       actionType = resourceReference.split('/').pop().replace(/\.json$/, '');
     }
 
-    if (this.captureMode && actionType && !["scene", "rotator", "pointlight", "showtext"].includes(actionType)) throw new Error("capture_unsupported_content");
+    if (this.captureMode && actionType && !captureActionTypes.has(actionType)) throw new Error("capture_unsupported_content");
 
     // Handle point lights
     if (actionType === 'pointlight') {
