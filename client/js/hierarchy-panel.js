@@ -187,7 +187,40 @@ export class HierarchyPanel {
     this.rootNode = tree;
     const rootElement = this.createNodeElement(tree);
     this.container.appendChild(rootElement);
+    this._addRootHint(rootElement);
+  }
 
+  _addRootHint(rootElement) {
+    const content = rootElement.querySelector('.tree-node-content');
+    const hint = document.createElement('div');
+    hint.id = 'fabric-root-hint';
+    hint.className = 'fabric-root-hint';
+    hint.setAttribute('role', 'tooltip');
+    const setInstruction = (touch) => {
+      hint.textContent = touch
+        ? 'Touch and hold the top node, then select Expand Level'
+        : 'Right click on the top node and select expand level';
+    };
+    setInstruction(window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+    content.setAttribute('aria-describedby', hint.id);
+    rootElement.classList.add('fabric-root');
+    content.after(hint);
+    this.rootHint = hint;
+    content.addEventListener('pointerenter', (event) => {
+      setInstruction(event.pointerType === 'touch');
+      if (!document.getElementById('tree-context-menu')) hint.hidden = false;
+    });
+    content.addEventListener('pointerleave', () => {
+      if (!this._rootHintTimeout) hint.hidden = true;
+    });
+    content.addEventListener('pointerdown', () => this._hideRootHint());
+    this._rootHintTimeout = setTimeout(() => this._hideRootHint(), 8000);
+  }
+
+  _hideRootHint() {
+    clearTimeout(this._rootHintTimeout);
+    this._rootHintTimeout = null;
+    if (this.rootHint) this.rootHint.hidden = true;
   }
 
   getRootNode() {
@@ -195,6 +228,9 @@ export class HierarchyPanel {
   }
 
   clear() {
+    this._hideRootHint();
+    this.rootHint = null;
+    this.hideContextMenu();
     this.container.innerHTML = '';
     this.nodeElements.clear();
     this.selectedNode = null;
@@ -566,6 +602,7 @@ export class HierarchyPanel {
   }
 
   showContextMenu(nodeKey, x, y) {
+    this._hideRootHint();
     this.hideContextMenu();
 
     const node = this.nodeElements.get(nodeKey);

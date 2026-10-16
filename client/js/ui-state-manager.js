@@ -74,9 +74,9 @@ const DEFAULT_STATE = {
     inspectorWidth: 280,
     hierarchyMinimized: false,
     inspectorMinimized: false,
-    graphEnabled: true,
-    boundsEnabled: true,
-    resourceEnabled: false
+    graphEnabled: false,
+    boundsEnabled: false,
+    resourceEnabled: true
   },
   hierarchy: {
     expandedNodeIds: []

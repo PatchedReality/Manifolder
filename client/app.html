@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1791497714">
+  <link rel="stylesheet" href="css/style.css?v=1792181169">
 </head>
 <body>
   <!-- Product header -->
@@ -85,15 +85,15 @@
         <span>Viewport</span>
         <div class="viewport-controls">
           <div class="view-toggles">
-            <button class="view-toggle active" data-view="graph">Graph</button>
-            <button class="view-toggle active" data-view="bounds">Bounds</button>
-            <button class="view-toggle" data-view="resource">Resource</button>
+            <button class="view-toggle" data-view="graph">Graph</button>
+            <button class="view-toggle" data-view="bounds">Bounds</button>
+            <button class="view-toggle active" data-view="resource">Resource</button>
           </div>
         </div>
       </div>
-      <div class="panel-content viewport-content split-view">
-        <div id="viewport-graph" class="viewport"></div>
-        <div id="viewport-bounds" class="viewport">
+      <div class="panel-content viewport-content">
+        <div id="viewport-graph" class="viewport" style="display: none;"></div>
+        <div id="viewport-bounds" class="viewport" style="display: none;">
           <div class="bounds-toolbar">
             <div class="timescale-control">
               <label>Time: <span id="timescale-label">1 day/sec</span></label>
@@ -105,7 +105,7 @@
             </div>
           </div>
         </div>
-        <div id="viewport-resource" class="viewport" style="display: none;">
+        <div id="viewport-resource" class="viewport">
           <div class="resource-toolbar-left">
             <div class="time-control">
               <label>Time of Day</label>
@@ -165,16 +165,16 @@
   <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
 
   <!-- MVMF libraries from ManifolderClient submodule (order matters) -->
-  <script src="lib/ManifolderClient/vendor/mv/MVMF.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVSB.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVXP.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVRest.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/socket.io.min.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVIO.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVRP.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVRP_Dev.js?v=1791497714"></script>
-  <script src="lib/ManifolderClient/vendor/mv/MVRP_Map.js?v=1791497714"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVMF.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVSB.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVXP.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVRest.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/socket.io.min.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVIO.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVRP.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVRP_Dev.js?v=1792181169"></script>
+  <script src="lib/ManifolderClient/vendor/mv/MVRP_Map.js?v=1792181169"></script>
 
-  <script type="module" src="dist/app.bundle.js?v=1791497714"></script>
+  <script type="module" src="dist/app.bundle.js?v=1792181169"></script>
 </body>
 </html>

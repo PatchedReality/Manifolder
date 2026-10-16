@@ -902,6 +902,42 @@ body {
   background: var(--accent-dim);
 }
 
+.fabric-root {
+  position: relative;
+}
+
+.fabric-root-hint {
+  position: absolute;
+  top: 30px;
+  left: 8px;
+  z-index: 10;
+  box-sizing: border-box;
+  width: 240px;
+  max-width: calc(100% - 16px);
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px #0005;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.fabric-root-hint::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 18px;
+  width: 10px;
+  height: 10px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--accent);
+  border-left: 1px solid var(--accent);
+  transform: rotate(45deg);
+}
+
 .tree-toggle {
   width: 16px;
   height: 16px;

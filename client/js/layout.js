@@ -156,9 +156,9 @@ export class LayoutManager {
   setupViewTabs() {
     const toggles = document.querySelectorAll('.view-toggle');
 
-    this.graphEnabled = true;
-    this.boundsEnabled = true;
-    this.resourceEnabled = false;
+    this.graphEnabled = false;
+    this.boundsEnabled = false;
+    this.resourceEnabled = true;
 
     toggles.forEach(toggle => {
       toggle.addEventListener('click', () => {
