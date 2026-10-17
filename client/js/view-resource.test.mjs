@@ -514,3 +514,63 @@ test('a 6000-resource root fetches one additional model when one child is added'
   await view._applySetNode(root);
   assert.equal(fetches, 6001);
 });
+
+test('capture rejects a failed required child instead of accepting partial siblings', async () => {
+  const { view } = await resource(); view.captureMode = true;
+  view.gltfLoader = { load: (url, done, progress, error) => url === 'bad.glb' ? error(new Error('failed')) : done({ scene: new Group() }) };
+  await assert.rejects(view.loadNodeHierarchy({key:'root',expanded:true,children:[{key:'good',resourceUrl:'good.glb'},{key:'bad',resourceUrl:'bad.glb'}]},2), /capture_required_resource_failed/);
+});
+
+for (const nestedPhysical of [false, true]) {
+  test(`capture rejects missing LODs in ${nestedPhysical ? 'a physical scene with children' : 'a top-level scene action'}`, async () => {
+    const { view, context } = await resource();
+    view.captureMode = true;
+    view.captureBlueprintNodes = 0;
+    view.isEarthBased = true;
+    const partialScene = { children: [
+      { blueprintType: 'physical', resourceReference: 'good.glb' },
+      { blueprintType: 'physical', resourceReference: 'missing-lods.json' }
+    ] };
+    const outerScene = { blueprintType: 'physical', resourceReference: 'action://scene',
+      resourceName: 'partial-scene', children: [
+        { blueprintType: 'physical', resourceReference: 'sibling.glb' }
+      ] };
+    const fetched = [], meshes = [];
+    const resources = {
+      'action://partial-scene': { body: { blueprint: partialScene } },
+      'outer-scene.json': { body: { blueprint: outerScene } },
+      'missing-lods.json': { name: 'Successfully fetched metadata without geometry' }
+    };
+    context.fetch = async url => {
+      assert.ok(Object.hasOwn(resources, url), `unexpected fetch: ${url}`);
+      fetched.push(url);
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => resources[url] };
+    };
+    view.gltfLoader = { load: (url, done) => {
+      meshes.push(url);
+      const mesh = new Mesh({}, {});
+      mesh.clone = () => new Mesh(mesh.geometry, mesh.material);
+      done({ scene: mesh });
+    } };
+    const root = nestedPhysical
+      ? { key: 'root', resourceUrl: 'outer-scene.json' }
+      : { key: 'root', resourceUrl: 'action://scene', resourceActionType: 'scene',
+        resourceRef: 'action://scene', resourceName: 'partial-scene' };
+
+    await assert.rejects(view.loadNodeHierarchy(root, 1), /capture_required_resource_failed/);
+    assert.ok(fetched.includes('missing-lods.json'));
+    assert.ok(meshes.includes('good.glb'));
+    if (nestedPhysical) assert.ok(meshes.includes('sibling.glb'));
+    assert.equal(view.nodeResourceGroups.get('root').userData.resourceState.complete, false);
+  });
+}
+
+test('capture awaits delayed required asset and rejects unsupported active content', async () => {
+  const { view } = await resource(); view.captureMode = true;
+  let finish; view.gltfLoader = { load: (url, done) => { finish=done; } };
+  let settled=false;
+  const pending=view.loadNodeHierarchy({key:'root',resourceUrl:'slow.glb'},1).then(()=>{settled=true;});
+  await tick(); assert.equal(settled,false);
+  finish({scene:new Group()}); await pending; assert.equal(settled,true);
+  await assert.rejects(view.loadPhysicalObject({resourceReference:'action://video'}), /capture_unsupported_content/);
+});

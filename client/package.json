@@ -7,10 +7,13 @@
   "scripts": {
     "build": "node scripts/build.js",
     "watch": "node scripts/build.js --watch",
-    "test": "node --test lib/ManifolderClient/ManifolderClient.test.js"
+    "test": "node --test lib/ManifolderClient/ManifolderClient.test.js",
+    "test:capture": "node --experimental-vm-modules --test js/capture.test.mjs js/view-resource.test.mjs"
   },
   "dependencies": {
+    "hls.js": "1.5.7",
     "socket.io-client": "^4.8.3",
+    "three": "0.160.0",
     "ws": "^8.16.0",
     "xmlhttprequest-ssl": "^2.1.2"
   },
