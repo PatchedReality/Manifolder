@@ -288,3 +288,58 @@ Shared Three.js utilities used across views:
 - `createSkyDome()`: Gradient sky mesh from horizon to zenith colors
 - `createStarfield()`: Spherical point cloud of 3000 stars at 80km radius
 - `createLabelSprite()`: Canvas-rendered text label with stroke outline, returned as a Three.js Sprite
+
+## Generation capture contract v1
+
+`capture.html` is a noninteractive, one-job entrypoint sharing `Model`, `NodeAdapter`
+and `ViewResource`. Build with `npm ci && npm run build` in `client`. Distribute
+`capture.html` and the complete `dist` directory together. The capture bundle includes
+exact Three.js 0.160.0 and HLS 1.5.7 dependencies and local Draco/Basis decoders; it
+uses no CDN import map. `dist/capture-manifest.json` records the source revision,
+source digest and bundle digest. The controller must pin and verify the artifact.
+
+After the module loads, call `window.manifolderCapture.capture(request)` with:
+
+```js
+{
+  contractVersion: 1,
+  target: { fabricId: 'generation-fabric-id', campusId: '8117' },
+  snapshot: {
+    target: { fabricId: 'generation-fabric-id', campusId: '8117' },
+    scopeId: 'job-scope', resourceRoot: 'https://authorized-assets.example/',
+    root: {
+      record: { sID: 'RMTObject', twObjectIx: 8117, nChildren: 0, /* SDK fields */ },
+      children: []
+    }
+  }
+}
+```
+
+Every record is the SDK record consumed by NodeAdapter (`pTransform`, `pResource`,
+`pBound`, etc.). Children recursively use the same `{record, children}` shape.
+The trusted controller authenticates the live target and completely enumerates its
+SDK subtree before submission. The renderer checks exact target/root identity,
+unique nodes, child counts and a 1,000-node limit. This establishes snapshot closure,
+**not independent proof of the controller's live discovery**; the receipt explicitly
+identifies `controller-snapshot` evidence. There is no browser credential or SDK
+connection, and UI expansion/hidden state is never imported. Attachments to other
+scopes are unsupported in v1 and fail rather than producing partial captures.
+
+The promise rejects on missing assets, unsupported active content (including video),
+missing geometry, failed shaders/context or output exceeding 512 KiB. Supported
+static scene/pointlight/text resources and zero-time rotators reuse viewer semantics.
+LoadingManager tracks GLTF subresources; successful top-level resource promises alone
+are insufficient. The final frame awaits font and shader readiness, freezes animations,
+uses fixed lighting/background and fits a bounding sphere to both viewport axes.
+Capture render sorting uses scene traversal to break equal-depth ties instead of
+allocation IDs, so concurrent asset completion does not choose the visible surface.
+Return value is `{receipt, jpeg}`: the JPEG data URL is 640×360, and the receipt contains
+target, renderer revision, closure/resource evidence, world bounds and final camera.
+A page permits one capture attempt; close its context afterwards. The worker owns
+hard cancellation, transfer/CPU/memory limits, credential isolation and the authorized
+resource gateway. This page is not a secure arbitrary-URL screenshot service.
+
+Run `node --test client/js/capture.test.mjs` and
+`node --experimental-vm-modules --test client/js/view-resource.test.mjs` from the
+repository root. Live scene/fixture capture and container isolation evidence belong
+to the consuming worker's integration gate; these unit tests do not establish them.
