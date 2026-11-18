@@ -8,7 +8,7 @@
     "build": "node scripts/build.js",
     "watch": "node scripts/build.js --watch",
     "test": "node --test lib/ManifolderClient/ManifolderClient.test.js",
-    "test:capture": "node --experimental-vm-modules --test js/capture.test.mjs js/view-resource.test.mjs"
+    "test:capture": "node --experimental-vm-modules --test js/capture.test.mjs js/view-resource.test.mjs scripts/build.test.mjs"
   },
   "dependencies": {
     "hls.js": "1.5.7",

@@ -521,15 +521,17 @@ test('capture rejects a failed required child instead of accepting partial sibli
   await assert.rejects(view.loadNodeHierarchy({key:'root',expanded:true,children:[{key:'good',resourceUrl:'good.glb'},{key:'bad',resourceUrl:'bad.glb'}]},2), /capture_required_resource_failed/);
 });
 
-for (const nestedPhysical of [false, true]) {
-  test(`capture rejects missing LODs in ${nestedPhysical ? 'a physical scene with children' : 'a top-level scene action'}`, async () => {
+for (const shape of ['scene', 'physical', 'container']) {
+  const nestedPhysical = shape === 'physical';
+  test(`capture rejects missing LODs in ${shape === 'container' ? 'an empty nested container beside a valid mesh' : nestedPhysical ? 'a physical scene with children' : 'a top-level scene action'}`, async () => {
     const { view, context } = await resource();
     view.captureMode = true;
     view.captureBlueprintNodes = 0;
     view.isEarthBased = true;
+    const missing = { blueprintType: 'physical', resourceReference: 'missing-lods.json' };
     const partialScene = { children: [
       { blueprintType: 'physical', resourceReference: 'good.glb' },
-      { blueprintType: 'physical', resourceReference: 'missing-lods.json' }
+      shape === 'container' ? { children: [missing] } : missing
     ] };
     const outerScene = { blueprintType: 'physical', resourceReference: 'action://scene',
       resourceName: 'partial-scene', children: [

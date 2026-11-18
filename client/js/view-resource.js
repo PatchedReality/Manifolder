@@ -1193,7 +1193,8 @@ export class ViewResource {
         }
 
         if (this._isRequestCancelled(requestId)) return null;
-        retained = group.children.length > 0 || pendingRotators.length > 0;
+        retained = group.children.length > 0 || pendingRotators.length > 0 ||
+          (this.captureMode && group.userData.resourceLoadFailed === true);
         return retained ? group : null;
       } finally {
         if (!retained) this._disposeLoadedObject(group, true);
